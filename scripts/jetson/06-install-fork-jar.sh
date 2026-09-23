@@ -10,6 +10,12 @@ JAVA17=/usr/lib/jvm/java-17-openjdk-arm64/bin/java
 DEST=/opt/photonvision/photonvision.jar
 
 [[ -x $JAVA17 ]] || { echo "Missing $JAVA17 (sudo apt install openjdk-17-jdk)" >&2; exit 1; }
+# Refuse truncated/corrupt jars: a bad jar here leaves the service crash-looping.
+# (No pipes here: with pipefail, `unzip -l | grep -q` fails when grep exits early.)
+if ! unzip -tq "$JAR" >/dev/null 2>&1 || ! unzip -l "$JAR" org/photonvision/Main.class >/dev/null 2>&1; then
+  echo "Refusing to install $JAR: not a valid PhotonVision jar ($(stat -c %s "$JAR") bytes)." >&2
+  exit 1
+fi
 [[ -f /usr/lib/lib971apriltag.so ]] || echo "WARNING: /usr/lib/lib971apriltag.so missing; CUDA pipeline will fail to load." >&2
 
 sudo systemctl stop photonvision
@@ -17,6 +23,10 @@ sudo systemctl stop photonvision
 # Keep the jar being replaced, once, so we can roll back.
 if [[ -f $DEST && ! -f /opt/photonvision/photonvision.jar.orig ]]; then
   sudo cp "$DEST" /opt/photonvision/photonvision.jar.orig
+fi
+# Also keep the last *valid* jar as .prev for a one-step rollback.
+if [[ -f $DEST ]] && unzip -tq "$DEST" >/dev/null 2>&1; then
+  sudo cp "$DEST" /opt/photonvision/photonvision.jar.prev
 fi
 sudo install -m 644 "$JAR" "$DEST"
 
