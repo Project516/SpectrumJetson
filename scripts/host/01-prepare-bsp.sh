@@ -71,7 +71,9 @@ while true; do
   [[ -n $pw && $pw == "$pw2" ]] && break
   echo "Passwords empty or did not match, try again."
 done
-sudo ./tools/l4t_create_default_user.sh -u "$user" -p "$pw" -n "$host" --accept-license
+# NVIDIA's script echoes the password in plain text; mask it.
+sudo ./tools/l4t_create_default_user.sh -u "$user" -p "$pw" -n "$host" --accept-license \
+  | sed -E 's/(Password - )[^,]*/\1********/'
 unset pw pw2
 
 echo
