@@ -126,10 +126,10 @@ and GCC 13 (Ubuntu 24.04), while JetPack 6 has GCC 11.
 
 | Piece | Version | Built on | Script |
 |---|---|---|---|
-| allwpilib | `v2026.2.1` (not `main`: `wpi/jni_util.h` moved) | Jetson, `-j4` (more OOMs on wpimath) | `scripts/jetson/04-build-allwpilib.sh` |
-| GpuDetectorJNI | `FRC-Team-4143` `ef9fc1e`, CUDA arch 87 | Jetson | (next) |
+| allwpilib | `v2026.2.1` (not `main`: `wpi/jni_util.h` moved) | Jetson, `-j4` (more OOMs on wpimath); **17 min** in MAXN SUPER | `scripts/jetson/04-build-allwpilib.sh` |
+| GpuDetectorJNI | `FRC-Team-4143` `ef9fc1e`, CUDA arch 87 → `/usr/lib/lib971apriltag.so` | Jetson | `scripts/jetson/05-build-gpudetector.sh` |
 | PhotonVision fork jar | `d8c9e8e`, Java 17 target | Laptop (Node 22, pnpm 10, Temurin 17, as in CI) | `scripts/host/03-build-photonvision-fork.sh` |
-| Java runtime | **17** for the fork (the PV 2027 installer made 25 the default) | | |
+| Java runtime | **17** for the fork (the PV 2027 installer made 25 the default) | systemd drop-in `photonvision.service.d/java17.conf` | `scripts/jetson/06-install-fork-jar.sh <jar>` |
 
 `scripts/jetson/03-photonvision.sh` installs upstream `v2027.0.0-alpha-2` (CPU only).
 That's a placeholder, and it provides the systemd service; the fork jar replaces its
