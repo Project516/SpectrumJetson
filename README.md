@@ -142,15 +142,29 @@ bundled OpenCV 4.10. That's fine while `cv::Mat`'s layout is unchanged, but frag
 
 ## First CUDA results (2026-09-23)
 
-One Thriftiest Cam, 1280×800 MJPEG @ 120, AprilTagCuda pipeline, tag 3 in view:
-**~33 FPS, ~44 ms latency, GPU at about 11%, no thread saturated.** The time goes to
-971's host round-trips between GPU stages and PhotonVision's CPU MJPEG
-decode/encode, not to GPU compute. Not yet tuned (decimation, stream resolution,
-the per-detection `std::cout`).
+One Thriftiest Cam, 1280×800 MJPEG, AprilTagCuda pipeline. Timing comes from
+`gpudetector-timing-stats.patch` (`971 stats …` lines in `journalctl -u photonvision`).
+
+| Stage | Cost | Limit |
+|---|---|---|
+| Camera, 1280×800 MJPEG (measured with `v4l2-ctl --stream-mmap`, PV stopped) | n/a | ~120 fps |
+| **Exposure.** The UI's "µs" is really **100 µs units** (V4L2 `exposure_time_absolute`); 295 = 29.5 ms | n/a | ~34 fps at 295; ~50 fps at 100; ~61–63 fps at ≤83 |
+| PhotonVision capture (MJPEG decode → BGR → gray, streams) | ~16 ms/frame | **~63 fps (current bottleneck)** |
+| 971 CUDA detector | **1.8–3.5 ms/frame** | 300+ fps |
+
+- **Exposure under shop lights:** mains lighting flickers at 120 Hz (8.33 ms). Under
+  about 70 (7 ms), detections looked unstable in the UI, yet the raw detector found the
+  tag in **100% of frames** at every exposure from 30 to 295. The flicker comes from
+  PhotonVision's decision-margin filter (default 35), not from detection. Use **~83**
+  in the shop, and lower the decision margin if needed. Retune on the event field.
+- **The camera has no UVC gain control**, only exposure and brightness.
+- Other teams on Chief Delphi report the same ~32–36 fps with an idle GPU (thread
+  483803). 4143 reported 2×1280×800 at 55 fps each.
 
 - **3D mode needs a calibration at the active resolution** (ChArUco, in the Calibration
   tab). The intrinsics also feed the 971 detector via `setparams`.
-- **Stray CUDA error.** After switching pipeline type and resolution while running,
+- **Stray CUDA error** (a known CCCL 2.5 behavior, [NVIDIA/cccl#1791](https://github.com/NVIDIA/cccl/issues/1791)).
+  After switching pipeline type and resolution while running,
   every frame logged `Check failed: cub::DeviceSelect::If(...) (invalid device
   ordinal)`. CUB checks `cudaPeekAtLastError()`, so a *stale* error from an unchecked
   call (e.g. the unchecked `cub::DeviceReduce::ReduceByKey`) makes the peak-filter
@@ -162,6 +176,22 @@ the per-detection `std::cout`).
 - Streams render in Firefox; the in-app browser pane doesn't show them.
 - The camera is on the devkit's single onboard USB 2.0 hub (all 4 USB-A ports), so
   two cameras will share 480 Mbps.
+
+## Detector source: where the current 971 code lives (research, 2026-09-23)
+
+- `frc971/971-Robot-Code` is **archived**. Austin Schuh's live code is in
+  **RealtimeRoboticsGroup/aos `frc/orin/`** (HEAD `8d8a7315e`), used by 4646/1868.
+  971's own CMake/nvcc build of it for CUDA 12.6 / sm_87 is
+  **frc971/bos `third_party/971apriltag`**, and frc971/cos adds CUDA 13 shims.
+- The 4143 copy matches upstream from about 2024-08-11. It is missing, among others,
+  **`3e570d5a` (a memory leak on every quad decode)**, `86f0ac3f` (32-bit types),
+  `8e7d6743` (async memcpy) and the `76d8f216` tuning.
+- **4143 JNI bugs:** detector slots are never reused, so after 10 creates it uses
+  `detectors[-1]` (UB), which pipeline switches and resolution changes can trigger;
+  `delete` is used on an `apriltag_detector_t`; the tag family leaks; `CHECK_CUDA`
+  only prints.
+- `mashed26/GpuDetectorJNI` has a better JNI layer (handle map, proper destroy,
+  CCCL 3), but a different Java API, so it isn't a drop-in replacement.
 
 ## Changes from the handoff
 
