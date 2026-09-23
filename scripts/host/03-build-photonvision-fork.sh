@@ -46,7 +46,13 @@ if [[ ! -d $SRC/.git ]]; then
 fi
 cd "$SRC"
 git fetch -q origin
-git checkout -q "$FORK_SHA"
+# Reset to the pinned commit, then apply our patches (see patches/).
+git checkout -q -f "$FORK_SHA"
+for p in "$REPO_ROOT"/patches/photonvision-*.patch; do
+  [[ -e $p ]] || continue
+  echo "==> Applying $(basename "$p")"
+  git apply "$p"
+done
 # Upstream tags give the jar a sane version string (e.g. v2026.1.1-27-gd8c9e8e1).
 git fetch -q --tags https://github.com/PhotonVision/photonvision.git || true
 
