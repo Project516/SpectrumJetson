@@ -47,12 +47,50 @@ Settings shared by the scripts live in [config.env](config.env).
    This takes about 10-20 minutes and writes a log to `logs/`. It temporarily stops
    NetworkManager from managing the Jetson's USB network interface and opens ufw
    for `fc00:1:1::/48`, then restores both.
-5. **Verify on the Jetson.** SSH over the USB-C cable to `192.168.55.1`, or use a
-   monitor and keyboard:
+5. **Get into the Jetson.** After the flash it boots from NVMe and shows up over the
+   USB-C cable as `0955:7020`. The Jetson is `192.168.55.1`; the host gets
+   `192.168.55.100` by DHCP. Install a key so later steps can run over SSH:
    ```bash
-   scripts/jetson/01-verify.sh
-   sudo apt update && sudo apt install -y nvidia-jetpack   # CUDA/cuDNN/TensorRT
+   ssh-keygen -t ed25519 -N "" -f ~/.ssh/jetson_ed25519   # once per host
+   ssh-copy-id -i ~/.ssh/jetson_ed25519.pub spectrum3847@192.168.55.1
    ```
+   Copy the scripts over:
+   ```bash
+   tar czf - --exclude=logs --exclude=.git . | ssh -i ~/.ssh/jetson_ed25519 spectrum3847@192.168.55.1 'mkdir -p ~/SpectrumJetson && tar xzf - -C ~/SpectrumJetson'
+   ```
+6. **Verify, then enable MAXN SUPER** (on the Jetson):
+   ```bash
+   ~/SpectrumJetson/scripts/jetson/01-verify.sh
+   ```
+   Expected: all three PASS lines, and `nvpmodel -q` reports `MAXN_SUPER` / `2`. At
+   idle, `tegrastats` shows all 6 CPU cores at 1728 MHz. The mode persists across
+   reboots (`/var/lib/nvpmodel/status` = `pmode:0002`); `jetson_clocks` does not.
+7. **Get the Jetson online.** It has no internet over USB, and its clock is wrong
+   until NTP syncs, which breaks apt's TLS. Wi-Fi is easiest; the password is prompted
+   for, not echoed:
+   ```bash
+   sudo nmcli --ask dev wifi connect <SSID> ifname wlP1p1s0
+   ```
+8. **Install JetPack components** (CUDA/cuDNN/TensorRT) and the build environment
+   (on the Jetson):
+   ```bash
+   ~/SpectrumJetson/scripts/jetson/02-jetpack.sh
+   ```
+
+## Gotchas seen on the first flash (2026-09-23)
+
+- **Recovery-mode header:** the 12-pin J14 is tucked under the module. The 40-pin
+  header is the wrong one.
+- **Password leak:** NVIDIA's `l4t_create_default_user.sh` prints the password in
+  plain text. `01-prepare-bsp.sh` now masks it. Change the password with `passwd`
+  after first boot if it was ever shown.
+- **"Waiting for target to boot-up..."** repeats for about 30 s while the flashing
+  initrd boots. That's normal. The flash is only done at `Flash is successful`,
+  once the QSPI write after "Successfully flashed the external device" finishes.
+  Don't unplug the board at the external-device message.
+- **Harmless flash warnings:** "backup GPT table is corrupt", missing
+  `/dev/mmcblk0boot0` (there's no eMMC), "Skip writing ... no image is specified".
+- The whole flash took about 7 minutes on a 16-core host.
 
 ## Vision stack (not yet scripted)
 
