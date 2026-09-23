@@ -1,0 +1,234 @@
+diff --git a/GpuDetectorJNI.cc b/GpuDetectorJNI.cc
+index 878f36a..827e424 100644
+--- a/GpuDetectorJNI.cc
++++ b/GpuDetectorJNI.cc
+@@ -1,4 +1,6 @@
+ #include <chrono>
++#include <mutex>
++#include <cuda_runtime.h>
+ #include <jni.h>
+ #include <wpi/jni_util.h>
+ #include <opencv2/core/mat.hpp>
+@@ -45,10 +47,23 @@ struct detectorstruct {
+ 	apriltag_detector_t *apriltag_detector_;
+ 	frc971::apriltag::CameraMatrix camera_matrix;
+ 	frc971::apriltag::DistCoeffs dist_coeffs;
++	// SpectrumJetson: slots are reused after destroy; the family is kept so it
++	// can be freed; the mutex stops destroy/setparams racing processimage.
++	apriltag_family_t *family_ = nullptr;
++	bool in_use = false;
++	std::mutex mu;
+ };
+ 
+-detectorstruct detectors[10];
+-int maxdetectors = 0;
++constexpr int kMaxDetectors = 10;
++detectorstruct detectors[kMaxDetectors];
++std::mutex detectors_alloc_mu;
++
++// Returns the slot for a live handle, or nullptr (never indexes out of range).
++static detectorstruct *slot(jlong handle) {
++  if (handle < 0 || handle >= kMaxDetectors) return nullptr;
++  if (!detectors[handle].in_use) return nullptr;
++  return &detectors[handle];
++}
+ 
+ // makes a tag detector.
+ apriltag_detector_t *maketagdetector(apriltag_family_t *tag_family) {
+@@ -165,53 +180,72 @@ JNIEXPORT jlong JNICALL
+ Java_org_photonvision_jni_GpuDetectorJNI_createGpuDetector(JNIEnv * jenv, jobject jobj, jint width, jint height) {
+     std::cout << "creategpudetector " << width << "x" << height << std::endl;
+ 
+-    if (maxdetectors > 9) {
++    std::lock_guard<std::mutex> alloc_lock(detectors_alloc_mu);
++    int h = -1;
++    for (int i = 0; i < kMaxDetectors; ++i) {
++      if (!detectors[i].in_use) { h = i; break; }
++    }
++    if (h < 0) {
+             std::cout << "creategpudetector too many detectors" << std::endl;
+ 	    return -1;
+     }
+-    detectorstruct detector;
+-    detector.camera_matrix = create_camera_matrix();
+-    detector.dist_coeffs = create_distortion_coefficients();
+-    detector.apriltag_detector_ = maketagdetector(tag36h11_create());
+-    detector.gpu_detector_ = 
++    detectorstruct &d = detectors[h];
++    std::lock_guard<std::mutex> lock(d.mu);
++    d.camera_matrix = create_camera_matrix();
++    d.dist_coeffs = create_distortion_coefficients();
++    d.family_ = tag36h11_create();
++    d.apriltag_detector_ = maketagdetector(d.family_);
++    d.gpu_detector_ = 
+ 	    new frc971::apriltag::GpuDetector(width, height, 
+-	   	 detector.apriltag_detector_, 
+-		 detector.camera_matrix, detector.dist_coeffs);
+-
+-    detectors[maxdetectors] = detector;
+-    return maxdetectors++;
++	   	 d.apriltag_detector_, 
++		 d.camera_matrix, d.dist_coeffs);
++    d.in_use = true;
++    std::cout << "creategpudetector handle " << h << std::endl;
++    return h;
+ }
+ 
+ JNIEXPORT void JNICALL
+ Java_org_photonvision_jni_GpuDetectorJNI_setparams(JNIEnv * jenv, jobject jobj, jlong handle, jdouble fx, jdouble cx, jdouble fy, jdouble cy, jdouble k1, jdouble k2, jdouble p1, jdouble p2, jdouble k3) {
+     std::cout << "setparams" << std::endl;
+-    if(!detectors[handle].gpu_detector_) {
++    detectorstruct *d = slot(handle);
++    if (!d) {
++        std::cout << "971 library bad handle " << handle << " in setparams" << std::endl;
++        return;
++    }
++    std::lock_guard<std::mutex> lock(d->mu);
++    if(!d->gpu_detector_) {
+         std::cout << "971 library lost gpu_detector ptr setparams" << std::endl;
+         return;
+     }
+-    int cols = detectors[handle].gpu_detector_->width();
+-    int rows =  detectors[handle].gpu_detector_->height();
++    int cols = d->gpu_detector_->width();
++    int rows =  d->gpu_detector_->height();
+     std::cout << "fx " << fx << " cx " << cx << " fy " << fy << " cy " << cy << std::endl;
+     std::cout << "k1 " << k1 << " k2 " << k2 << " p1 " << p1 << " p2 " << p2 << " k3 " << k3 << std::endl;
+-    detectors[handle].camera_matrix = frc971::apriltag::CameraMatrix{fx, cx, fy, cy};
+-    detectors[handle].dist_coeffs = frc971::apriltag::DistCoeffs{ k1, k2, p1, p2, k3};
+-    delete(detectors[handle].gpu_detector_);
+-    detectors[handle].gpu_detector_ = new frc971::apriltag::GpuDetector(cols, rows, 
+-    detectors[handle].apriltag_detector_, 
+-    detectors[handle].camera_matrix, detectors[handle].dist_coeffs);
++    d->camera_matrix = frc971::apriltag::CameraMatrix{fx, cx, fy, cy};
++    d->dist_coeffs = frc971::apriltag::DistCoeffs{ k1, k2, p1, p2, k3};
++    delete(d->gpu_detector_);
++    d->gpu_detector_ = new frc971::apriltag::GpuDetector(cols, rows, 
++    d->apriltag_detector_, 
++    d->camera_matrix, d->dist_coeffs);
+ }
+ 
+ JNIEXPORT void JNICALL
+ Java_org_photonvision_jni_GpuDetectorJNI_destroyGpuDetector(JNIEnv * jenv, jobject jobj, jlong handle) {
+-    std::cout << "destroygpudetector" << std::endl;
+-    if(!detectors[handle].gpu_detector_) {
+-        std::cout << "971 library lost gpu_detector ptr" << std::endl;
++    std::cout << "destroygpudetector handle " << handle << std::endl;
++    std::lock_guard<std::mutex> alloc_lock(detectors_alloc_mu);
++    detectorstruct *d = slot(handle);
++    if (!d) {
++        std::cout << "971 library bad handle " << handle << " in destroy" << std::endl;
+         return;
+     }
+-    delete(detectors[handle].gpu_detector_);
+-    detectors[handle].gpu_detector_ = nullptr;
+-    delete(detectors[handle].apriltag_detector_);
+-    detectors[handle].apriltag_detector_ = nullptr;
++    std::lock_guard<std::mutex> lock(d->mu);
++    delete d->gpu_detector_;
++    d->gpu_detector_ = nullptr;
++    if (d->apriltag_detector_) apriltag_detector_destroy(d->apriltag_detector_);
++    d->apriltag_detector_ = nullptr;
++    if (d->family_) tag36h11_destroy(d->family_);
++    d->family_ = nullptr;
++    d->in_use = false;
+ }
+ 
+ JNIEXPORT jobjectArray JNICALL
+@@ -225,22 +259,38 @@ Java_org_photonvision_jni_GpuDetectorJNI_processimage(JNIEnv * jenv, jobject job
+              std::cout << "971 library got a zero pointer in mat" << std::endl;
+ 	     return nullptr;
+ 	}
+-	if(!detectors[handle].gpu_detector_) {
++	detectorstruct *d = slot(handle);
++	if (!d) {
++             std::cout << "971 library bad handle " << handle << std::endl;
++	     return nullptr;
++	}
++	std::lock_guard<std::mutex> lock(d->mu);
++	// Clear any CUDA error left by an earlier unchecked call; CUB (CCCL >= 2.5)
++	// otherwise fails later calls with it (NVIDIA/cccl#1791).
++	if (cudaError_t stale = cudaGetLastError(); stale != cudaSuccess) {
++	     static bool logged = false;
++	     if (!logged) {
++	          logged = true;
++	          std::cout << "971 library cleared stale CUDA error before detect: "
++	                    << cudaGetErrorString(stale) << std::endl;
++	     }
++	}
++	if(!d->gpu_detector_) {
+              std::cout << "971 library lost gpu_detector ptr" << std::endl;
+ 	     return nullptr;
+-	} else if(img.cols != detectors[handle].gpu_detector_->width() || 
+-		img.rows != detectors[handle].gpu_detector_->height()) {
++	} else if(img.cols != d->gpu_detector_->width() || 
++		img.rows != d->gpu_detector_->height()) {
+              std::cout << "971 library image size mismatch" << std::endl;
+-             delete(detectors[handle].gpu_detector_);
+-             detectors[handle].gpu_detector_ = new frc971::apriltag::GpuDetector(img.cols, img.rows, 
+-	    detectors[handle].apriltag_detector_, 
+-	    detectors[handle].camera_matrix, detectors[handle].dist_coeffs);
++             delete(d->gpu_detector_);
++             d->gpu_detector_ = new frc971::apriltag::GpuDetector(img.cols, img.rows, 
++	    d->apriltag_detector_, 
++	    d->camera_matrix, d->dist_coeffs);
+ 	}
+         auto spectrum_t0 = std::chrono::steady_clock::now();
+-        detectors[handle].gpu_detector_->DetectGrayHost((unsigned char *)img.ptr());
++        d->gpu_detector_->DetectGrayHost((unsigned char *)img.ptr());
+         auto spectrum_t1 = std::chrono::steady_clock::now();
+ 
+-        const zarray_t *detections = detectors[handle].gpu_detector_->Detections();
++        const zarray_t *detections = d->gpu_detector_->Detections();
+         auto spectrum_result = MakeJObject(jenv, detections);
+         auto spectrum_t2 = std::chrono::steady_clock::now();
+ 
+diff --git a/frc971/orin/971apriltag.cu b/frc971/orin/971apriltag.cu
+index f6cc3ca..34316d5 100644
+--- a/frc971/orin/971apriltag.cu
++++ b/frc971/orin/971apriltag.cu
+@@ -965,12 +965,12 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+ 
+     size_t temp_storage_bytes =
+         temp_storage_bounds_reduce_by_key_device_.size();
+-    cub::DeviceReduce::ReduceByKey(
++    CHECK_CUDA(cub::DeviceReduce::ReduceByKey(
+         temp_storage_bounds_reduce_by_key_device_.get(), temp_storage_bytes,
+         key_input_iterator, key_discard_iterator, value_input_iterator,
+         extents_device_.get(), num_quads_device_.get(), reduce,
+-        num_compressed_union_marker_pair_host, stream_.get());
+-    SPECTRUM_CUDA_PEEK("ReduceByKey(unchecked)");
++        num_compressed_union_marker_pair_host, stream_.get()));
++    SPECTRUM_CUDA_PEEK("ReduceByKey");
+     after_bounds_.Record(&stream_);
+ 
+     num_quads_device_.MemcpyTo(&num_quads_host);
+@@ -1182,11 +1182,11 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+ 
+     size_t temp_storage_bytes =
+         temp_storage_bounds_reduce_by_key_device_.size();
+-    cub::DeviceReduce::ReduceByKey(
++    CHECK_CUDA(cub::DeviceReduce::ReduceByKey(
+         temp_storage_bounds_reduce_by_key_device_.get(), temp_storage_bytes,
+         key_input_iterator, key_discard_iterator, value_input_iterator,
+         peak_extents_device_.get(), num_quad_peaked_quads_device_.get(), reduce,
+-        num_compressed_peaks_host, stream_.get());
++        num_compressed_peaks_host, stream_.get()));
+     MaybeCheckAndSynchronize("cub::DeviceReduce::ReduceByKey");
+     SPECTRUM_CUDA_PEEK("cub::DeviceReduce::ReduceByKey #10");
+ 
+diff --git a/frc971/orin/apriltag_detect.cu b/frc971/orin/apriltag_detect.cu
+index f898411..4b97ca7 100644
+--- a/frc971/orin/apriltag_detect.cu
++++ b/frc971/orin/apriltag_detect.cu
+@@ -615,6 +615,10 @@ void GpuDetector::QuadDecodeTask(void *_u) {
+ 
+     quad_decode_index(td, &quad_original, im, task->im_samples,
+                       task->detections);
++
++    // SpectrumJetson: memory leak fix from RealtimeRoboticsGroup/aos 3e570d5a.
++    if (quad_original.H) matd_destroy(quad_original.H);
++    if (quad_original.Hinv) matd_destroy(quad_original.Hinv);
+   }
+ }
+ 
