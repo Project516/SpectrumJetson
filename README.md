@@ -92,19 +92,47 @@ Settings shared by the scripts live in [config.env](config.env).
   `/dev/mmcblk0boot0` (there's no eMMC), "Skip writing ... no image is specified".
 - The whole flash took about 7 minutes on a 16-core host.
 
-## Vision stack (not yet scripted)
+## Vision stack: 2026 CUDA fork on the Jetson, 2027 robot code
 
-- PhotonVision fork: `FRC-Team-4143/photonvision`. The `jetson-orin` and `main`
-  branches are identical at `d8c9e8e` (2026-01-30), based on WPILib **2026.2.1**.
-  Upstream PhotonVision still has no Jetson/CUDA support, so the fork is required.
-- Detector: `FRC-Team-4143/GpuDetectorJNI` @ `ef9fc1e`, built with CUDA arch 87.
-- Build **allwpilib at tag `v2026.2.1`**, not `main`. `main` has moved
-  `wpi/jni_util.h`, so GpuDetectorJNI won't compile against it. The tag also
-  matches the fork's `wpilibVersion`, which avoids a runtime ABI mismatch with
-  `libwpiutil`.
-- Keep `cmake --build . --parallel 4` for allwpilib; higher can OOM on wpimath.
-- Known detector rough edges: per-detection `std::cout` in the hot path; a maximum
-  of 10 detector handles per process, which are never recycled.
+**Target event:** October 2026 off-season, playing as **team 8515**. Robot code is
+[`Spectrum3847/2026-FM-SystemCore`](https://github.com/Spectrum3847/2026-FM-SystemCore)
+(WPILib 2027.0.0-alpha-6 on a **SystemCore**, vendordep `photonlib v2027.0.0-alpha-2`).
+The field is the **2026 Rebuilt AndyMark** layout, on the Jetson and in robot code.
+
+**Decision:** the Jetson runs the **unmodified 2026** `FRC-Team-4143/photonvision` fork
+(`d8c9e8e`, WPILib 2026.2.1) with 971's CUDA detector. The robot uses **stock**
+photonlib alpha-2. This works because everything on the wire is identical between the
+fork's base and the alpha-6 era (checked in source on 2026-09-23, not yet on hardware):
+
+- **Serde hashes match** (`PhotonPipelineResult` = `4b2ff16a964b5e2bf04be0c1454d91c4`,
+  and all sub-messages). PhotonLib only throws on a hash mismatch; a different
+  version string just logs.
+- **NT4:** the same subprotocol, port 5810 and encoding. 2026 and 2027 clients both
+  try `10.TE.AM.2` first, so SystemCore is `10.85.15.2`.
+- **Time sync:** the same UDP 5810 packet layout and microsecond timebase.
+
+> **Do not upgrade the robot's photonlib past the alpha-6 era.** PhotonVision `main`
+> after alpha-7 (`a6167b0`, 2026-09-17) renamed the timestamp fields, which changed the
+> hashes, and the robot would throw against this Jetson.
+
+Porting CUDA to 2027 PhotonVision was rejected. 2027 allwpilib needs JDK 25, C++23
+and GCC 13 (Ubuntu 24.04), while JetPack 6 has GCC 11.
+
+| Piece | Version | Built on | Script |
+|---|---|---|---|
+| allwpilib | `v2026.2.1` (not `main`: `wpi/jni_util.h` moved) | Jetson, `-j4` (more OOMs on wpimath) | `scripts/jetson/04-build-allwpilib.sh` |
+| GpuDetectorJNI | `FRC-Team-4143` `ef9fc1e`, CUDA arch 87 | Jetson | (next) |
+| PhotonVision fork jar | `d8c9e8e`, Java 17 target | Laptop (Node 22, pnpm 10, Temurin 17, as in CI) | `scripts/host/03-build-photonvision-fork.sh` |
+| Java runtime | **17** for the fork (the PV 2027 installer made 25 the default) | | |
+
+`scripts/jetson/03-photonvision.sh` installs upstream `v2027.0.0-alpha-2` (CPU only).
+That's a placeholder, and it provides the systemd service; the fork jar replaces its
+jar.
+
+Known detector rough edges: per-detection `std::cout` in the hot path, and a maximum
+of 10 detector handles per process, never recycled. The native lib casts a `jlong` to
+`cv::Mat*` compiled against JetPack's OpenCV 4.8 headers while PhotonVision runs its
+bundled OpenCV 4.10. That's fine while `cv::Mat`'s layout is unchanged, but fragile.
 
 ## Changes from the handoff
 
@@ -114,11 +142,10 @@ Settings shared by the scripts live in [config.env](config.env).
 - The flash command adds `--erase-all`, per the 36.5.2 Quick Start.
 - allwpilib is pinned to `v2026.2.1` instead of `main`.
 - CUDA isn't part of a BSP-only flash; install `nvidia-jetpack` after first boot.
+- The 2026 fork runs against 2027 alpha-6 robot code (see above).
 
-## Open questions (handoff §9)
+## Open questions
 
-1. Robot network: static IP or DHCP/mDNS, and the hostname.
-2. Should PhotonVision run as a boot service? (Likely yes.)
-3. Is the 4143 fork still current for the 2027 season? It has had no commits since
-   2026-01-30, and upstream is already on 2027 alphas with renamed `org.wpilib.*`
-   packages.
+1. Robot network: static IP for the Jetson on `10.85.15.x` (e.g. `.11`), or DHCP?
+2. Answered: PhotonVision runs as a boot service (`photonvision.service`).
+3. Answered: the fork is 2026-only, and it's used as-is (see above).
