@@ -140,6 +140,29 @@ of 10 detector handles per process, never recycled. The native lib casts a `jlon
 `cv::Mat*` compiled against JetPack's OpenCV 4.8 headers while PhotonVision runs its
 bundled OpenCV 4.10. That's fine while `cv::Mat`'s layout is unchanged, but fragile.
 
+## First CUDA results (2026-09-23)
+
+One Thriftiest Cam, 1280×800 MJPEG @ 120, AprilTagCuda pipeline, tag 3 in view:
+**~33 FPS, ~44 ms latency, GPU at about 11%, no thread saturated.** The time goes to
+971's host round-trips between GPU stages and PhotonVision's CPU MJPEG
+decode/encode, not to GPU compute. Not yet tuned (decimation, stream resolution,
+the per-detection `std::cout`).
+
+- **3D mode needs a calibration at the active resolution** (ChArUco, in the Calibration
+  tab). The intrinsics also feed the 971 detector via `setparams`.
+- **Stray CUDA error.** After switching pipeline type and resolution while running,
+  every frame logged `Check failed: cub::DeviceSelect::If(...) (invalid device
+  ordinal)`. CUB checks `cudaPeekAtLastError()`, so a *stale* error from an unchecked
+  call (e.g. the unchecked `cub::DeviceReduce::ReduceByKey`) makes the peak-filter
+  select bail out and use stale data, while detections still appear.
+  [`patches/gpudetector-cuda-peek.patch`](patches/gpudetector-cuda-peek.patch) clears
+  pending errors after each stage and logs the first one per stage as
+  `CUDA_PEEK after <stage>`. After a clean restart the error hasn't come back, so
+  the root cause is still unconfirmed. If it reappears, the log names the stage.
+- Streams render in Firefox; the in-app browser pane doesn't show them.
+- The camera is on the devkit's single onboard USB 2.0 hub (all 4 USB-A ports), so
+  two cameras will share 480 Mbps.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,

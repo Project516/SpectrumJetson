@@ -1,0 +1,133 @@
+diff --git a/frc971/orin/971apriltag.cu b/frc971/orin/971apriltag.cu
+index f025db4..f6cc3ca 100644
+--- a/frc971/orin/971apriltag.cu
++++ b/frc971/orin/971apriltag.cu
+@@ -1,3 +1,4 @@
++#include <iostream>
+ #include "frc971/orin/971apriltag.h"
+ 
+ #include <cub/device/device_copy.cuh>
+@@ -17,6 +18,20 @@
+ #include "frc971/orin/threshold.h"
+ #include "frc971/orin/transform_output_iterator.h"
+ 
++// SpectrumJetson: report (once per stage) and clear any pending CUDA error, so a
++// stale error from an unchecked call can't make later CUB calls bail out via
++// cudaPeekAtLastError.
++#define SPECTRUM_CUDA_PEEK(stage)                                              \
++  do {                                                                         \
++    cudaError_t spectrum_e_ = cudaGetLastError();                              \
++    static bool spectrum_logged_ = false;                                      \
++    if (spectrum_e_ != cudaSuccess && !spectrum_logged_) {                     \
++      spectrum_logged_ = true;                                                 \
++      std::cerr << "CUDA_PEEK after " stage ": "                               \
++                << cudaGetErrorString(spectrum_e_) << std::endl;               \
++    }                                                                          \
++  } while (0)
++
+ namespace frc971::apriltag {
+ namespace {
+ 
+@@ -874,6 +889,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         union_markers_size_device_.get(), union_marker_pair_device_.get(),
+         decimated_width, decimated_height);
+     MaybeCheckAndSynchronize("BlobDiff");
++    SPECTRUM_CUDA_PEEK("BlobDiff #1");
+   }
+ 
+   // TODO(austin): Can I do the first step of the zero removal in the BlobDiff
+@@ -895,6 +911,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         union_marker_pair_device_.size(), nz, stream_.get()));
+ 
+     MaybeCheckAndSynchronize("cub::DeviceSelect::If");
++    SPECTRUM_CUDA_PEEK("cub::DeviceSelect::If #2");
+   }
+ 
+   after_compact_.Record(&stream_);
+@@ -918,6 +935,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         stream_.get()));
+ 
+     MaybeCheckAndSynchronize("cub::DeviceRadixSort::SortKeys");
++    SPECTRUM_CUDA_PEEK("cub::DeviceRadixSort::SortKeys #3");
+   }
+ 
+   after_sort_.Record(&stream_);
+@@ -952,6 +970,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         key_input_iterator, key_discard_iterator, value_input_iterator,
+         extents_device_.get(), num_quads_device_.get(), reduce,
+         num_compressed_union_marker_pair_host, stream_.get());
++    SPECTRUM_CUDA_PEEK("ReduceByKey(unchecked)");
+     after_bounds_.Record(&stream_);
+ 
+     num_quads_device_.MemcpyTo(&num_quads_host);
+@@ -998,6 +1017,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         num_quads_host));
+ 
+     MaybeCheckAndSynchronize("cub::DeviceScan::InclusiveScan");
++    SPECTRUM_CUDA_PEEK("cub::DeviceScan::InclusiveScan #4");
+   }
+ 
+   after_transform_extents_.Record(&stream_);
+@@ -1030,6 +1050,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         select_blobs, stream_.get()));
+ 
+     MaybeCheckAndSynchronize("cub::DeviceSelect::If");
++    SPECTRUM_CUDA_PEEK("cub::DeviceSelect::If #5");
+ 
+     num_selected_blobs_device_.MemcpyAsyncTo(&num_selected_blobs_host,
+                                              &stream_);
+@@ -1049,6 +1070,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         IndexPoint::kBitsInKey, stream_.get()));
+ 
+     MaybeCheckAndSynchronize("cub::DeviceRadixSort::SortKeys");
++    SPECTRUM_CUDA_PEEK("cub::DeviceRadixSort::SortKeys #6");
+   }
+ 
+   after_filtered_sort_.Record(&stream_);
+@@ -1083,6 +1105,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         num_selected_blobs_host));
+ 
+     MaybeCheckAndSynchronize("cub::DeviceScan::InclusiveScanByKey");
++    SPECTRUM_CUDA_PEEK("cub::DeviceScan::InclusiveScanByKey #7");
+   }
+   after_line_fit_.Record(&stream_);
+ 
+@@ -1109,6 +1132,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+ 
+     after_peak_compression_.Record(&stream_);
+     MaybeCheckAndSynchronize("cub::DeviceSelect::If");
++    SPECTRUM_CUDA_PEEK("cub::DeviceSelect::If #8");
+     num_compressed_peaks_device_.MemcpyAsyncTo(&num_compressed_peaks_host,
+                                                &stream_);
+     after_peak_count_memcpy_.Record(&stream_);
+@@ -1127,6 +1151,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         stream_.get()));
+ 
+     MaybeCheckAndSynchronize("cub::DeviceRadixSort::SortKeys");
++    SPECTRUM_CUDA_PEEK("cub::DeviceRadixSort::SortKeys #9");
+   }
+ 
+   after_peak_sort_.Record(&stream_);
+@@ -1163,12 +1188,14 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         peak_extents_device_.get(), num_quad_peaked_quads_device_.get(), reduce,
+         num_compressed_peaks_host, stream_.get());
+     MaybeCheckAndSynchronize("cub::DeviceReduce::ReduceByKey");
++    SPECTRUM_CUDA_PEEK("cub::DeviceReduce::ReduceByKey #10");
+ 
+     after_filtered_peak_reduce_.Record(&stream_);
+ 
+     num_quad_peaked_quads_device_.MemcpyAsyncTo(&num_quad_peaked_quads_host,
+                                                 &stream_);
+     MaybeCheckAndSynchronize("num_quad_peaked_quads_device_.MemcpyTo");
++    SPECTRUM_CUDA_PEEK("num_quad_peaked_quads_device_.MemcpyTo #11");
+     after_filtered_peak_host_memcpy_.Record(&stream_);
+     after_filtered_peak_host_memcpy_.Synchronize();
+   }
+@@ -1181,6 +1208,7 @@ void GpuDetector::DetectGray2(uint8_t *image) {
+         selected_extents_device_.get(), tag_detector_->qtp.max_line_fit_mse,
+         tag_detector_->qtp.cos_critical_rad, fit_quads_device_.get(), &stream_);
+     MaybeCheckAndSynchronize("FitQuads");
++    SPECTRUM_CUDA_PEEK("FitQuads #12");
+   }
+   after_quad_fit_.Record(&stream_);
+ 

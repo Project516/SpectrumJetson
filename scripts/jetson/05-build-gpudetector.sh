@@ -7,6 +7,7 @@ set -euo pipefail
 REPO=https://github.com/FRC-Team-4143/GpuDetectorJNI.git
 SHA=ef9fc1ec7e43116849e71fef1ab335ba630274a7
 SRC=$HOME/build/GpuDetectorJNI
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
 export PATH=$PATH:/usr/local/cuda/bin
@@ -20,7 +21,13 @@ if [[ ! -d $SRC/.git ]]; then
   git clone "$REPO" "$SRC"
 fi
 cd "$SRC"
-git checkout -q "$SHA"
+# Reset to the pinned commit, then apply our patches (see patches/).
+git checkout -q -f "$SHA"
+for p in "$REPO_ROOT"/patches/gpudetector-*.patch; do
+  [[ -e $p ]] || continue
+  echo "==> Applying $(basename "$p")"
+  git apply "$p"
+done
 
 echo "==> Building bundled apriltag"
 cmake -S third_party/apriltag -B third_party/apriltag/build -DCMAKE_BUILD_TYPE=Release
