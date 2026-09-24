@@ -698,6 +698,54 @@ only goes out when it changes.
 - **Health check:** the JPEG session's check now fails any camera whose V4L2 format differs from
   what PhotonVision set.
 
+### Hidden camera controls and stuck-camera recovery (2026-09-24, `photonvision-28`, `-29`)
+
+**`photonvision-28`: contrast, gamma, sharpness, backlight compensation.**
+- **Settings:** new `CVPipelineSettings` fields `cameraContrast`, `cameraGamma`, `cameraSharpness`,
+  `cameraBacklightCompensation`. -1 means the camera's default.
+- **Applying them:** `setPipeline` applies them on every switch; -1 restores the default, so
+  pipelines stay independent. They're set in the camera's own units (cscore's `raw_*` properties,
+  clamped to the camera's range).
+- **UI:** `UICameraConfiguration.extraControls` lists the controls the camera has (key, label,
+  min, max, step, default, value). The Input tab shows a slider for each, or a switch for on/off
+  ones. They're in the copy-settings Camera group.
+- **Thriftiest Cam ranges** (from the camera):
+  - contrast 0–95 (default 32)
+  - gamma 100–300 (default 150)
+  - sharpness 1–10 (default 5)
+  - backlight compensation 0–1 (default 1)
+- **Checked:** setting `cameraContrast` 40 over the websocket gave `contrast: 40` in `v4l2-ctl`;
+  -1 restored 32.
+
+**`photonvision-29`: stuck-camera recovery** (`StuckCameraWatchdog`, in `USBFrameProvider`).
+- **Usable frames:** every `getInputMat` result counts, meaning a non-empty image with a capture
+  time, from any decode path.
+- **Recovery:**
+  1. No usable frame for 3 s while the camera is connected: reconnect it (`kForceClose` →
+     `kAutoManage`).
+  2. Still none 5 s after that: a USB-level reset. The USB device's sysfs `authorized` is set to 0,
+     then after 1 s to 1, via `/sys/class/video4linux/videoN/device/..`. It re-enumerates like a
+     replug.
+  3. After that, a USB reset every 30 s while it stays stuck.
+- **Shared throttle:** the patch-27 mode-fix reconnects use the same throttle, so the two never
+  reconnect at once.
+- **Health:** `/photonvision/<camera>/health/recoveries` counts them.
+- **Test hook:** `/tmp/spectrum-camera-stuck-test`, listing camera names, drops those cameras'
+  frames. Delete it to end the test.
+- **Bench test, TopRight:**
+
+  | Time | What happened |
+  |---|---|
+  | 14:45:19 | Test started: TopRight's frames dropped |
+  | +3.0 s | Reconnect |
+  | +8.0 s | USB reset of `1-2.3` |
+  | +9.1 s | Kernel re-enumerated it: "Found UVC 1.00 device Thrifty", the payload cap re-applied, "authorized to connect". cscore reconnected |
+  | end of test | "delivering frames again, after a USB reset" |
+
+  Afterwards the health check passed: both cameras streaming 1280x800 MJPG as set, NVJPG 242
+  frames/s with checks ok, 122 fps each.
+- **Unit tests:** `StuckCameraWatchdogTest` 5/5 and `DirectDecodeTest` 4/4.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,

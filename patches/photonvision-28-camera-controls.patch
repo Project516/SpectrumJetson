@@ -1,0 +1,391 @@
+diff --git a/photon-client/src/components/dashboard/tabs/InputTab.vue b/photon-client/src/components/dashboard/tabs/InputTab.vue
+index 3f3fb8aa..be65f9c0 100644
+--- a/photon-client/src/components/dashboard/tabs/InputTab.vue
++++ b/photon-client/src/components/dashboard/tabs/InputTab.vue
+@@ -9,6 +9,7 @@ import { useStateStore } from "@/stores/StateStore";
+ import { getResolutionString } from "@/lib/PhotonUtils";
+ import { useDisplay } from "vuetify";
+ import TuningGuide from "./TuningGuide.vue";
++import type { ExtraCameraControl } from "@/types/SettingTypes";
+ 
+ // Due to something with libcamera or something else IDK much about, the 90° rotations need to be disabled if the libcamera drivers are being used.
+ // SpectrumJetson: USB (UVC) cameras take exposure in the UVC standard's units of 100 us, so
+@@ -78,6 +79,29 @@ const handleStreamResolutionChange = (value: number) => {
+     false
+   );
+ };
++// SpectrumJetson (photonvision-28): contrast, gamma, sharpness and backlight compensation, which the
++// stock UI doesn't show. Only the ones the camera has; -1 in the pipeline = the camera's default.
++const extraControls = computed(() => useCameraSettingsStore().currentCameraSettings.extraControls ?? []);
++const extraControlValue = (c: ExtraCameraControl) => {
++  const v = Number(useCameraSettingsStore().currentPipelineSettings[c.key]);
++  return Number.isFinite(v) && v >= 0 ? v : c.default;
++};
++const extraControlTooltips: Record<ExtraCameraControl["key"], string> = {
++  cameraContrast:
++    "Leave at the camera's default unless testing. Higher contrast can raise the decision margin at short exposures; too high clips tag edges. Check it against the decision margin and far tags.",
++  cameraGamma:
++    "Leave at the camera's default unless testing. The camera's tone curve: higher brightens mid-tones and changes how dark the tag's black cells look.",
++  cameraSharpness:
++    "Leave at the camera's default unless testing. The camera sharpens edges before JPEG compression. Sharpening can put halos on tag edges, which may shift corners, and makes JPEGs bigger (more USB bandwidth). Lower values are worth testing.",
++  cameraBacklightCompensation:
++    "Only matters with auto exposure. Leave it at the camera's default with auto exposure off."
++};
++const setExtraControl = (c: ExtraCameraControl, value: number | boolean) =>
++  useCameraSettingsStore().changeCurrentPipelineSetting(
++    { [c.key]: typeof value === "boolean" ? Number(value) : value },
++    false
++  );
++
+ const { mdAndDown } = useDisplay();
+ 
+ const interactiveCols = computed(() =>
+@@ -121,6 +145,27 @@ const interactiveCols = computed(() =>
+         (args) => useCameraSettingsStore().changeCurrentPipelineSetting({ cameraBrightness: args }, false)
+       "
+     />
++    <template v-for="c in extraControls" :key="c.key">
++      <pv-switch
++        v-if="c.max - c.min === 1"
++        :model-value="extraControlValue(c) === c.max"
++        :label="c.label"
++        :tooltip="`${extraControlTooltips[c.key]} Camera default: ${c.default === c.max ? 'on' : 'off'}.`"
++        :switch-cols="interactiveCols"
++        @update:modelValue="(v) => setExtraControl(c, v ? c.max : c.min)"
++      />
++      <pv-slider
++        v-else
++        :model-value="extraControlValue(c)"
++        :label="c.label"
++        :tooltip="`${extraControlTooltips[c.key]} Camera default: ${c.default}.`"
++        :min="c.min"
++        :max="c.max"
++        :step="c.step"
++        :slider-cols="interactiveCols"
++        @update:modelValue="(v) => setExtraControl(c, v)"
++      />
++    </template>
+     <pv-slider
+       v-if="useCameraSettingsStore().currentPipelineSettings.cameraGain >= 0"
+       v-model="useCameraSettingsStore().currentPipelineSettings.cameraGain"
+diff --git a/photon-client/src/components/dashboard/tabs/TuningGuide.vue b/photon-client/src/components/dashboard/tabs/TuningGuide.vue
+index 556450d5..8c55e5b5 100644
+--- a/photon-client/src/components/dashboard/tabs/TuningGuide.vue
++++ b/photon-client/src/components/dashboard/tabs/TuningGuide.vue
+@@ -48,6 +48,10 @@ const isObjectDetection = computed(() => pipelineType.value === PipelineType.Obj
+             <b>Brightness: 100</b>, to make up for the short exposure. These cameras report no gain control, so
+             brightness is what's left. If tag edges wash out, the decision margin drops: back off.
+           </li>
++          <li>
++            <b>Contrast, gamma, sharpness:</b> leave them at the camera's defaults unless you're testing them. Sharpness
++            is the one worth trying lower: the camera's sharpening can put halos on tag edges.
++          </li>
+           <li>
+             <b>Decision margin cutoff (AprilTag tab): 15</b> at 5 ms. Tags scoring below it are dropped. Set it a little
+             below what real tags score at your longest distance, and raise it if false tags appear.
+diff --git a/photon-client/src/stores/settings/CameraSettingsStore.ts b/photon-client/src/stores/settings/CameraSettingsStore.ts
+index 53d1d483..8aef8713 100644
+--- a/photon-client/src/stores/settings/CameraSettingsStore.ts
++++ b/photon-client/src/stores/settings/CameraSettingsStore.ts
+@@ -143,6 +143,7 @@ export const useCameraSettingsStore = defineStore("cameraSettings", {
+           cameraQuirks: d.cameraQuirks,
+           minWhiteBalanceTemp: d.minWhiteBalanceTemp,
+           maxWhiteBalanceTemp: d.maxWhiteBalanceTemp,
++          extraControls: d.extraControls ?? [],
+           matchedCameraInfo: d.matchedCameraInfo,
+           fpsLimit: d.fpsLimit,
+           isConnected: d.isConnected,
+diff --git a/photon-client/src/types/PipelineTypes.ts b/photon-client/src/types/PipelineTypes.ts
+index 21478a87..61565ef9 100644
+--- a/photon-client/src/types/PipelineTypes.ts
++++ b/photon-client/src/types/PipelineTypes.ts
+@@ -87,6 +87,12 @@ export interface PipelineSettings {
+   cameraWhiteBalanceTemp: number;
+ 
+   blockForFrames: boolean;
++
++  // SpectrumJetson (photonvision-28): -1 = the camera's own default
++  cameraContrast: number;
++  cameraGamma: number;
++  cameraSharpness: number;
++  cameraBacklightCompensation: number;
+ }
+ export type ConfigurablePipelineSettings = Partial<
+   Omit<
+@@ -153,7 +159,11 @@ export const DefaultPipelineSettings: Omit<
+   cameraWhiteBalanceTemp: 4000,
+   cameraMinExposureRaw: 1,
+   cameraMaxExposureRaw: 2,
+-  blockForFrames: true
++  blockForFrames: true,
++  cameraContrast: -1,
++  cameraGamma: -1,
++  cameraSharpness: -1,
++  cameraBacklightCompensation: -1
+ };
+ 
+ export interface ReflectivePipelineSettings extends PipelineSettings {
+diff --git a/photon-client/src/types/SettingTypes.ts b/photon-client/src/types/SettingTypes.ts
+index 5e5d38c0..7e102777 100644
+--- a/photon-client/src/types/SettingTypes.ts
++++ b/photon-client/src/types/SettingTypes.ts
+@@ -277,6 +277,9 @@ export interface UiCameraConfiguration {
+   minWhiteBalanceTemp: number;
+   maxWhiteBalanceTemp: number;
+ 
++  // SpectrumJetson (photonvision-28): contrast, gamma, sharpness, backlight compensation
++  extraControls: ExtraCameraControl[];
++
+   fpsLimit: number;
+ 
+   matchedCameraInfo: PVCameraInfo;
+@@ -285,6 +288,17 @@ export interface UiCameraConfiguration {
+   mismatch: boolean;
+ }
+ 
++// SpectrumJetson (photonvision-28): a camera control the stock UI doesn't show, as the camera reports it.
++export interface ExtraCameraControl {
++  key: "cameraContrast" | "cameraGamma" | "cameraSharpness" | "cameraBacklightCompensation";
++  label: string;
++  min: number;
++  max: number;
++  step: number;
++  default: number;
++  value: number;
++}
++
+ export interface CameraSettingsChangeRequest {
+   fov: number;
+   quirksToChange: Record<ValidQuirks, boolean>;
+@@ -438,6 +452,7 @@ export const PlaceholderCameraSettings: UiCameraConfiguration = reactive({
+   minExposureRaw: 1,
+   maxExposureRaw: 100,
+   minWhiteBalanceTemp: 2000,
++  extraControls: [],
+   maxWhiteBalanceTemp: 10000,
+   matchedCameraInfo: {
+     PVFileCameraInfo: {
+diff --git a/photon-client/src/types/WebsocketDataTypes.ts b/photon-client/src/types/WebsocketDataTypes.ts
+index 12c42947..557639b4 100644
+--- a/photon-client/src/types/WebsocketDataTypes.ts
++++ b/photon-client/src/types/WebsocketDataTypes.ts
+@@ -1,5 +1,6 @@
+ import type {
+   CameraCalibrationResult,
++  ExtraCameraControl,
+   GeneralSettings,
+   LightingSettings,
+   LogLevel,
+@@ -66,6 +67,8 @@ export interface WebsocketCameraSettingsUpdate {
+   maxExposureRaw: number;
+   minWhiteBalanceTemp: number;
+   maxWhiteBalanceTemp: number;
++  // SpectrumJetson (photonvision-28): contrast, gamma, sharpness, backlight compensation
++  extraControls?: ExtraCameraControl[];
+   matchedCameraInfo: PVCameraInfo;
+   fpsLimit: number;
+   isConnected: boolean;
+diff --git a/photon-core/src/main/java/org/photonvision/common/dataflow/websocket/UICameraConfiguration.java b/photon-core/src/main/java/org/photonvision/common/dataflow/websocket/UICameraConfiguration.java
+index 52888988..d64d5adc 100644
+--- a/photon-core/src/main/java/org/photonvision/common/dataflow/websocket/UICameraConfiguration.java
++++ b/photon-core/src/main/java/org/photonvision/common/dataflow/websocket/UICameraConfiguration.java
+@@ -51,6 +51,8 @@ public class UICameraConfiguration {
+     public double maxExposureRaw;
+     public double minWhiteBalanceTemp;
+     public double maxWhiteBalanceTemp;
++    // SpectrumJetson (photonvision-28): contrast, gamma, sharpness, backlight compensation
++    public List<java.util.Map<String, Object>> extraControls = List.of();
+     public PVCameraInfo matchedCameraInfo;
+     public boolean mismatch;
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
+index 92620c6c..ff6bca83 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
++++ b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
+@@ -367,6 +367,76 @@ public class GenericUSBCameraSettables extends VisionSourceSettables {
+      * @param property
+      * @param value
+      */
++    // SpectrumJetson (photonvision-28): contrast, gamma, sharpness and backlight compensation, which
++    // the stock UI doesn't show. {pipeline setting, UVC control, label}.
++    private static final String[][] EXTRA_CONTROLS = {
++        {"cameraContrast", "contrast", "Contrast"},
++        {"cameraGamma", "gamma", "Gamma"},
++        {"cameraSharpness", "sharpness", "Sharpness"},
++        {"cameraBacklightCompensation", "backlight_compensation", "Backlight Compensation"}
++    };
++
++    /** The control's property, preferring cscore's raw_* (the camera's own units). */
++    private VideoProperty rawProperty(String name) {
++        VideoProperty prop = camera.getProperty("raw_" + name);
++        return prop.getKind() != VideoProperty.Kind.kNone ? prop : camera.getProperty(name);
++    }
++
++    /** Sets a control in the camera's own units; a value below 0 restores its default. */
++    private void setRawControl(String name, int value) {
++        try {
++            VideoProperty prop = rawProperty(name);
++            if (prop.getKind() == VideoProperty.Kind.kNone) return;
++            int v = value < 0 ? prop.getDefault() : Math.max(prop.getMin(), Math.min(prop.getMax(), value));
++            prop.set(v);
++        } catch (VideoException e) {
++            logger.error("Failed to set " + name + " for " + camera.getName(), e);
++        }
++    }
++
++    @Override
++    public void setContrast(int value) {
++        setRawControl("contrast", value);
++    }
++
++    @Override
++    public void setGamma(int value) {
++        setRawControl("gamma", value);
++    }
++
++    @Override
++    public void setSharpness(int value) {
++        setRawControl("sharpness", value);
++    }
++
++    @Override
++    public void setBacklightCompensation(int value) {
++        setRawControl("backlight_compensation", value);
++    }
++
++    @Override
++    public java.util.List<java.util.Map<String, Object>> getExtraControls() {
++        var out = new java.util.ArrayList<java.util.Map<String, Object>>();
++        for (String[] c : EXTRA_CONTROLS) {
++            try {
++                VideoProperty prop = rawProperty(c[1]);
++                if (prop.getKind() == VideoProperty.Kind.kNone) continue;
++                var m = new java.util.LinkedHashMap<String, Object>();
++                m.put("key", c[0]);
++                m.put("label", c[2]);
++                m.put("min", prop.getMin());
++                m.put("max", prop.getMax());
++                m.put("step", Math.max(1, prop.getStep()));
++                m.put("default", prop.getDefault());
++                m.put("value", prop.get());
++                out.add(m);
++            } catch (Exception e) {
++                // Camera unplugged; the list refreshes on the next UI update.
++            }
++        }
++        return out;
++    }
++
+     // SpectrumJetson (photonvision-24): the UVC controls worth logging, including ones the UI doesn't
+     // show (contrast, gamma, sharpness, backlight compensation).
+     private static final String[] LOGGED_CONTROLS = {
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipeline/CVPipelineSettings.java b/photon-core/src/main/java/org/photonvision/vision/pipeline/CVPipelineSettings.java
+index 87d1e600..81c0ffeb 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipeline/CVPipelineSettings.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipeline/CVPipelineSettings.java
+@@ -64,6 +64,13 @@ public class CVPipelineSettings implements Cloneable {
+ 
+     public boolean blockForFrames = true;
+ 
++    // SpectrumJetson (photonvision-28): camera controls the stock UI doesn't show. -1 = the camera's
++    // own default (re-applied on pipeline switch, so pipelines stay independent).
++    public int cameraContrast = -1;
++    public int cameraGamma = -1;
++    public int cameraSharpness = -1;
++    public int cameraBacklightCompensation = -1;
++
+     @Override
+     public boolean equals(Object o) {
+         if (this == o) return true;
+@@ -85,7 +92,11 @@ public class CVPipelineSettings implements Cloneable {
+                 && pipelineNickname.equals(that.pipelineNickname)
+                 && streamingFrameDivisor == that.streamingFrameDivisor
+                 && inputShouldShow == that.inputShouldShow
+-                && outputShouldShow == that.outputShouldShow;
++                && outputShouldShow == that.outputShouldShow
++                && cameraContrast == that.cameraContrast
++                && cameraGamma == that.cameraGamma
++                && cameraSharpness == that.cameraSharpness
++                && cameraBacklightCompensation == that.cameraBacklightCompensation;
+     }
+ 
+     @Override
+@@ -107,7 +118,11 @@ public class CVPipelineSettings implements Cloneable {
+                 streamingFrameDivisor,
+                 ledMode,
+                 inputShouldShow,
+-                outputShouldShow);
++                outputShouldShow,
++                cameraContrast,
++                cameraGamma,
++                cameraSharpness,
++                cameraBacklightCompensation);
+     }
+ 
+     @Override
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 96f35377..3ee03479 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -548,7 +548,11 @@ public class VisionModule {
+                             "cameraAutoWhiteBalance",
+                             "cameraWhiteBalanceTemp",
+                             "streamingFrameDivisor",
+-                            "blockForFrames"),
++                            "blockForFrames",
++                            "cameraContrast",
++                            "cameraGamma",
++                            "cameraSharpness",
++                            "cameraBacklightCompensation"),
+                     "resolution",
+                     List.of("cameraVideoModeIndex"),
+                     "apriltag",
+@@ -652,6 +656,11 @@ public class VisionModule {
+                 () -> {
+                     settables.setVideoModeInternal(pipelineSettings.cameraVideoModeIndex);
+                     settables.setBrightness(pipelineSettings.cameraBrightness);
++                    // SpectrumJetson (photonvision-28): -1 restores the camera's default.
++                    settables.setContrast(pipelineSettings.cameraContrast);
++                    settables.setGamma(pipelineSettings.cameraGamma);
++                    settables.setSharpness(pipelineSettings.cameraSharpness);
++                    settables.setBacklightCompensation(pipelineSettings.cameraBacklightCompensation);
+ 
+                     // If manual exposure, force exposure slider to be valid
+                     if (!pipelineSettings.cameraAutoExposure) {
+@@ -768,6 +777,7 @@ public class VisionModule {
+         ret.maxExposureRaw = visionSource.getSettables().getMaxExposureRaw();
+         ret.minWhiteBalanceTemp = visionSource.getSettables().getMinWhiteBalanceTemp();
+         ret.maxWhiteBalanceTemp = visionSource.getSettables().getMaxWhiteBalanceTemp();
++        ret.extraControls = visionSource.getSettables().getExtraControls(); // SpectrumJetson
+ 
+         ret.deactivated = config.deactivated;
+         ret.isEnabled = getEnabled();
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
+index 27d427a3..1ded98b8 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
+@@ -115,6 +115,24 @@ public abstract class VisionSourceSettables {
+ 
+     public abstract HashMap<Integer, VideoMode> getAllVideoModes();
+ 
++    // SpectrumJetson (photonvision-28): camera controls the stock UI doesn't show. A value below 0
++    // restores the camera's default. No-ops for cameras without them.
++    public void setContrast(int value) {}
++
++    public void setGamma(int value) {}
++
++    public void setSharpness(int value) {}
++
++    public void setBacklightCompensation(int value) {}
++
++    /**
++     * SpectrumJetson (photonvision-28): the extra controls this camera has, for the Input tab: each
++     * {key (the pipeline setting), label, min, max, step, default, value}.
++     */
++    public java.util.List<java.util.Map<String, Object>> getExtraControls() {
++        return java.util.List.of();
++    }
++
+     /**
+      * SpectrumJetson (photonvision-24): the camera's controls as actually set (raw values), for the
+      * settings snapshot in the robot log. Empty for cameras that don't have them.

@@ -103,7 +103,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
 | 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance), gray and colour; it uses ~180 MB of memory per camera. Leave it out to decode on the CPU. |
-| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–27. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–29. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 | 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
 | 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
 
@@ -215,6 +215,12 @@ A calibration belongs to one physical camera and lens, so if you move a camera t
 - Robot code switches them all together (the toggle is in issue #10), and the robot log records which one was active.
 - Copy settings fills in the other cameras after tuning one.
 
+**More camera controls** (`photonvision-28`): the Input tab now has Contrast, Gamma, Sharpness and Backlight Compensation, which stock PhotonVision doesn't show.
+- **Only the ones the camera has,** with its own ranges; each tooltip gives the camera's default.
+- **Saved per pipeline.** A pipeline that never set one uses the camera's default, re-applied on every switch.
+- **Leave them at the defaults** unless you're testing. Sharpness is the one worth trying lower, since the camera's sharpening can put halos on tag edges.
+- **Copy settings** includes them in the Camera group.
+
 **Leaving bad tags out of multi-tag** (`photonvision-22`): if a tag is mounted wrong at an event, list it, and every camera's multi-tag solve ignores it.
 - **You list the bad tags, not the good ones.**
 - **Where:** type them on the Settings page's AprilTag Field Layout card (e.g. `7, 12`, saved on the Jetson). Robot code can add more on `/photonvision/excludedTags`.
@@ -311,7 +317,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 | A 3rd or 4th camera won't start streaming ("No space left on device") | USB 2.0 bandwidth: the stock camera driver lets each camera reserve ~196 Mbps | Install the capped driver: `scripts/jetson/11-uvcvideo-payload-cap.sh --install`. The health check shows which driver is loaded. |
 | Low FPS (~34) | Exposure too long (the units are 100 µs; the slider shows ms) | Exposure 50–83 (5–8.3 ms). |
 | Tags flicker in and out | Decision margin near the cutoff (dim light, or flickering light) | Run `tests/flicker-check/run.sh`. If frames pulse, use exposure 83; otherwise lower the cutoff a little. Retune on the field. |
-| One camera shows no detections, and the log fills with "invalid JPEG image received" | The camera got stuck sending corrupt frames (seen once after rapid restarts) | Restart PhotonVision; if it persists, replug that camera. The health check warns about this. |
+| One camera shows no detections, and the log fills with "invalid JPEG image received" | The camera got stuck sending corrupt frames (seen once after rapid restarts) | PhotonVision now recovers it by itself (`photonvision-29`): it reconnects the camera after 3 s without usable frames, then resets it at the USB level, like a replug, 5 s later. Look for "no usable frames" in the log. If it keeps happening, replug that camera or restart PhotonVision. |
 | Image nearly black during calibration | Calibration uses its own exposure settings | In the calibration card: Auto Exposure off, Exposure ~150. |
 | Calibration fails ("Negative corner", null intrinsics) | Board width/height swapped | Width 12, height 9. Check with `check_board.py`. Restart PhotonVision to clear bad snapshots. |
 | Settings page missing Device Control / Restart | Old browser (no `Intl.DurationFormat`) | Update the browser. Fixed in our patch too. |
@@ -380,11 +386,13 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
 - [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
 - [ ] Field calibration mode: push the robot by hand to 10–20 spots, then solve for the event's real tag positions, every camera's mount and the best camera settings ([docs/FIELD-CALIBRATION-PLAN.md](docs/FIELD-CALIBRATION-PLAN.md)). Test in the shop first.
-- [ ] Add the camera controls PhotonVision's UI doesn't show (contrast, gamma, sharpness, backlight compensation), then measure whether they help
+- [x] The camera controls PhotonVision's UI didn't show (contrast, gamma, sharpness, backlight compensation) are on the Input tab (`photonvision-28`), at the camera's defaults unless set
+- [ ] Measure whether contrast, gamma or sharpness help (decision margin, far-tag range, corner jitter): the field-calibration settings sweep
+- [x] A stuck camera recovers by itself (`photonvision-29`): reconnect, then USB reset. Tested on the bench with its test hook
 - [x] Bad tags left out of multi-tag, calibration with 100 auto snapshots and our board as the default, camera settings in the robot log, copy settings between cameras (patches 22–25)
 - [ ] Test the detector's `max_line_fit_mse` at 2.5 (upstream #2138: rejects tags cut off at the image edge) against the default 10 with tags in view: range and edge behaviour. Then set it with `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg --mse 2.5`
 - [ ] Test whether the Camera Gain slider does anything on our cameras (`photonvision-21`)
-- [ ] Cheap wins from other teams' systems: Rewind starting itself on enable and named by match, auto-resetting a stuck camera (same doc). Robot-side items, like trusting tags less near the image edge, are in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10)
+- [ ] Cheap wins from other teams' systems: Rewind starting itself on enable and named by match (robot code, issue #10 8a). Robot-side items, like trusting tags less near the image edge, are in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10)
 - [x] Full backup image of the SSD with PhotonVision's settings (`scripts/host/04-backup-ssd.sh`: 8.7 GB, 7 min). Keep it on the team drive, never GitHub (it holds the Wi-Fi password and SSH keys)
 - [x] GitHub release [v2026.09.24](https://github.com/Spectrum3847/SpectrumJetson/releases/tag/v2026.09.24): the PhotonVision jar, TensorRT backend, camera driver and settings
 - [ ] Clone a spare SSD from the backup (`scripts/host/05-restore-ssd.sh`)
