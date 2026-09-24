@@ -163,7 +163,7 @@ We fixed that with a patched camera driver (`scripts/jetson/11-uvcvideo-payload-
 
 **Timestamps mark mid-exposure** (`photonvision-13`): the Jetson subtracts half the exposure from every frame's timestamp, so the robot shouldn't. The camera's own delay (readout and JPEG, before its first packet) is still to be measured on the robot with the spin-in-front-of-a-tag test, and set as `SPECTRUM_CAMERA_DELAY_US`. The camera doesn't send UVC hardware timestamps; we checked.
 
-What other teams' vision systems do (EagleEye, Code Orange's MLTag, 4533's Whacknet, 971's bos and cos), the full profiling story, and what's worth doing next: [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
+What other teams' vision systems do (Austin's AOS as run by 1868, 4646 and 254, 971's bos and cos, 6328's Northstar, EagleEye, Code Orange's MLTag, 4533's Whacknet), what an ideal system would have, the full profiling story, and future work: [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
 
 ## Cameras and calibration
 
@@ -325,6 +325,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] USB bandwidth: capped camera driver so 4 cameras fit on USB-A (alt 7, tested with 2: 122 fps, no bad frames)
 - [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
+- [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
+- [ ] Cheap wins from other teams' systems: Rewind starting itself on enable and named by match, dropping tags at the image edge, auto-resetting a stuck camera (same doc)
 - [x] Full backup image of the SSD with PhotonVision's settings (`scripts/host/04-backup-ssd.sh`: 8.7 GB, 7 min). Keep it on the team drive, never GitHub (it holds the Wi-Fi password and SSH keys)
 - [x] GitHub release [v2026.09.24](https://github.com/Spectrum3847/SpectrumJetson/releases/tag/v2026.09.24): the PhotonVision jar, TensorRT backend, camera driver and settings
 - [ ] Clone a spare SSD from the backup (`scripts/host/05-restore-ssd.sh`)

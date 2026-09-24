@@ -169,18 +169,15 @@ PhotonVision 2027.
     **62 KB max** (73% of what alt 7 carries at 120 fps). A busier scene makes bigger frames; if
     frames approach 85 KB, use `CAP=1bcf:28c5:1984` (alt 9, 3 per port) or put cameras on USB-C.
   - **Trade-off:** a frame takes longer to cross USB, ~4.9 ms for 50 KB at alt 7 against ~2.0 ms
-    at alt 11. PhotonVision timestamps frames on arrival, so its latency readout doesn't show it,
-    but the frame timestamp now lags mid-exposure by ~7 ms (2.5 ms half-exposure + ~4.9 ms
-    transfer, was ~4.5 ms). Robot-side latency compensation should subtract that. All four ports share one USB 2.0 hub, and a
-  UVC camera *reserves* isochronous bandwidth for its maximum, not what it uses. So a third or
-  fourth camera is likely to fail with "No space left on device".
-  - The devkit's USB-C port is a separate root port
-    ([NVIDIA forum](https://forums.developer.nvidia.com/t/usb-2-0-instead-of-usb3-2-on-jetson-orin-nano-super-dev-kit/357813)).
-    Plan 2 cameras on USB-A and 2 on USB-C, through an adapter or hub.
-  - USB-C is also our laptop cable today; on the robot we'd use Ethernet instead.
-  - **Test this before the 4-camera build.**
-- **Hardware JPEG decode (NVJPG) exists on the Orin Nano,** but the forums report clock and
-  chroma-format bugs and a symbol clash with OpenCV. Not worth it now that CPU decode is cheap.
+    at alt 11, so results reach the robot ~2 ms later. Timestamps aren't affected: the driver
+    stamps a frame when its *first* USB packet arrives, and `photonvision-13` moves that back to
+    mid-exposure.
+- **Hardware JPEG decode (NVJPG) exists on the Orin Nano.** The forums report clock and
+  chroma-format bugs and a symbol clash with OpenCV. AOS has it working: on an Orin Nano (JetPack
+  6.2, 1280x800), **2.3 ms a frame with 0.22 ms of CPU**, against 2.8 ms all on the CPU for
+  turbojpeg ([commit ec9719d002](https://github.com/RealtimeRoboticsGroup/aos/commit/ec9719d002)).
+  With 4 cameras that would free about a core. There's only one decoder engine, so 4 x 120 fps
+  may not fit (unverified). Next season.
 - **CSI cameras:** the devkit has 2 connectors; Arducam's OV9281 does 80 fps at 1280x800 (slower
   than our USB 120 fps). No JPEG step, and hardware timestamps. A next-season option.
 - **Lower-jitter options (971's approach):** pin USB interrupts to one core, run the capture
@@ -189,28 +186,210 @@ PhotonVision 2027.
 - **Doesn't apply to us:** VPI/PVA AprilTags (the Orin Nano has no PVA), region tracking,
   uncompressed USB 2 video, and Java GC tuning (our heap sees no collections).
 
-## What to do next
+## Second pass: AOS and the teams running it, bos and cos, Northstar
 
-Before October:
+Researched 2026-09-24 by four Claude subagents, reading the code, commits and Chief Delphi posts.
+Ratings are **October event / next season**.
 
-1. **Test 3 and 4 cameras with the USB split** (2 on USB-A, 2 on USB-C). Re-measure CPU, fps
-   and latency with `tests/perf-snapshot.sh`. Re-check the CUDA wait setting there.
-2. **Rerun `tests/flicker-check`** under the event field's lights before settling on 5 ms.
-3. **Port the server side of `setEnabled`** (#2484/#2499), so robot code can turn cameras on and
-   off. Small.
+### Austin Schuh's AOS (1868, 4646, 254, 2910)
 
-Worth doing, not urgent:
+[RealtimeRoboticsGroup/aos](https://github.com/RealtimeRoboticsGroup/aos) is Austin's current
+vision stack: `frc/orin/` (the CUDA detector) and `frc/vision/` (logging, replay, calibration,
+localizer).
 
-4. Merge upstream **v2026.3.4** into our fork base: 41 fixes, still wire-compatible, and a clean
-   trial merge onto 4143 main. Then re-apply and re-test our patches.
-5. Hand-port the OpenCV **leak fixes** (#2511) for long-running stability.
-6. **IRQ affinity and real-time priority** for capture, if we ever see latency spikes.
+- **Who runs it:**
+  - **1868:** runs upstream `main` directly; their students' commits land there.
+    [team1868/aos](https://github.com/team1868/aos) is just upstream as of 2026-01-17.
+  - **4646:** their swerve localizer is now upstream.
+  - **254:** ran a fork in 2026 ([Team254/aos-public](https://github.com/Team254/aos-public),
+    a January 2026 snapshot; their in-season code isn't public). They used Limelight 4 in 2025.
+  - **2910:** starting now. Their [orin-os](https://github.com/FRCTeam2910/orin-os) fork of the
+    1868 image (2026-09-22) only adds mDNS and DHCP. Their 2026 robot used Limelight 4, and their
+    Orin vision is "not far enough along to share".
+- **The image:**
+  - A Yocto build ([meta-frc4646 `frc1868-walnascar`](https://github.com/frc4646/meta-frc4646/tree/frc1868-walnascar),
+    JetPack 6.2) with an XFS root, chrony, and udev names by USB port.
+  - Bazel cross-compiles the vision code and deploys it (`bazel run //frc/vision:download_stripped`).
+  - "254's Bazel images" are this setup. The OS image is Yocto; Bazel builds the programs.
+  - No A/B updates and no read-only root.
+  - 1868 is porting it to JetPack 7.2 ([in progress](https://github.com/anikadata/meta-frc4646/tree/anikadata/frc1868-wrynose)).
+- **Same hardware and choices as ours:**
+  - Orin Nano, 4 UVC MJPEG cameras at 1280x800 and 120 fps, 5 ms exposure (1868's public config).
+  - CPU gray JPEG decode, the 971 detector, 8 distortion coefficients.
+  - A uvcvideo bandwidth patch: theirs divides the reservation by 8 (16 on 1868's new branch);
+    ours caps it at alt 7.
+- **The detector:** neither 1868 nor 2910 changed it. Our bos copy matches upstream, including
+  the 2026-03-30 host-copy fix.
+  - Austin's "massive speedup" tuning is `min_white_black_diff` 20 plus min cluster pixels ≥ 24.
+  - We already run it: 20 is set in the service, and the GPU code enforces at least 24.
 
-Next season:
+**What AOS has that we don't:**
 
-7. Consider basing on **upstream PhotonVision main** (a9ad078b is 2027-alpha-6 and
-   wire-compatible) with our CUDA pipeline ported, instead of the 2026-based 4143 fork.
-8. **Coprocessor constrained solve** like Whacknet, if the SystemCore's constrained solve is too
-   slow (robot side first; see issue #10).
-9. **Game-piece detection:** a TensorRT YOLO on its own camera, starting from bos's `yolo.cc`,
-   with a model trained on our cameras' gray frames.
+| Feature | Where | Oct / next | Why |
+|---|---|---|---|
+| **Logging that starts itself.** Every camera's raw MJPEG from enable to 10 s after disable, named by event and match from FMS, in 5 s chunks, stopping below 50 GB free. 254 does the same from the `/AdvantageKit/DriverStation` topics our robot code already publishes. | `frc/vision/image_logger.cc` | **High / high** | Rewind already records. Starting on enable and naming by match is a small change, and no match gets missed. |
+| **Replay:** logged frames run back through the real detector, with MCAP output for Foxglove | `image_replay.cc`, bos `src/camera/disk_camera.cc` | Med / **high** | Tune thresholds and regression-test patches on real match footage. |
+| **Edge rejection:** drop a tag if any corner is within 25 px of the image edge | `frc/orin/gpu_apriltag.cc` | **High / high** | Tags cut off by the edge, where distortion is worst, give the worst poses. A few lines in our pipeline. |
+| Minimum decision margin **50** (ours is 15, team-tuned at 5 ms) | same | Med / med | A data point for field tuning. Check false positives in Rewind footage before choosing. |
+| Frames older than 55 ms dropped instead of queued | same | Low / med | Keeps latency bounded if the Jetson is overloaded. |
+| **Noise per detection:** how far undistortion moved the corners, pose-error ratio, noise growing with distance, per-tag trust, counters for 10 rejection reasons | `swerve_localizer/localizer.cc`, `status.fbs` | Med / high | Robot-side, from PhotonLib's corners (issue #10). |
+| **Health telemetry:** temperatures, fan, power rails every 5 s; good/failed JPEG decodes per camera; free disk | `frc/orin/hardware_monitor.cc`, `turbojpeg_decoder_status.fbs` | Med / med | A failed-decode count would catch frames the bandwidth cap cuts short. |
+| **Camera-mount calibration from data:** spin the robot between two ChArUco diamond targets | `calibrate_multi_cameras_lib.cc`, [971's procedure](https://github.com/frc971/971-Robot-Code/blob/master/y2024/vision/README.md) | Med / high | Measured robot-to-camera transforms beat CAD numbers. |
+| **Field tag map from logs** (Ceres solve) | `target_mapper.cc` | Low / med | WPILib's [WPIcal](https://docs.wpilib.org/en/stable/docs/software/wpilib-tools/wpical/index.html) measures tag positions from video, so Rewind footage could feed it. |
+| Hardware JPEG decode | see above | Low / med | Frees a core for more cameras. |
+| Live focus score while turning the lens | bos `src/calibration/focus_calibrate.cc` | Med / low | Cheap, and a sharper image helps every tag. |
+| USB interrupt pinning, real-time priorities | | Low / low | Less jitter, but risky a month out. |
+| Exposure set by alliance side | `field_side_exposure_adjuster.cc` | Low / low | It's effectively off in their config. |
+| Reproducible Yocto image and pinned Bazel sysroot | meta-frc4646 | Low / low-med | Our backup image and GitHub release already cover recovery. |
+
+**Where we're ahead:**
+- **Timestamps:** ours mark mid-exposure. Theirs are raw V4L2 times with no exposure correction,
+  and 254 stamps at the end of the frame.
+- **Time sync:** ours is a round trip. 254's is one-way.
+- **Reliability:** a hardware watchdog and power-cut-tested settings. They have neither
+  (unverified for 1868).
+- **Game pieces:** ours run on the robot's cameras today. 254's YOLO is a stub, and 1868's isn't
+  public.
+- **Robot code:** stock PhotonLib, with no custom UDP protocol.
+
+### 971's bos and cos
+
+- **bos** [`unambiguous_estimator.cc`](https://github.com/frc971/bos/blob/main/src/localization/unambiguous_estimator.cc)
+  resolves single-tag ambiguity across cameras.
+  - It tries every combination of each camera's two candidate poses and keeps the set that best
+    agrees with itself and with the last pose.
+  - `joint_solver.cc` (all cameras in one solve) is unfinished. **Low / med.**
+- **bos's game-piece loop** opens its own camera and is only used in a test.
+- **cos** (971's rewrite, July 2026) decodes each camera once in hardware.
+  - The frame goes to AprilTag detection and, separately, to a YOLO loop, so YOLO's timing never
+    delays AprilTags ([design](https://github.com/frc971/cos/blob/main/full_gamepiece_design.md)).
+  - It doesn't publish results yet.
+
+### 6328 Northstar
+
+The newest code is [RobotCode2026Public/northstar](https://github.com/Mechanical-Advantage/RobotCode2026Public/tree/main/northstar)
+(2026-08-19). It now runs on a Mac mini.
+
+**Coprocessor features:**
+- **Robot-owned config and tag layout.** Robot code publishes each camera's settings and the tag
+  layout JSON over NetworkTables. A dashboard chooser switches to subsets (hub-only, none), and
+  the coprocessor re-solves. **Med / high:** our multi-tag solve uses the Jetson's layout, so at
+  an event the robot can't drop one badly placed tag.
+- **Self-healing cameras.** Before every restart it power-cycles and re-enumerates the USB port
+  (`uhubctl`), and it exits after 3 s of failed grabs. **Med / med:** our stuck-camera case
+  (corrupt JPEGs after rapid restarts) only gets a health-check warning. A USB unbind/rebind
+  would fix it without a person.
+- **Throttle to 1 fps after 5 s disabled.** **Low / med:** less heat in the queue.
+- **Annotated match video**, with tags and detections drawn on, named by match. **Low / low:**
+  we can draw overlays at export time from logged corners.
+- **Tiled object detection:** three overlapping 640 tiles plus a downscaled full frame. **Low / med:**
+  finds small, far game pieces at several times the inference cost.
+- **Uncompressed USB 3 cameras** (Basler): about 30% less corner noise than MJPEG
+  ([CD](https://www.chiefdelphi.com/t/frc-6328-mechanical-advantage-2026-build-thread/509595/943)).
+  **Low / med:** a hardware choice, to weigh against our 120 fps.
+- **Calibration and event routine:**
+  - Lock focus with silicone before calibrating.
+  - 50+ images weighted to the edges.
+  - Check the undistorted image by eye.
+  - At events, check tag IDs, use minimum exposure with gain, and verify the pose at the scoring
+    spots.
+  - **High / high:** it costs nothing.
+
+**Robot-code practices** (for the robot-code agent, issue #10): std devs of 0.01·d²/n² (xy) and
+0.03·d²/n² (θ), with single-tag θ ignored. The rest:
+- **Single-tag disambiguation:** keep a frame only when one reprojection error is under 0.4x the
+  other, then pick the candidate closest to the gyro.
+- **Sanity gates:** drop poses more than 0.5 m outside the field, or with z outside −0.5 to 1 m.
+- **Early auto:** ignore vision for the first 2 s.
+- **Alignment:** a separate single-tag gyro + tx/ty estimate for final alignment.
+- **Moving cameras:** camera transforms looked up by timestamp for cameras on mechanisms.
+- **Health alerts:** "not on NetworkTables" reported separately from "no frames for 1.5 s".
+- **Game pieces:** a field map where pieces expire after 3 s.
+- **Bumps:** odometry trust scaled down with tilt.
+
+## If we designed the ideal FRC vision system
+
+What an ideal system has that ours doesn't yet, roughly in order of value for effort:
+
+1. **Every match recorded without anyone remembering to.** Rewind starts on enable, stops a few
+   seconds after disable, and names files by event and match.
+2. **Replay.** Run any recording back through the exact detector and settings to tune thresholds
+   offline and to test every patch against real match footage before it ships.
+3. **Cameras that heal themselves.** Detect a stuck or corrupt camera and reset its USB port
+   automatically, instead of warning.
+4. **Quality metadata on every tag,** so the robot can weigh each one: distance from the image
+   edge, how far undistortion moved the corners, reprojection error, decision margin.
+   - Tags near the edge are dropped on the Jetson.
+   - The robot chooses which tags to trust.
+5. **Health in the robot log:** temperatures, fps, failed decodes, USB resets and free disk, as
+   dashboard alerts. Today it's an SSH script.
+6. **Calibrated from data, not CAD.**
+   - Camera mounts measured by spinning the robot in front of targets.
+   - The event's real tag positions measured from Rewind video (WPIcal).
+   - Focus checked with a live sharpness score.
+7. **AprilTags and game pieces from the same cameras,** in field coordinates and tracked over time
+   (see Future work).
+8. **Latency measured, not estimated:** the robot spin test, or an LED blink seen by the camera.
+9. **Cameras exposing at the same instant** (hardware trigger), so observations from different
+   cameras share one timestamp. Needs cameras with a trigger input.
+10. **A joint multi-camera solve** that uses the gyro: all cameras' corners in one fit.
+11. **Hardware JPEG decode,** to free CPU for more cameras.
+12. **A reproducible image built from source** (Yocto or similar), instead of a configured stock
+    image. Our backups make this the least urgent.
+
+## Future work
+
+**AprilTags and game pieces in one pipeline (team note, 2026-09-24).** It feels like it should be
+easy, and it's worth benchmarking.
+
+- **Why it's possible:**
+  - The Wave FUEL model found balls well on our mono camera.
+  - PhotonVision's result already carries both kinds of target.
+  - AOS already does it: each camera is decoded once, keeping every 3rd frame, into shared
+    memory. The AprilTag and YOLO processes both read that gray image without copying it, and
+    YOLO works on a 512x416 crop.
+  - cos is designed the same way. No team has published timings for both together.
+- **What needs building:**
+  - The AprilTag pipeline decodes straight to gray, and our TensorRT runner requires 3 channels.
+    Convert the 640x640 letterboxed image `GRAY2BGR` first: well under 1 ms, and it's what the
+    model saw in our test.
+  - Run AprilTags on every frame. Hand every Nth frame (4th = 30 fps) to an async YOLO worker on
+    its own CUDA stream, so inference never delays an AprilTag result.
+  - Publish game pieces with the timestamp of the frame they came from. Either use a separate
+    result (a "virtual camera" such as `TopLeft-pieces`), or attach them to a later frame's
+    result with their own timestamp.
+- **Benchmark:**
+  - AprilTag fps, detect time (average and worst) and latency on every frame.
+  - YOLO fps and latency.
+  - GPU and CPU use.
+  - Setups: 1, 2 and 4 cameras doing both, against AprilTags only.
+  - No engine builds running (see the README).
+
+**Before October (cheap):**
+1. Test 3–4 cameras when they arrive (`tests/perf-snapshot.sh`).
+2. Rewind auto-start on enable, named by event and match (robot half: issue #10).
+3. Drop tags with a corner within 25 px of the image edge.
+4. Reset a stuck camera's USB port automatically.
+5. Per-camera failed-decode counts and temperatures in NetworkTables.
+6. The calibration and event routine above. Rerun `tests/flicker-check` under the event lights.
+   Compare decision margin 15 with 50 on Rewind footage.
+7. Robot-side filters and std devs (Northstar and AOS lists above) → issue #10.
+
+**Next season:**
+- A replay tool for Rewind recordings.
+- Camera-mount calibration and field mapping from data.
+- Hardware JPEG decode.
+- A joint or heading-constrained solve (Whacknet, bos).
+- IRQ affinity and real-time priorities.
+- CSI, USB 3 or triggered cameras.
+- JetPack 7 (1868 is porting their image now).
+- Basing on upstream PhotonVision 2027 main with our CUDA pipeline, instead of the 2026-based 4143
+  fork.
+
+**Done since the first pass:**
+- `setEnabled()` (patch 11)
+- upstream v2026.3.4 (patch 00)
+- OpenCV leak fixes (patch 12)
+- game pieces with TensorRT (patch 14)
+- the USB bandwidth cap
+- mid-exposure timestamps (patch 13)
