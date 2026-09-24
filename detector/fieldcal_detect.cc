@@ -3,13 +3,18 @@
 // tag's corners for tools/fieldcal (field calibration).
 //
 //   fieldcal_detect CAMERA_DIR OUT.csv [--every N] [--calib fx,fy,cx,cy,k1,k2,p1,p2,k3,k4,k5,k6]
-//                   [--mwbd N] [--mse X] [--threads N]
+//                   [--mwbd N] [--mse X] [--threads N] [--upscale 2]
 //
 // CAMERA_DIR: one camera's folder of a Rewind session (NNNN.mjpeg + NNNN.csv, docs/REWIND.md).
 // --every N: every Nth frame. --calib: the camera's lens calibration; the detector's edge
 // refinement straightens edges with it, as it does in PhotonVision (without it, no undistortion).
 // --mwbd / --mse: as SPECTRUM_971_MIN_WHITE_BLACK_DIFF / SPECTRUM_971_MAX_LINE_FIT_MSE, which
 // are also read from the environment (defaults 5 and 10, as in GpuDetectorJNI.cc).
+// --upscale 2 (experimental, off by default): search at full size. The detector finds quads on a
+// half-size image (quad_decimate 2 is hard-wired), which misses tags under ~20 px; a 2x
+// nearest-neighbour upscale finds them down to ~12 px, at ~2x the GPU time. Corners are scaled
+// back. On a rendered recording (2026-09-24) it found the small steep tags but lost some large
+// steep ones (the upscale's stair-stepped edges), 489 vs 506 of 594 views: not worth it there.
 //
 // OUT.csv, one row per detection, and one row with id -1 for an analysed frame with no tags:
 //   frame,jetson_us,id,hamming,margin,x0,y0,x1,y1,x2,y2,x3,y3
@@ -141,12 +146,12 @@ double EnvOr(const char *name, double fallback) {
 int main(int argc, char **argv) {
   if (argc < 3) {
     std::cerr << "usage: fieldcal_detect CAMERA_DIR OUT.csv [--every N] "
-                 "[--calib fx,fy,cx,cy,k1,k2,p1,p2,k3,k4,k5,k6] [--mwbd N] [--mse X] [--threads N]\n";
+                 "[--calib fx,fy,cx,cy,k1,k2,p1,p2,k3,k4,k5,k6] [--mwbd N] [--mse X] [--threads N] [--upscale 2]\n";
     return 2;
   }
   const fs::path dir = argv[1];
   const std::string out_path = argv[2];
-  int every = 1, threads = 5;
+  int every = 1, threads = 5, upscale = 1;
   int mwbd = static_cast<int>(EnvOr("SPECTRUM_971_MIN_WHITE_BLACK_DIFF", 5));
   double mse = EnvOr("SPECTRUM_971_MAX_LINE_FIT_MSE", 10.0);
   frc::apriltag::CameraMatrix cam{1, 1, 1, 1};  // with zero distortion: no undistortion
@@ -157,6 +162,7 @@ int main(int argc, char **argv) {
     const char *v = i + 1 < argc ? argv[i + 1] : "";
     if (a == "--every") every = std::max(1, std::atoi(v)), ++i;
     else if (a == "--threads") threads = std::max(1, std::atoi(v)), ++i;
+    else if (a == "--upscale") upscale = std::atoi(v) == 2 ? 2 : 1, ++i;
     else if (a == "--mwbd") mwbd = std::atoi(v), ++i;
     else if (a == "--mse") mse = std::atof(v), ++i;
     else if (a == "--calib") {
@@ -188,6 +194,11 @@ int main(int argc, char **argv) {
     return 1;
   }
   const int width = frames[0].width, height = frames[0].height;
+  const int dw = width * upscale, dh = height * upscale;  // what the detector sees
+  if (upscale == 2) {
+    // The lens calibration in the upscaled image's pixels (OpenCV convention: centres at integers).
+    cam = frc::apriltag::CameraMatrix{cam.fx * 2, (cam.cx + 0.5) * 2 - 0.5, cam.fy * 2, (cam.cy + 0.5) * 2 - 0.5};
+  }
   if (width % 8 || height % 8) {
     std::cerr << width << "x" << height << " is not a multiple of 8 (the 971 detector needs that)\n";
     return 1;
@@ -202,7 +213,8 @@ int main(int argc, char **argv) {
   td->qtp.min_white_black_diff = mwbd;
   td->qtp.max_line_fit_mse = static_cast<float>(mse);
   td->debug = false;
-  auto *gpu = new frc::apriltag::GpuDetector(width, height, td, cam, dist, vision::ImageFormat::MONO8);
+  auto *gpu = new frc::apriltag::GpuDetector(dw, dh, td, cam, dist, vision::ImageFormat::MONO8);
+  std::vector<uint8_t> big(upscale == 2 ? static_cast<size_t>(dw) * dh : 0);
 
   // Decode ahead on CPU threads into a ring of slots; the GPU detects in frame order.
   const size_t ring = static_cast<size_t>(threads) * 4;
@@ -255,7 +267,17 @@ int main(int argc, char **argv) {
       continue;
     }
     const auto d0 = std::chrono::steady_clock::now();
-    absl::Status st = gpu->Detect(gray[slot].data(), nullptr);
+    const uint8_t *img = gray[slot].data();
+    if (upscale == 2) {
+      for (int y = 0; y < height; ++y) {
+        const uint8_t *src = img + static_cast<size_t>(y) * width;
+        uint8_t *row = big.data() + static_cast<size_t>(2 * y) * dw;
+        for (int x = 0; x < width; ++x) row[2 * x] = row[2 * x + 1] = src[x];
+        std::memcpy(row + dw, row, dw);
+      }
+      img = big.data();
+    }
+    absl::Status st = gpu->Detect(img, nullptr);
     detect_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - d0).count();
     state[slot] = 0;
     if (!st.ok()) {
@@ -269,7 +291,8 @@ int main(int argc, char **argv) {
       apriltag_detection_t *d;
       zarray_get(dets, k, &d);
       std::fprintf(out, "%d,%lld,%d,%d,%.3f", f.index, f.jetson_us, d->id, d->hamming, d->decision_margin);
-      for (int c = 0; c < 4; ++c) std::fprintf(out, ",%.4f,%.4f", d->p[c][0], d->p[c][1]);
+      // AprilTag's convention (a pixel spans k..k+1) scales exactly: original = upscaled / 2.
+      for (int c = 0; c < 4; ++c) std::fprintf(out, ",%.4f,%.4f", d->p[c][0] / upscale, d->p[c][1] / upscale);
       std::fprintf(out, "\n");
       ++tags;
     }
@@ -278,7 +301,7 @@ int main(int argc, char **argv) {
   for (auto &w : workers) w.join();
   std::fclose(out);
   std::cerr << dir.filename().string() << ": " << frames.size() << " frames (" << width << "x" << height
-            << ") in " << secs << " s, " << frames.size() / std::max(secs, 1e-9) << " fps; detect "
+            << (upscale == 2 ? ", searched at full size" : "") << ") in " << secs << " s, " << frames.size() / std::max(secs, 1e-9) << " fps; detect "
             << detect_ms / std::max<size_t>(1, frames.size()) << " ms/frame; " << tags << " tags"
             << (bad ? "; bad JPEGs " + std::to_string(bad) : "")
             << (failed ? "; failed frames " + std::to_string(failed) : "") << "\n";
