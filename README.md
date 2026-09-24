@@ -193,6 +193,30 @@ One Thriftiest Cam, 1280×800 MJPEG, AprilTagCuda pipeline. Timing comes from
 - `mashed26/GpuDetectorJNI` has a better JNI layer (handle map, proper destroy,
   CCCL 3), but a different Java API, so it isn't a drop-in replacement.
 
+## Detector builds: which lib971apriltag.so is which
+
+Both expose the same Java API, so the PhotonVision fork jar works with either.
+Swap by installing one to `/usr/lib/lib971apriltag.so` and restarting `photonvision`.
+
+| Build | Source | Script | Status |
+|---|---|---|---|
+| **4143 + patches** (installed now) | FRC-Team-4143/GpuDetectorJNI `ef9fc1e` (≈971 code of 2024-08) + `patches/gpudetector-0{1,2,3}` | `05-build-gpudetector.sh` (installs) | Running; leak, handle and stale-error fixes applied |
+| **bos / Austin's current** (target for the robot) | frc971/bos `62e93b4` `third_party/971apriltag` = RealtimeRoboticsGroup/aos `frc/orin` detector as of `8736ba62` (2026-03-30) + 971's `absl::Status` returns; JNI in `detector/` | `07-build-bos-detector.sh` (build only) | Builds; passes the handle test; **not yet A/B tested live** |
+
+aos is the upstream source of truth. The only detector change in aos since bos
+imported it (2026-04-03) is `c1c3b4607` (M_PI → std::numbers::pi, cosmetic).
+
+Open decisions for the bos build before the robot:
+- **Fatal CUDA checks.** Its `CHECK_CUDA` is `LOG(FATAL)`, so any CUDA error aborts
+  the JVM (systemd restarts PhotonVision in about 5–10 s). The JNI clears stale
+  errors before each frame and refuses bad inputs, but a real mid-frame CUDA
+  error would still crash PhotonVision. The alternative is patching `cuda.h` to
+  log and skip the frame.
+- **`min_white_black_diff`.** 4143 uses 5, bos 4, and aos's own tuning (`76d8f216`)
+  uses 20 ("about 2x"). The detector is already 2–3 ms, so we only change it if
+  detection quality improves. Set it with `SPECTRUM_971_MIN_WHITE_BLACK_DIFF`.
+- **`use_neon`** (a CPU NEON threshold) is available as an absl flag and is off.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,
