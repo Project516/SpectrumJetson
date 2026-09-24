@@ -56,6 +56,18 @@ nfail=$(journalctl _PID="$P" --no-pager -o cat --since "-60 s" 2>/dev/null | gre
 [[ $nfail -gt 0 ]] && warn "$nfail CUDA detector failures in the last minute"
 
 echo "== Cameras"
+DB=/opt/photonvision/photonvision_config/photon.sqlite
+# PhotonVision camera nickname bound to a USB port (it matches identical cameras by port).
+cam_name() {
+  sqlite3 "$DB" "select config_json from cameras;" 2>/dev/null | python3 -c "
+import json, sys, re
+text = sys.stdin.read()
+for chunk in re.split(r'(?m)^\\{', text):
+    if 'usb-0:$1:1.0' in chunk:
+        m = re.search(r'\"nickname\" : \"([^\"]*)\"', chunk)
+        if m: print(m.group(1)); break
+" 2>/dev/null
+}
 cams=0
 for intf in /sys/bus/usb/drivers/uvcvideo/*:1.0; do
   [[ -e $intf ]] || continue
@@ -64,8 +76,12 @@ for intf in /sys/bus/usb/drivers/uvcvideo/*:1.0; do
   ctl=$(cat "$dev/power/control")
   speed=$(cat "$dev/speed")
   cams=$((cams + 1))
-  if [[ $ctl == on ]]; then pass "camera on USB port $port (${speed} Mbps, autosuspend off)"
-  else warn "camera on USB port $port has autosuspend on (run 09-robot-tuning.sh)"; fi
+  hubport=${port#*-}   # 1-2.1 -> 2.1
+  name=$(cam_name "$hubport")
+  label="${name:-unnamed camera} on USB port $hubport"
+  if [[ -z $name ]]; then warn "$label: not configured in PhotonVision (activate it in Camera Matching)"
+  elif [[ $ctl == on ]]; then pass "$label (${speed} Mbps, autosuspend off)"
+  else warn "$label has autosuspend on (run 09-robot-tuning.sh)"; fi
 done
 if [[ $cams -lt $EXPECT ]]; then fail "$cams camera(s) found, expected $EXPECT"; fi
 

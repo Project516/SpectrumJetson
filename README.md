@@ -143,7 +143,16 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 - Stream Resolution: small, to save CPU (it only affects the video you watch in the browser)
 - AprilTag field layout: **2026 Rebuilt AndyMark**. The robot code must use the same layout.
 
-**Label the USB ports.** Both cameras report the same name and serial number, so PhotonVision can only tell them apart by which port they're plugged into. `Thrifty:_` is on USB port 2.1, and `Thrifty:_ (1)` is on port 2.3. Swap them, and each camera's calibration and robot position swap too. All four USB-A ports share one USB 2.0 hub, but two MJPEG cameras fit easily.
+**Cameras are named after their USB port.** Every Thriftiest Cam reports the same name and serial number, so PhotonVision tells them apart only by the port they're plugged into, and each name (and its calibration) stays with its port. The robot code uses the same names, e.g. `new PhotonCamera("TopLeft")`.
+
+| Name | Physical port (looking at the ports) | USB hub port |
+| --- | --- | --- |
+| TopLeft | top row, left | 2.1 |
+| TopRight | top row, right | 2.3 |
+| BottomLeft | bottom row, left | 2.2 (expected, not yet confirmed) |
+| BottomRight | bottom row, right | 2.4 (expected, not yet confirmed) |
+
+A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there. All four USB-A ports share one USB 2.0 hub; two MJPEG cameras fit easily, and 3–4 fit at ~60 fps each.
 
 **Calibration board settings** (ChArUco, 5x5 markers, 30 mm squares, 22 mm markers):
 
@@ -171,8 +180,8 @@ The board is labeled "9x12", but **PhotonVision needs width 12, height 9**. With
 
 | Camera | Snapshots | Corners kept | Mean error | fx | cx, cy |
 | --- | --- | --- | --- | --- | --- |
-| Thrifty:_ (port 2.1) | 43 | 97% | 0.87 px | 737.8 | 650.5, 362.4 |
-| Thrifty:_ (1) (port 2.3) | 41 | 96% | 0.97 px | 737.0 | 597.9, 371.6 |
+| TopLeft (port 2.1) | 43 | 97% | 0.87 px | 737.8 | 650.5, 362.4 |
+| TopRight (port 2.3) | 41 | 96% | 0.97 px | 737.0 | 597.9, 371.6 |
 
 We couldn't get the error below 0.5 px handheld, and that's okay. With so few outliers, the data is clean, and the remaining ~0.8–0.9 px is noise from MJPEG compression. The focal length came out at about 737 px in all three of camera 1's calibrations. **Outliers are the better warning sign.** Our second try had 42% outliers because many snapshots had the board mostly outside the frame. For edge coverage, keep most of the board in the image and just touch the edge.
 
@@ -214,7 +223,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Deploy the jar with the Device Control and 8-coefficient fixes
 - [x] Robot tuning: no auto-updates, headless boot, clocks locked, USB autosuspend off
 - [x] Reboot test: tuning survives a reboot; boot 57 s → 16.5 s, first detection ~20 s after power-on
-- [ ] Name the cameras (e.g. front/back) and label their USB ports
+- [x] Name the cameras after their ports (TopLeft, TopRight; BottomLeft/BottomRight when added)
+- [x] Wi-Fi / Bluetooth switches in PhotonVision (Bluetooth off; Wi-Fi off before events)
 - [ ] Robot network: give the Jetson a static IP on `10.85.15.x` and test it with the SystemCore (NetworkTables, time sync, PhotonLib reading results)
 - [ ] Turn off Wi-Fi and Bluetooth for competition
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
