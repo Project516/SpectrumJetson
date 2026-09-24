@@ -1,0 +1,1125 @@
+diff --git a/photon-client/src/components/settings/RewindCard.vue b/photon-client/src/components/settings/RewindCard.vue
+new file mode 100644
+index 00000000..6bfda5c4
+--- /dev/null
++++ b/photon-client/src/components/settings/RewindCard.vue
+@@ -0,0 +1,156 @@
++<script setup lang="ts">
++// SpectrumJetson Rewind: records each camera's own MJPEG frames to the SSD while robot code sets
++// /photonvision/rewind/record (or "Record now" here, for bench tests). See docs/REWIND.md.
++import { onBeforeUnmount, onMounted, ref } from "vue";
++import axios from "axios";
++import PvSwitch from "@/components/common/pv-switch.vue";
++import { useStateStore } from "@/stores/StateStore";
++import { useTheme } from "vuetify";
++
++const theme = useTheme();
++
++type RewindCamera = { camera: string; fps: number; frames: number; MB: number; problem: string };
++type RewindStatus = {
++  recording: boolean;
++  session: string;
++  reason: string;
++  seconds: number;
++  stopReason: string;
++  manual: boolean;
++  robotConnected: boolean;
++  robotRequest: boolean;
++  diskLow: boolean;
++  freeGB: number;
++  usedGB: number;
++  sessionCount: number;
++  settings: { fps: number; quotaGB: number; minFreeGB: number };
++  cameras: RewindCamera[];
++  recent: { name: string; MB: number }[];
++};
++
++const status = ref<RewindStatus | null>(null);
++const busy = ref(false);
++let timer: ReturnType<typeof setInterval> | undefined;
++
++const load = async () => {
++  try {
++    status.value = (await axios.get("/rewind")).data;
++  } catch {
++    status.value = null;
++  }
++};
++const post = async (body: object, message: string) => {
++  busy.value = true;
++  try {
++    status.value = (await axios.post("/rewind", body)).data;
++    useStateStore().showSnackbarMessage({ message, color: "success" });
++  } catch (e: any) {
++    useStateStore().showSnackbarMessage({
++      message: e?.response?.data || "Rewind request failed",
++      color: "error"
++    });
++    await load();
++  } finally {
++    busy.value = false;
++  }
++};
++const setManual = (on: boolean) => post({ manual: on }, on ? "Recording (bench)" : "Bench recording stopped");
++const deleteSession = (name: string) => {
++  if (window.confirm(`Delete recording ${name}?`)) post({ delete: name }, `Deleted ${name}`);
++};
++const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
++
++onMounted(() => {
++  load();
++  timer = setInterval(load, 2000);
++});
++onBeforeUnmount(() => clearInterval(timer));
++</script>
++
++<template>
++  <v-card v-if="status" class="mb-3 rounded-12" color="surface">
++    <v-card-title class="pb-10px">Rewind (camera recording)</v-card-title>
++    <v-card-text class="pt-0">
++      <v-alert
++        class="mb-3"
++        density="compact"
++        :color="status.recording ? 'error' : 'buttonActive'"
++        :icon="status.recording ? 'mdi-record-rec' : 'mdi-information-outline'"
++        :variant="theme.global.name.value === 'LightTheme' ? 'elevated' : 'tonal'"
++      >
++        <template v-if="status.recording">
++          Recording <b>{{ status.session }}</b> ({{ status.reason === "robot" ? "robot code asked" : "bench" }},
++          {{ fmtTime(status.seconds) }})
++        </template>
++        <template v-else-if="status.diskLow">Not recording: the SSD is nearly full.</template>
++        <template v-else>
++          Not recording. Robot code starts recording by setting <code>/photonvision/rewind/record</code> to
++          true{{ status.robotConnected ? "" : " (no robot connected)" }}.
++          <span v-if="status.stopReason">Last stop: {{ status.stopReason }}.</span>
++        </template>
++      </v-alert>
++
++      <pv-switch
++        :model-value="status.manual"
++        :disabled="busy"
++        label="Record now (bench)"
++        tooltip="Records every camera until turned off, for bench tests. Robot code normally controls recording."
++        :label-cols="4"
++        @update:model-value="(v) => setManual(!!v)"
++      />
++
++      <v-table v-if="status.recording" density="compact" class="mb-3">
++        <thead>
++          <tr>
++            <th>Camera</th>
++            <th>Saved fps</th>
++            <th>Frames</th>
++            <th>MB</th>
++            <th></th>
++          </tr>
++        </thead>
++        <tbody>
++          <tr v-for="c in status.cameras" :key="c.camera">
++            <td>{{ c.camera }}</td>
++            <td>{{ c.fps }}</td>
++            <td>{{ c.frames }}</td>
++            <td>{{ c.MB }}</td>
++            <td class="text-error">{{ c.problem }}</td>
++          </tr>
++        </tbody>
++      </v-table>
++
++      <div class="mb-2">
++        {{ status.sessionCount }} recording(s), {{ status.usedGB.toFixed(1) }} GB of
++        {{ status.settings.quotaGB }} GB allowed; {{ status.freeGB.toFixed(0) }} GB free on the SSD. Saving
++        {{ status.settings.fps }} frames/s per camera. The oldest recordings are deleted past the limit. Copy them
++        to a laptop with <code>scripts/host/rewind-pull.sh</code>.
++      </div>
++      <v-table v-if="status.recent.length" density="compact">
++        <thead>
++          <tr>
++            <th>Recent recordings</th>
++            <th>MB</th>
++            <th></th>
++          </tr>
++        </thead>
++        <tbody>
++          <tr v-for="r in status.recent" :key="r.name">
++            <td>{{ r.name }}</td>
++            <td>{{ r.MB }}</td>
++            <td>
++              <v-btn
++                v-if="r.name !== status.session"
++                size="x-small"
++                variant="text"
++                icon="mdi-delete"
++                :disabled="busy"
++                @click="deleteSession(r.name)"
++              />
++            </td>
++          </tr>
++        </tbody>
++      </v-table>
++    </v-card-text>
++  </v-card>
++</template>
+diff --git a/photon-client/src/views/GeneralSettingsView.vue b/photon-client/src/views/GeneralSettingsView.vue
+index 24d64035..f55f505f 100644
+--- a/photon-client/src/views/GeneralSettingsView.vue
++++ b/photon-client/src/views/GeneralSettingsView.vue
+@@ -5,12 +5,14 @@ import LightingControlCard from "@/components/settings/LEDControlCard.vue";
+ import { useSettingsStore } from "@/stores/settings/GeneralSettingsStore";
+ import ApriltagControlCard from "@/components/settings/ApriltagControlCard.vue";
+ import DeviceCard from "@/components/settings/DeviceCard.vue";
++import RewindCard from "@/components/settings/RewindCard.vue";
+ </script>
+ 
+ <template>
+   <div class="pa-3">
+     <DeviceCard />
+     <GlobalSettingsCard />
++    <RewindCard />
+     <ObjectDetectionCard v-if="useSettingsStore().general.supportedBackends.length > 0" />
+     <LightingControlCard v-if="useSettingsStore().lighting.supported" />
+     <Suspense>
+diff --git a/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
+new file mode 100644
+index 00000000..2b1efbc8
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
+@@ -0,0 +1,489 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.rewind;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import com.fasterxml.jackson.databind.SerializationFeature;
++import edu.wpi.first.networktables.BooleanPublisher;
++import edu.wpi.first.networktables.BooleanSubscriber;
++import edu.wpi.first.networktables.DoublePublisher;
++import edu.wpi.first.networktables.IntegerPublisher;
++import edu.wpi.first.networktables.IntegerSubscriber;
++import edu.wpi.first.networktables.NetworkTable;
++import edu.wpi.first.networktables.NetworkTableInstance;
++import edu.wpi.first.networktables.NetworkTablesJNI;
++import edu.wpi.first.networktables.StringPublisher;
++import edu.wpi.first.networktables.StringSubscriber;
++import java.io.File;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.time.LocalDateTime;
++import java.time.format.DateTimeFormatter;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.CopyOnWriteArrayList;
++import java.util.stream.Stream;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.common.util.TimedTaskManager;
++
++/**
++ * SpectrumJetson Rewind: decides when the cameras record, and keeps the recordings within their
++ * disk quota. See {@code docs/REWIND.md} in SpectrumJetson.
++ *
++ * <p>Robot code decides when to record, over NetworkTables under {@code /photonvision/rewind/}:
++ *
++ * <ul>
++ *   <li>{@code record} (boolean, robot sets): record while true.
++ *   <li>{@code label} (string, robot sets, optional): names the recording, e.g. "shooter-test-3".
++ *       Empty: the FMS match (e.g. "Q12"), else "robot".
++ *   <li>{@code recording}, {@code session}, {@code freeGB}, {@code framesDropped} (Jetson sets).
++ * </ul>
++ *
++ * <p>The web UI can also record ("Record now", for bench tests). If the robot disconnects while it
++ * asked for recording (brownout, reboot), recording continues for {@link #DISCONNECT_GRACE_US} so the
++ * footage of what happened is kept.
++ *
++ * <p>Each recording is a session folder under {@link #ROOT}{@code /sessions}, holding {@code
++ * session.json} and one folder per camera. When the folder passes its quota or the disk gets low,
++ * the oldest sessions are deleted.
++ */
++public class RewindManager {
++    private static final Logger logger = new Logger(RewindManager.class, LogGroup.General);
++
++    /** Outside photonvision_config, so a settings export never includes the video. */
++    public static final Path ROOT = Path.of("/opt/photonvision/rewind");
++
++    public static final Path SESSIONS = ROOT.resolve("sessions");
++    private static final Path SETTINGS_FILE = ROOT.resolve("settings.json");
++    private static final Path SEQ_FILE = ROOT.resolve("next-session-number");
++    private static final long DISCONNECT_GRACE_US = 60_000_000L;
++    private static final ObjectMapper json =
++            new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
++
++    /** Persisted settings (settings.json). */
++    public static class Settings {
++        /** Frames kept per second per camera (the cameras run ~90-100). */
++        public double fps = 30;
++
++        /** Most the sessions folder may hold; the oldest sessions are deleted past this. */
++        public double quotaGB = 100;
++
++        /** Keep at least this much of the SSD free; stop recording below half of it. */
++        public double minFreeGB = 15;
++    }
++
++    public record Session(String name, Path dir, long startUs, String reason) {}
++
++    private static RewindManager INSTANCE;
++
++    public static synchronized RewindManager getInstance() {
++        if (INSTANCE == null) INSTANCE = new RewindManager();
++        return INSTANCE;
++    }
++
++    private final List<RewindRecorder> recorders = new CopyOnWriteArrayList<>();
++    private volatile Settings settings = new Settings();
++    private volatile Session current = null;
++    private volatile boolean manual = false;
++    private volatile String stopReason = "";
++    private volatile boolean diskLow = false;
++    private volatile long lastRobotRecordTrueUs = 0;
++    private volatile long sessionsBytes = 0;
++    private volatile int sessionCount = 0;
++    private volatile long lastDiskCheckUs = 0;
++    private boolean started = false;
++
++    private BooleanSubscriber recordSub;
++    private StringSubscriber labelSub;
++    private StringSubscriber eventSub;
++    private IntegerSubscriber matchTypeSub;
++    private IntegerSubscriber matchNumberSub;
++    private BooleanPublisher recordingPub;
++    private StringPublisher sessionPub;
++    private DoublePublisher freeGBPub;
++    private IntegerPublisher droppedPub;
++
++    private RewindManager() {}
++
++    /** Call once NetworkTables is up. */
++    public synchronized void start() {
++        if (started) return;
++        started = true;
++        try {
++            Files.createDirectories(SESSIONS);
++        } catch (IOException e) {
++            logger.error("Rewind: cannot create " + SESSIONS, e);
++        }
++        loadSettings();
++
++        NetworkTableInstance nt = NetworkTablesManager.getInstance().getNTInst();
++        NetworkTable t = nt.getTable("photonvision").getSubTable("rewind");
++        recordSub = t.getBooleanTopic("record").subscribe(false);
++        labelSub = t.getStringTopic("label").subscribe("");
++        recordingPub = t.getBooleanTopic("recording").publish();
++        sessionPub = t.getStringTopic("session").publish();
++        freeGBPub = t.getDoubleTopic("freeGB").publish();
++        droppedPub = t.getIntegerTopic("framesDropped").publish();
++        NetworkTable fms = nt.getTable("FMSInfo");
++        eventSub = fms.getStringTopic("EventName").subscribe("");
++        matchTypeSub = fms.getIntegerTopic("MatchType").subscribe(0);
++        matchNumberSub = fms.getIntegerTopic("MatchNumber").subscribe(0);
++
++        TimedTaskManager.getInstance().addTask("RewindManager::tick", this::tick, 200);
++        logger.info(
++                "Rewind ready: robot code records by setting /photonvision/rewind/record; saving to "
++                        + SESSIONS);
++    }
++
++    void register(RewindRecorder r) {
++        recorders.add(r);
++    }
++
++    void unregister(RewindRecorder r) {
++        recorders.remove(r);
++    }
++
++    /** The open session, or null when not recording. Read by the recorder threads per frame. */
++    Session currentSession() {
++        return current;
++    }
++
++    long minFrameIntervalUs() {
++        double fps = settings.fps;
++        return fps <= 0 ? 0 : (long) (1e6 / fps);
++    }
++
++    /** Robot-clock time for a Jetson frame time, or "" when not synced to a robot. */
++    String robotTimeUs(long jetsonUs) {
++        var ntm = NetworkTablesManager.getInstance();
++        if (!ntm.getNTInst().isConnected()) return "";
++        return Long.toString(jetsonUs + ntm.getOffset());
++    }
++
++    // ---- control
++
++    public synchronized void setManual(boolean on) {
++        manual = on;
++        logger.info("Rewind: bench recording " + (on ? "on" : "off") + " (from the web UI)");
++        tick();
++    }
++
++    public synchronized void updateSettings(Double fps, Double quotaGB, Double minFreeGB) {
++        var s = new Settings();
++        s.fps = fps != null ? Math.max(1, Math.min(120, fps)) : settings.fps;
++        s.quotaGB = quotaGB != null ? Math.max(1, quotaGB) : settings.quotaGB;
++        s.minFreeGB = minFreeGB != null ? Math.max(1, minFreeGB) : settings.minFreeGB;
++        settings = s;
++        try {
++            json.writeValue(SETTINGS_FILE.toFile(), s);
++        } catch (IOException e) {
++            logger.error("Rewind: cannot save settings", e);
++        }
++        lastDiskCheckUs = 0; // re-check the quota now
++    }
++
++    public synchronized boolean deleteSession(String name) {
++        if (current != null && current.name().equals(name)) return false;
++        Path p = SESSIONS.resolve(safeName(name));
++        if (!p.getParent().equals(SESSIONS) || !Files.isDirectory(p)) return false;
++        deleteTree(p);
++        lastDiskCheckUs = 0;
++        return true;
++    }
++
++    // ---- the 5 Hz tick
++
++    private synchronized void tick() {
++        try {
++            long now = NetworkTablesJNI.now();
++            boolean ntConnected = NetworkTablesManager.getInstance().getNTInst().isConnected();
++            boolean robotWants = ntConnected && recordSub.get();
++            if (robotWants) lastRobotRecordTrueUs = now;
++            // Robot asked to record, then vanished: keep going for the grace period.
++            boolean robotGrace =
++                    !ntConnected
++                            && current != null
++                            && current.reason().equals("robot")
++                            && now - lastRobotRecordTrueUs < DISCONNECT_GRACE_US;
++
++            if (now - lastDiskCheckUs > 10_000_000L) {
++                lastDiskCheckUs = now;
++                manageDisk();
++            }
++
++            boolean want = (robotWants || robotGrace || manual) && !diskLow;
++            if (want && current == null) {
++                openSession(now, robotWants || robotGrace ? "robot" : "bench");
++            } else if (!want && current != null) {
++                closeSession(
++                        diskLow
++                                ? "disk low"
++                                : current.reason().equals("bench")
++                                        ? "bench recording stopped"
++                                        : ntConnected ? "robot stopped" : "robot disconnected");
++            }
++
++            recordingPub.set(current != null);
++            sessionPub.set(current != null ? current.name() : "");
++            freeGBPub.set(freeBytes() / 1e9);
++            long dropped = 0;
++            for (var r : recorders) dropped += r.framesSkippedNotMjpeg + r.writeErrors + r.badFrames;
++            droppedPub.set(dropped);
++        } catch (Exception e) {
++            logger.error("Rewind tick failed", e);
++        }
++    }
++
++    private void openSession(long now, String reason) {
++        String label = reason.equals("robot") ? labelSub.get().strip() : "bench";
++        if (label.isEmpty()) label = matchName();
++        if (label.isEmpty()) label = "robot";
++        String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
++        String name = String.format("%04d_%s_%s", nextSessionNumber(), safeName(label), stamp);
++        Path dir = SESSIONS.resolve(name);
++        try {
++            Files.createDirectories(dir);
++        } catch (IOException e) {
++            logger.error("Rewind: cannot create " + dir, e);
++            return;
++        }
++        current = new Session(name, dir, now, reason);
++        stopReason = "";
++        writeSessionJson(current, null);
++        logger.info("Rewind: recording session " + name + " (" + reason + ")");
++    }
++
++    private void closeSession(String why) {
++        var s = current;
++        current = null; // recorder threads close their files on their next frame
++        stopReason = why;
++        // Give the recorders a moment to close, then record the end in session.json.
++        TimedTaskManager.getInstance()
++                .addOneShotTask(() -> writeSessionJson(s, why), 1000);
++        logger.info("Rewind: stopped session " + s.name() + (why.isEmpty() ? "" : " (" + why + ")"));
++    }
++
++    private void writeSessionJson(Session s, String endReason) {
++        Map<String, Object> m = new LinkedHashMap<>();
++        m.put("name", s.name());
++        m.put("reason", s.reason());
++        m.put("startJetsonUs", s.startUs());
++        m.put("robotOffsetUs", NetworkTablesManager.getInstance().getOffset());
++        m.put("robotConnected", NetworkTablesManager.getInstance().getNTInst().isConnected());
++        m.put("event", eventSub.get());
++        m.put("match", matchName());
++        m.put("label", labelSub.get());
++        m.put("fps", settings.fps);
++        List<Map<String, Object>> cams = new ArrayList<>();
++        for (var r : recorders) {
++            Map<String, Object> c = new LinkedHashMap<>();
++            c.put("camera", r.getNickname());
++            c.put("frames", r.framesWritten);
++            c.put("bytes", r.bytesWritten);
++            if (!r.lastProblem.isEmpty()) c.put("problem", r.lastProblem);
++            cams.add(c);
++        }
++        m.put("cameras", cams);
++        if (endReason != null) {
++            m.put("endJetsonUs", NetworkTablesJNI.now());
++            m.put("endReason", endReason);
++        }
++        try {
++            json.writeValue(s.dir().resolve("session.json").toFile(), m);
++        } catch (IOException e) {
++            logger.error("Rewind: cannot write session.json", e);
++        }
++    }
++
++    private String matchName() {
++        String type =
++                switch ((int) matchTypeSub.get()) {
++                    case 1 -> "P";
++                    case 2 -> "Q";
++                    case 3 -> "E";
++                    default -> "";
++                };
++        long n = matchNumberSub.get();
++        return type.isEmpty() || n <= 0 ? "" : type + n;
++    }
++
++    private int nextSessionNumber() {
++        int n = 1;
++        try {
++            if (Files.exists(SEQ_FILE)) n = Integer.parseInt(Files.readString(SEQ_FILE).strip());
++        } catch (Exception e) {
++            n = 1;
++        }
++        try {
++            Files.writeString(SEQ_FILE, Integer.toString(n + 1));
++        } catch (IOException e) {
++            logger.error("Rewind: cannot write " + SEQ_FILE, e);
++        }
++        return n;
++    }
++
++    // ---- disk
++
++    private long freeBytes() {
++        return ROOT.toFile().getUsableSpace();
++    }
++
++    /** Delete the oldest sessions past the quota or when the disk is low. */
++    private void manageDisk() {
++        var s = settings;
++        long quota = (long) (s.quotaGB * 1e9);
++        long minFree = (long) (s.minFreeGB * 1e9);
++        List<Path> sessions = listSessions();
++        long total = 0;
++        Map<Path, Long> sizes = new LinkedHashMap<>();
++        for (Path p : sessions) {
++            long b = treeSize(p);
++            sizes.put(p, b);
++            total += b;
++        }
++        var cur = current;
++        for (Path p : sessions) { // oldest first
++            if (total <= quota && freeBytes() >= minFree) break;
++            if (cur != null && p.equals(cur.dir())) continue;
++            logger.info(
++                    "Rewind: deleting oldest session "
++                            + p.getFileName()
++                            + " (quota "
++                            + s.quotaGB
++                            + " GB, free "
++                            + freeBytes() / 1_000_000_000
++                            + " GB)");
++            deleteTree(p);
++            total -= sizes.get(p);
++        }
++        sessionsBytes = total;
++        sessionCount = listSessions().size();
++        boolean low = freeBytes() < minFree / 2;
++        if (low && !diskLow) logger.error("Rewind: disk nearly full, recording stopped");
++        diskLow = low;
++    }
++
++    private static List<Path> listSessions() {
++        try (Stream<Path> st = Files.list(SESSIONS)) {
++            // Names start with a zero-padded session number, so name order is age order.
++            return st.filter(Files::isDirectory).sorted().toList();
++        } catch (IOException e) {
++            return List.of();
++        }
++    }
++
++    private static long treeSize(Path p) {
++        try (Stream<Path> st = Files.walk(p)) {
++            return st.filter(Files::isRegularFile).mapToLong(f -> f.toFile().length()).sum();
++        } catch (IOException e) {
++            return 0;
++        }
++    }
++
++    private static void deleteTree(Path p) {
++        try (Stream<Path> st = Files.walk(p)) {
++            st.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
++        } catch (IOException e) {
++            logger.error("Rewind: cannot delete " + p, e);
++        }
++    }
++
++    // ---- status for the web UI (GET /api/rewind)
++
++    public Map<String, Object> status() {
++        Map<String, Object> m = new LinkedHashMap<>();
++        var cur = current;
++        var ntm = NetworkTablesManager.getInstance();
++        m.put("recording", cur != null);
++        m.put("session", cur != null ? cur.name() : "");
++        m.put("reason", cur != null ? cur.reason() : "");
++        m.put(
++                "seconds",
++                cur != null ? (NetworkTablesJNI.now() - cur.startUs()) / 1e6 : 0);
++        m.put("stopReason", stopReason);
++        m.put("manual", manual);
++        m.put("robotConnected", ntm.getNTInst().isConnected());
++        m.put("robotRequest", ntm.getNTInst().isConnected() && recordSub != null && recordSub.get());
++        m.put("diskLow", diskLow);
++        m.put("freeGB", freeBytes() / 1e9);
++        m.put("usedGB", sessionsBytes / 1e9);
++        m.put("sessionCount", sessionCount);
++        m.put("settings", settings);
++        List<Map<String, Object>> cams = new ArrayList<>();
++        for (var r : recorders) {
++            Map<String, Object> c = new LinkedHashMap<>();
++            c.put("camera", r.getNickname());
++            c.put("fps", Math.round(r.keptFps * 10) / 10.0);
++            c.put("frames", r.framesWritten);
++            c.put("MB", Math.round(r.bytesWritten / 1e5) / 10.0);
++            c.put("problem", r.lastProblem);
++            cams.add(c);
++        }
++        m.put("cameras", cams);
++        List<Map<String, Object>> recent = new ArrayList<>();
++        var all = listSessions();
++        for (int i = all.size() - 1; i >= 0 && recent.size() < 10; i--) {
++            Path p = all.get(i);
++            Map<String, Object> e = new LinkedHashMap<>();
++            e.put("name", p.getFileName().toString());
++            e.put("MB", Math.round(treeSize(p) / 1e5) / 10.0);
++            recent.add(e);
++        }
++        m.put("recent", recent);
++        return m;
++    }
++
++    // ---- helpers
++
++    private void loadSettings() {
++        try {
++            if (Files.exists(SETTINGS_FILE)) {
++                settings = json.readValue(SETTINGS_FILE.toFile(), Settings.class);
++            }
++        } catch (IOException e) {
++            logger.error("Rewind: bad " + SETTINGS_FILE + ", using defaults", e);
++        }
++    }
++
++    /** Letters, digits, '-', '_' and '.' only (session and camera folder names). */
++    public static String safeName(String s) {
++        String r = s.replaceAll("[^A-Za-z0-9._-]", "-");
++        return r.isEmpty() || r.startsWith(".") ? "x" + r : r;
++    }
++
++    /** nice 10 for the calling thread, so the vision threads win any contention for a core. */
++    static void lowerThreadPriority(Logger log) {
++        try {
++            String self = Files.readSymbolicLink(Path.of("/proc/thread-self")).toString();
++            String tid = self.substring(self.lastIndexOf('/') + 1);
++            new ProcessBuilder("renice", "-n", "10", "-p", tid)
++                    .redirectErrorStream(true)
++                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
++                    .start()
++                    .waitFor();
++        } catch (Exception e) {
++            log.warn("Rewind: could not lower thread priority: " + e.getMessage());
++        }
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java b/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java
+new file mode 100644
+index 00000000..693fdde5
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java
+@@ -0,0 +1,317 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.rewind;
++
++import edu.wpi.first.cscore.UsbCamera;
++import edu.wpi.first.cscore.raw.RawSink;
++import edu.wpi.first.util.PixelFormat;
++import edu.wpi.first.util.RawFrame;
++import java.io.BufferedWriter;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.nio.channels.FileChannel;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.StandardOpenOption;
++import java.util.function.Supplier;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++
++/**
++ * SpectrumJetson Rewind: records one camera's own MJPEG frames to the SSD while {@link
++ * RewindManager} has a session open.
++ *
++ * <p>A second cscore sink on the camera, left at "unknown" pixel format, receives the JPEG bytes
++ * exactly as the camera sent them: nothing is decoded or re-encoded, so the cost is one copy and one
++ * disk write per kept frame. cscore hands each sink the newest frame, so if this thread or the disk
++ * falls behind it simply skips frames; it can never hold up the vision pipeline's own sink. The
++ * thread runs at nice 10 so the vision threads win any contention for a core.
++ *
++ * <p>Output, per camera, in 60 s segments: {@code NNNN.mjpeg} (JPEG frames back to back) and {@code
++ * NNNN.csv} (one line per frame: offset, size and timestamps). See {@code docs/REWIND.md}.
++ */
++public class RewindRecorder {
++    private static final long SEGMENT_US = 60_000_000L;
++
++    /** A 1280x800 MJPEG frame is ~50-60 KB; 4 MB covers any mode these cameras have. */
++    private static final int FRAME_BUFFER_BYTES = 4 << 20;
++
++    private final Logger logger;
++    private final UsbCamera camera;
++    private final Supplier<String> nickname;
++    private final RawSink sink;
++    private final Thread thread;
++    private volatile boolean running = true;
++
++    // Stats, read by RewindManager for status.
++    volatile long framesWritten = 0;
++    volatile long framesSkippedNotMjpeg = 0;
++    volatile long bytesWritten = 0;
++    volatile long writeErrors = 0;
++    volatile long badFrames = 0;
++    volatile String lastProblem = "";
++    volatile double keptFps = 0;
++
++    // Current output (recording thread only).
++    private RewindManager.Session session = null;
++    private Path cameraDir = null;
++    private int segmentIndex = 0;
++    private long segmentStartUs = 0;
++    private FileChannel data = null;
++    private BufferedWriter index = null;
++    private long dataOffset = 0;
++    private long lastKeptUs = 0;
++    private long lastIndexFlushUs = 0;
++    private long fpsWindowStartUs = 0;
++    private int fpsWindowFrames = 0;
++
++    public RewindRecorder(UsbCamera camera, Supplier<String> nickname) {
++        this.camera = camera;
++        this.nickname = nickname;
++        this.logger = new Logger(RewindRecorder.class, nickname.get(), LogGroup.Camera);
++        this.sink = new RawSink("rewind_" + camera.getName());
++        this.sink.setSource(camera);
++        this.sink.setEnabled(false);
++        this.thread = new Thread(this::run, "Rewind-" + camera.getName());
++        this.thread.setDaemon(true);
++        this.thread.start();
++        RewindManager.getInstance().register(this);
++    }
++
++    public String getNickname() {
++        return nickname.get();
++    }
++
++    public void stop() {
++        running = false;
++        RewindManager.getInstance().unregister(this);
++        thread.interrupt();
++        try {
++            thread.join(2000);
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++        }
++        sink.close();
++    }
++
++    private void run() {
++        RewindManager.lowerThreadPriority(logger);
++        try (RawFrame frame = new RawFrame()) {
++            // Our own buffer, far bigger than any frame, so cscore never reallocates it. (With
++            // cscore's own buffer, RawFrame.getSize() goes stale: it keeps the size of the frame
++            // the buffer was first allocated for, so later, larger JPEGs were cut off.) The frame's
++            // real length is found from the JPEG itself (jpegLength).
++            ByteBuffer buffer = ByteBuffer.allocateDirect(FRAME_BUFFER_BYTES);
++            frame.setData(buffer, 0, 0, 0, PixelFormat.kUnknown);
++            while (running) {
++                RewindManager.Session s = RewindManager.getInstance().currentSession();
++                if (s == null) {
++                    if (session != null) closeOutput();
++                    setSinkEnabled(false);
++                    keptFps = 0;
++                    sleep(100);
++                    continue;
++                }
++                setSinkEnabled(true);
++
++                // Unknown pixel format: cscore returns the camera's own image (the JPEG) untouched.
++                frame.setInfo(0, 0, 0, PixelFormat.kUnknown);
++                long t = sink.grabFrame(frame, 0.5);
++                if (t == 0) continue; // timeout or camera gone; try again
++                if (frame.getPixelFormat() != PixelFormat.kMJPEG) {
++                    framesSkippedNotMjpeg++;
++                    lastProblem = "camera is not in an MJPEG video mode; not recording it";
++                    sleep(200);
++                    continue;
++                }
++                long minIntervalUs = RewindManager.getInstance().minFrameIntervalUs();
++                // 2 ms of slack so a 30 fps target from a ~90 fps camera keeps every 3rd frame.
++                if (s == session && t - lastKeptUs < minIntervalUs - 2000) continue;
++
++                ByteBuffer data = frame.getData();
++                // A frame too big for our buffer makes cscore allocate a new one, sized exactly.
++                int size = data == buffer ? jpegLength(data) : data.limit();
++                if (size <= 0) {
++                    badFrames++;
++                    lastProblem = "camera sent an incomplete JPEG";
++                    continue;
++                }
++
++                try {
++                    if (s != session) openSession(s, t);
++                    if (t - segmentStartUs >= SEGMENT_US) openSegment(t);
++                    writeFrame(data, size, frame.getWidth(), frame.getHeight(), t);
++                    lastKeptUs = t;
++                    lastProblem = "";
++                } catch (IOException e) {
++                    writeErrors++;
++                    lastProblem = "write failed: " + e.getMessage();
++                    logger.error("Rewind write failed", e);
++                    closeOutput();
++                    sleep(1000);
++                }
++            }
++        } finally {
++            closeOutput();
++        }
++    }
++
++    private void openSession(RewindManager.Session s, long t) throws IOException {
++        closeOutput();
++        session = s;
++        cameraDir = s.dir().resolve(RewindManager.safeName(nickname.get()));
++        Files.createDirectories(cameraDir);
++        segmentIndex = 0;
++        framesWritten = 0;
++        bytesWritten = 0;
++        openSegment(t);
++        logger.info("Rewind: recording to " + cameraDir);
++    }
++
++    private void openSegment(long t) throws IOException {
++        closeFiles();
++        String base = String.format("%04d", segmentIndex++);
++        data =
++                FileChannel.open(
++                        cameraDir.resolve(base + ".mjpeg"),
++                        StandardOpenOption.CREATE,
++                        StandardOpenOption.WRITE,
++                        StandardOpenOption.TRUNCATE_EXISTING);
++        index = Files.newBufferedWriter(cameraDir.resolve(base + ".csv"));
++        index.write("# frame,offset,size,width,height,jetson_us,robot_us\n");
++        dataOffset = 0;
++        segmentStartUs = t;
++    }
++
++    private void writeFrame(ByteBuffer buf, int size, int width, int height, long t)
++            throws IOException {
++        ByteBuffer jpeg = buf.duplicate();
++        jpeg.position(0).limit(size);
++        while (jpeg.hasRemaining()) data.write(jpeg);
++
++        // robot_us: the robot's clock (the timebase of PhotonLib's result timestamps and of the
++        // AdvantageKit log), from PhotonVision's time sync. Blank when not synced to a robot.
++        String robot = RewindManager.getInstance().robotTimeUs(t);
++        index.write(
++                framesWritten
++                        + ","
++                        + dataOffset
++                        + ","
++                        + size
++                        + ","
++                        + width
++                        + ","
++                        + height
++                        + ","
++                        + t
++                        + ","
++                        + robot
++                        + "\n");
++        dataOffset += size;
++        framesWritten++;
++        bytesWritten += size;
++        if (t - lastIndexFlushUs > 1_000_000) {
++            index.flush();
++            lastIndexFlushUs = t;
++        }
++        fpsWindowFrames++;
++        if (t - fpsWindowStartUs >= 2_000_000) {
++            keptFps = fpsWindowFrames * 1e6 / (t - fpsWindowStartUs);
++            fpsWindowStartUs = t;
++            fpsWindowFrames = 0;
++        }
++    }
++
++    private void closeFiles() {
++        try {
++            if (index != null) index.close();
++        } catch (IOException e) {
++            logger.error("Rewind: closing index", e);
++        }
++        try {
++            if (data != null) data.close();
++        } catch (IOException e) {
++            logger.error("Rewind: closing data", e);
++        }
++        index = null;
++        data = null;
++    }
++
++    private void closeOutput() {
++        closeFiles();
++        if (session != null) logger.info("Rewind: stopped, " + framesWritten + " frames");
++        session = null;
++    }
++
++    /**
++     * Length of the JPEG at the start of {@code b} (up to and including its EOI marker), or -1 if
++     * it isn't a complete JPEG. Walks the marker segments to the scan data, then finds the first
++     * EOI in the scan data (an 0xFF there is always followed by 0x00 or a restart marker, so EOI
++     * can't appear by accident). Bytes after it are left over from earlier, larger frames.
++     */
++    static int jpegLength(ByteBuffer b) {
++        int n = b.capacity();
++        if (n < 4 || (b.get(0) & 0xFF) != 0xFF || (b.get(1) & 0xFF) != 0xD8) return -1;
++        int i = 2;
++        while (i + 4 <= n) {
++            if ((b.get(i) & 0xFF) != 0xFF) return -1;
++            int m = b.get(i + 1) & 0xFF;
++            if (m == 0xFF) { // fill byte
++                i++;
++                continue;
++            }
++            if (m == 0xD9) return i + 2;
++            if (m == 0x01 || (m >= 0xD0 && m <= 0xD7)) {
++                i += 2;
++                continue;
++            }
++            int len = ((b.get(i + 2) & 0xFF) << 8) | (b.get(i + 3) & 0xFF);
++            if (len < 2) return -1;
++            i += 2 + len;
++            if (m == 0xDA) { // start of scan: entropy-coded data until the next real marker
++                while (i + 1 < n) {
++                    if ((b.get(i) & 0xFF) == 0xFF) {
++                        int next = b.get(i + 1) & 0xFF;
++                        if (next == 0xD9) return i + 2;
++                        if (next != 0x00 && !(next >= 0xD0 && next <= 0xD7) && next != 0xFF) break;
++                    }
++                    i++;
++                }
++            }
++        }
++        return -1;
++    }
++
++    private boolean sinkEnabled = false;
++
++    /** The sink only copies frames while enabled, so it costs nothing between recordings. */
++    private void setSinkEnabled(boolean on) {
++        if (on != sinkEnabled) {
++            sink.setEnabled(on);
++            sinkEnabled = on;
++        }
++    }
++
++    private static void sleep(long ms) {
++        try {
++            Thread.sleep(ms);
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++        }
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index a8885521..66269480 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -20,6 +20,7 @@ package org.photonvision.vision.frame.provider;
+ import edu.wpi.first.cameraserver.CameraServer;
+ import edu.wpi.first.cscore.CvSink;
+ import edu.wpi.first.cscore.UsbCamera;
++import org.photonvision.rewind.RewindRecorder;
+ import edu.wpi.first.util.PixelFormat;
+ import edu.wpi.first.util.RawFrame;
+ import org.opencv.core.Mat;
+@@ -50,6 +51,8 @@ public class USBFrameProvider extends CpuImageProcessor {
+ 
+     private long lastTime = 0;
+ 
++    private RewindRecorder rewind;
++
+     @SuppressWarnings("SpellCheckingInspection")
+     public USBFrameProvider(
+             UsbCamera camera, VisionSourceSettables visionSettables, Runnable connectedCallback) {
+@@ -63,6 +66,9 @@ public class USBFrameProvider extends CpuImageProcessor {
+         this.settables = visionSettables;
+ 
+         this.connectedCallback = connectedCallback;
++
++        // SpectrumJetson Rewind: records this camera's own MJPEG frames when robot code asks.
++        this.rewind = new RewindRecorder(camera, () -> visionSettables.getConfiguration().nickname);
+     }
+ 
+     @Override
+@@ -148,6 +154,10 @@ public class USBFrameProvider extends CpuImageProcessor {
+ 
+     @Override
+     public void release() {
++        if (rewind != null) {
++            rewind.stop();
++            rewind = null;
++        }
+         CameraServer.removeServer(cvSink.getName());
+         cvSink.close();
+         cvSink = null;
+diff --git a/photon-server/src/main/java/org/photonvision/Main.java b/photon-server/src/main/java/org/photonvision/Main.java
+index b07538a5..6afabeed 100644
+--- a/photon-server/src/main/java/org/photonvision/Main.java
++++ b/photon-server/src/main/java/org/photonvision/Main.java
+@@ -327,6 +327,8 @@ public class Main {
+         NetworkTablesManager.getInstance()
+                 .setConfig(ConfigManager.getInstance().getConfig().getNetworkConfig());
+         NetworkTablesManager.getInstance().registerTimedTasks();
++        // SpectrumJetson Rewind (robot code starts and stops recording over NetworkTables)
++        org.photonvision.rewind.RewindManager.getInstance().start();
+ 
+         logger.debug("Loading HardwareManager...");
+         // Force load the hardware manager
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index f5569e5e..341a3ff2 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -52,6 +52,7 @@ import org.photonvision.common.hardware.Platform;
+ import org.photonvision.common.logging.LogGroup;
+ import org.photonvision.common.logging.Logger;
+ import org.photonvision.common.networking.NetworkManager;
++import org.photonvision.rewind.RewindManager;
+ import org.photonvision.common.util.ShellExec;
+ import org.photonvision.common.util.TimedTaskManager;
+ import org.photonvision.common.util.file.JacksonUtils;
+@@ -461,6 +462,45 @@ public class RequestHandler {
+         }
+     }
+ 
++    // SpectrumJetson Rewind. POST body, all optional:
++    // {"manual": true|false, "fps": 30, "quotaGB": 100, "minFreeGB": 15, "delete": "<session>"}
++    private record RewindRequest(
++            Boolean manual, Double fps, Double quotaGB, Double minFreeGB, String delete) {}
++
++    public static void onRewindStatusRequest(Context ctx) {
++        try {
++            ctx.status(200);
++            ctx.result(kObjectMapper.writeValueAsString(RewindManager.getInstance().status()));
++            ctx.contentType("application/json");
++        } catch (JsonProcessingException e) {
++            ctx.status(500);
++            ctx.result("Could not read Rewind status");
++        }
++    }
++
++    public static void onRewindSetRequest(Context ctx) {
++        try {
++            var req = kObjectMapper.readValue(ctx.body(), RewindRequest.class);
++            var rm = RewindManager.getInstance();
++            if (req.fps() != null || req.quotaGB() != null || req.minFreeGB() != null) {
++                rm.updateSettings(req.fps(), req.quotaGB(), req.minFreeGB());
++            }
++            if (req.manual() != null) rm.setManual(req.manual());
++            if (req.delete() != null && !rm.deleteSession(req.delete())) {
++                ctx.status(400);
++                ctx.result("Cannot delete that session (unknown, or still recording)");
++                return;
++            }
++            ctx.status(200);
++            ctx.result(kObjectMapper.writeValueAsString(rm.status()));
++            ctx.contentType("application/json");
++        } catch (IOException e) {
++            ctx.status(400);
++            ctx.result(
++                    "Expected {\"manual\": true|false, \"fps\": n, \"quotaGB\": n, \"minFreeGB\": n, \"delete\": name}");
++        }
++    }
++
+     private record CameraSettingsRequest(
+             double fov, HashMap<CameraQuirk, Boolean> quirksToChange, String cameraUniqueName) {}
+ 
+diff --git a/photon-server/src/main/java/org/photonvision/server/Server.java b/photon-server/src/main/java/org/photonvision/server/Server.java
+index e9194433..6b68da7d 100644
+--- a/photon-server/src/main/java/org/photonvision/server/Server.java
++++ b/photon-server/src/main/java/org/photonvision/server/Server.java
+@@ -129,6 +129,8 @@ public class Server {
+         app.post("/api/settings/general", RequestHandler::onGeneralSettingsRequest);
+         app.get("/api/settings/radios", RequestHandler::onRadioStatusRequest);
+         app.post("/api/settings/radios", RequestHandler::onRadioSetRequest);
++        app.get("/api/rewind", RequestHandler::onRewindStatusRequest);
++        app.post("/api/rewind", RequestHandler::onRewindSetRequest);
+         app.post("/api/settings/camera", RequestHandler::onCameraSettingsRequest);
+         app.post("/api/settings/camera/setNickname", RequestHandler::onCameraNicknameChangeRequest);
+         app.get("/api/settings/camera/getCalibImages", RequestHandler::onCameraCalibImagesRequest);

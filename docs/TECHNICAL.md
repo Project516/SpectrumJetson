@@ -316,6 +316,18 @@ JVM (`tests/jvm-check.sh`, 2 cameras at ~90 fps): 28 MB peak heap of 512 MB, 0 G
   and multi-tag for pipeline "New Pipeline"", 97–103 fps after. Found because TopLeft had
   lost 3D, and both cameras had multi-tag off, after TopLeft was re-created as BottomLeft.
 
+### Rewind recording (2026-09-24)
+
+`patches/photonvision-07-rewind.patch`; the full description is in [REWIND.md](REWIND.md).
+
+- **How it records.** It adds a per-camera `RewindRecorder` in `USBFrameProvider`: a second cscore `RawSink` on the `UsbCamera`, left at `kUnknown` pixel format, so `GetExistingImage(0)` hands over the camera's own MJPEG bytes. No decode, no re-encode.
+- **Threads.** One thread per camera, at nice 10 via `renice` on `/proc/thread-self`. It keeps a frame if ≥ 1/fps − 2 ms has passed since the last kept frame (30 fps).
+- **Control.** `RewindManager` runs a 5 Hz tick: robot NT `record` (plus a 60 s grace period if the robot disconnects) or the UI's bench switch. It also enforces the quota and minimum free space. Files go to `/opt/photonvision/rewind`.
+- **Measured** (2 cameras, `tests/rewind-ab/run.sh 30 2`): detector fps 108–110 / 99–100 off, and the same with recording on; detect time 1.5–1.9 ms either way. Rewind threads use 2.9% of one core. Frames are 30–55 KB; TopRight's view compresses better.
+- **WPILib bug:** `RawFrame.getSize()` returns the limit of a Java `ByteBuffer` that is only replaced when the native data pointer changes. `WPI_AllocateRawFrameData` frees and mallocs, which often returns the same address, and it doesn't reallocate at all when the frame fits the capacity. So the limit stuck at the first frame's size: every frame was 51,677 bytes, with no EOI marker. Fix: `RawFrame.setData()` with our own 4 MB direct buffer (the JNI gives it a no-op free), and the real length from the JPEG (walk the marker segments, then the first `FFD9` in the scan data). Verified: 1,005/1,005 frames complete, sizes 54.3–54.8 KB, the AVI decodes end to end in GStreamer.
+- **Export** (`scripts/host/rewind-export.py`). A plain-Python MJPEG AVI writer (RIFF `hdrl`/`movi`/`idx1`, split under 2 GB), plus `frames.csv` with `jetson_us` and `robot_us`. Optional H.264 `.mp4` via ffmpeg's concat demuxer with per-frame durations.
+- **Not yet verified:** `robot_us` (Jetson time + `TimeSyncManager.getOffset()`) needs the robot network.
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.

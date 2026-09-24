@@ -73,9 +73,10 @@ own method on `PhotonPoseEstimator`, and the only constructor is
 1. **SystemCore CPU.** Constrained solvePnP runs on the robot and is documented at "typically not
    more than 2 ms" on a roboRIO. Four cameras at about 2 frames each is about 8 solves per loop.
    Run it on the newest frame per camera only (or use trig solve), and time it on the SystemCore.
-2. **Missing heading throws.** In alpha-2, `estimateConstrainedSolvepnpPose` calls
-   `headingBuffer.getSample(...).get()` without checking for a value. It throws if no heading has
-   been added yet, even with `headingFree=true`. Add heading data before the first estimate.
+2. **Missing heading throws.** In alpha-2, `estimateConstrainedSolvepnpPose` with
+   `headingFree=true` calls `headingBuffer.getSample(...).get()` without checking for a value, so it
+   throws if no heading has been added yet. With `headingFree=false` it returns empty instead. Add
+   heading data before the first estimate either way.
 3. **Calibration from the camera.** The constrained solve needs `camera.getCameraMatrix()` and
    `camera.getDistCoeffs()`. The distortion is 8 coefficients (`N8`), which matches our
    8-coefficient fix. Both return empty until the camera has connected.
@@ -98,7 +99,7 @@ own method on `PhotonPoseEstimator`, and the only constructor is
 
 | Feature | Used in our code? | With PhotonVision + Jetson |
 |---|---|---|
-| Rewind (`triggerRewindCaptureForAllCameras`) | Yes, from `Robot` | Nothing equivalent; PhotonVision only has snapshots (`takeInputSnapshot`). We could record the MJPEG streams to the NVMe. They're already compressed, so recording is cheap. |
+| Rewind (`triggerRewindCaptureForAllCameras`) | Yes, from `Robot` | **Replaced by our own Rewind** ([REWIND.md](REWIND.md)): robot code sets `/photonvision/rewind/record`, and PhotonVision saves each camera's own MJPEG frames at 30 fps to the SSD. It costs no measurable fps. |
 | LEDs (`blinkLimelights`, `solidLimelight`) | Yes | Thriftiest Cams have no LEDs. Move driver signals to a CANdle. |
 | Robot app Cameras page: auto-tune exposure, measure and write back the mount, accelerometer pitch | Yes | All of it calls the Limelight REST API (`/status`, `/results`, `/hwreport`, `/update-pipeline`). It needs a PhotonVision backend. The tag-solve mount measurement can be rebuilt; the accelerometer check can't. |
 | Camera temperature and fps in the robot log | Via the robot app | Only `scripts/jetson/health-check.sh` over SSH. Worth publishing to the robot log. |
@@ -137,7 +138,7 @@ each one would add:
 3. **Port the logic** from the off-season `Vision.java`: gates, tiers, seeding and confirmation,
    and heading checks. Retune the thresholds.
 4. **Turret camera.** Set a per-frame `robotToCamera` from the turret angle history.
-5. **Replacements.** Move LEDs to a CANdle, decide what replaces Rewind, and decide whether the
+5. **Replacements.** Move LEDs to a CANdle, drive Rewind from robot code ([REWIND.md](REWIND.md)), and decide whether the
    robot app's Cameras page gets a PhotonVision backend.
 6. **Validate** timestamps and heading lookup on the robot before trusting the new tiers.
 

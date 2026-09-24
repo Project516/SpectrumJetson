@@ -189,6 +189,16 @@ The board is labeled "9x12", but **PhotonVision needs width 12, height 9**. With
 
 We couldn't get the error below 0.5 px handheld, and that's okay. With so few outliers, the data is clean, and the remaining ~0.8–0.9 px is noise from MJPEG compression. The focal length came out at about 737 px in all three of camera 1's calibrations. **Outliers are the better warning sign.** Our second try had 42% outliers because many snapshots had the board mostly outside the frame. For edge coverage, keep most of the board in the image and just touch the edge.
 
+## Rewind: recording what the cameras saw
+
+Our replacement for Limelight Rewind. While robot code sets `/photonvision/rewind/record` to true in NetworkTables, PhotonVision saves every camera's video to the Jetson's SSD at 30 fps. For real matches that means while enabled with the FMS attached; for a specific test, just around the test. Afterwards, `scripts/host/rewind-pull.sh` copies a recording to the laptop and turns it into videos. Each frame is stamped with the robot's clock, so the video lines up with the AdvantageKit log.
+
+- **It saves the camera's own JPEG frames.** Nothing is decoded or re-encoded, so it costs 3% of one CPU core, and detection fps and latency don't change (measured).
+- **About 1 GB per match** with 4 cameras. The oldest recordings are deleted past 100 GB.
+- **For bench tests** there's a **Record now** switch in Settings → Rewind.
+
+Everything else, including the robot-code example and how to line video up with a log, is in [docs/REWIND.md](docs/REWIND.md).
+
 ## Troubleshooting quick reference
 
 | Symptom | Likely cause | What to do |
@@ -214,12 +224,12 @@ The detailed technical reference, with exact versions, commits and measurements,
 
 | Folder | What's in it |
 | --- | --- |
-| `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03) |
+| `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
 | `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), plus `health-check.sh` |
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector |
-| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check |
-| `docs/` | The technical reference, the Limelight 4 comparison, and the original handoff document that started the project |
+| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test |
+| `docs/` | The technical reference, Rewind, the Limelight 4 comparison, and the original handoff document that started the project |
 
 **Still to do before the October event:**
 
@@ -230,7 +240,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Name the cameras after their ports (TopLeft, TopRight; BottomLeft/BottomRight when added)
 - [x] Wi-Fi / Bluetooth switches in PhotonVision (Bluetooth off; Wi-Fi off before events)
 - [x] Static IP 10.85.15.15 on Ethernet (set in PhotonVision: Settings > Networking)
-- [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results)
+- [x] Rewind: record every camera to the SSD when robot code asks (bench-tested, no fps cost)
+- [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results, Rewind's robot-clock timestamps)
 - [ ] Turn off Wi-Fi and Bluetooth for competition
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
 - [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
