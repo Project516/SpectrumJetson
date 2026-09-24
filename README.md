@@ -8,7 +8,7 @@ vision coprocessor: what we built, why, and how to redo it. The detailed technic
 
 ## Overview
 
-We turned an NVIDIA Jetson Orin Nano Super into a vision coprocessor that finds AprilTags on its GPU. It runs two cameras at about 92 frames per second each, with about 20 ms of latency. It will run on team 8515's robot at the October 2026 off-season event.
+We turned an NVIDIA Jetson Orin Nano Super into a vision coprocessor that finds AprilTags on its GPU. It runs two cameras at their full 120 frames per second each, with about 15 ms of latency and 1.3 of its 6 CPU cores, and it's set up for four. It also records every camera's video on request (Rewind) and can detect game pieces with a YOLO model on the GPU. It will run on team 8515's robot at the October 2026 off-season event.
 
 The robot controller is a SystemCore running 2027 alpha-6 robot code. The Jetson runs PhotonVision, the same software many FRC teams use on an Orange Pi. Ours is a special version that sends the AprilTag math to the GPU using a detector written by FRC team 971. The robot code talks to it through PhotonLib over NetworkTables, like any other PhotonVision camera.
 
@@ -20,7 +20,7 @@ A camera frame goes over USB into PhotonVision on the Jetson. PhotonVision finds
 
 ```mermaid
 flowchart LR
-  CAM["2x Thriftiest Cam<br/>USB 2.0, MJPEG 1280x800"] --> PV["PhotonVision 2026 fork<br/>(4143 CUDA version)"]
+  CAM["2-4x Thriftiest Cam<br/>USB 2.0, MJPEG 1280x800"] --> PV["PhotonVision 2026 fork<br/>(4143 CUDA version + our patches)"]
   PV --> DET["971 CUDA AprilTag<br/>detector on the GPU"]
   DET --> PV
   PV -->|NetworkTables| SC["SystemCore<br/>2027 alpha-6 robot code"]
@@ -32,9 +32,10 @@ flowchart LR
 | Computer | Jetson Orin Nano Super devkit (8 GB), booting from a 256 GB NVMe SSD, no SD card |
 | Operating system | JetPack 6.2.3 (Jetson Linux 36.5.2, Ubuntu 22.04) with CUDA 12.6 |
 | Power mode | MAXN SUPER (the fastest mode, which gives the board its "Super" name) |
-| Cameras | 2x Thrifty Bot Thriftiest Cam: OV9281, mono, global shutter, 1280x800, USB 2.0 |
-| Vision software | FRC-Team-4143's PhotonVision fork (2026 version), plus our patches |
+| Cameras | 2 (4 planned) Thrifty Bot Thriftiest Cam: OV9281, mono, global shutter, 1280x800, USB 2.0 |
+| Vision software | FRC-Team-4143's PhotonVision fork (2026 version), merged with upstream PhotonVision v2026.3.4, plus our patches |
 | Tag detector | Austin Schuh's current CUDA detector (from 971 / RealtimeRoboticsGroup), built from frc971/bos |
+| Game pieces | YOLO models on the GPU through TensorRT 10.3 (our backend), FUEL model by Team 2826 |
 | Robot side | Stock PhotonLib v2027.0.0-alpha-2 in `2026-FM-SystemCore`, team 8515 |
 
 **Why a 2026 PhotonVision works with 2027 robot code:** the CUDA version of PhotonVision only exists for 2026. We checked the source to confirm the two versions speak the same language:
@@ -71,7 +72,7 @@ After flashing, the Jetson boots from the SSD and shows up on the laptop as a US
 3. **Get it online.** Over USB it has no internet, and its clock is wrong until it syncs, which makes package downloads fail. Wi-Fi is easiest: `sudo nmcli --ask dev wifi connect <SSID>`.
 4. **Install CUDA** with `scripts/jetson/02-jetpack.sh`, which runs `apt install nvidia-jetpack`. Flashing only installs the base OS, so CUDA 12.6, cuDNN and TensorRT come from this step.
 
-**Tip:** anything that needs `sudo` on the Jetson runs in a terminal where you type the password yourself. Nobody should put the password in a script or a chat.
+**Tip:** never put a password in a script or a chat. On our Jetson the team account has passwordless sudo (`/etc/sudoers.d/90-spectrum3847-nopasswd`, added by the team so setup scripts can run over SSH); on a fresh Jetson, run `sudo` steps in a terminal where you type the password yourself.
 
 ## Step 3: Build and install the vision software
 
@@ -82,7 +83,9 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
 | 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. |
-| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork plus our patches. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–14. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
+| 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
 
 **Where the detector code comes from.** FRC 971 (Spartan Robotics) wrote the CUDA AprilTag detector. Austin Schuh, its author, now maintains it in the **RealtimeRoboticsGroup/aos** repo and works with team 1868. We started with FRC-Team-4143's copy (`GpuDetectorJNI`), which dates from about August 2024. We switched to **frc971/bos**, which has Austin's current code with a CMake build that works on our exact CUDA version. In a side-by-side test, the new detector found tags exactly as well as the old one, and **30–40% faster** (1.7 ms per frame instead of 2.4–3.0 ms).
 
@@ -90,7 +93,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 
 **Safe deploys.** `06-install-fork-jar.sh` refuses to install a jar that isn't a valid zip, and it keeps the previous working jar as `photonvision.jar.prev`. We added that after a truncated jar took PhotonVision down (see the bugs section).
 
-**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, and USB autosuspend off for cameras. After it, the Jetson boots in 16.5 s instead of 57 s, and both cameras are detecting about 20 s after power-on. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
+**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, USB autosuspend off for cameras, power-cut safety (data on the SSD within 3 s, the system log kept across power cuts), the fan at full speed, a 30 s hardware watchdog, reboot on kernel panic, PhotonVision restarted on any exit, and OpenCV's worker threads sleeping instead of spinning. After it, the Jetson boots in 16.5 s instead of 57 s, and both cameras are detecting about 20 s after power-on. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
 
 ## Bugs we found and fixed
 
@@ -136,7 +139,9 @@ We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. Th
 
 **More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), so 4 cameras should fit. The limit was **USB bandwidth**. With the stock driver each camera reserves ~196 Mbps whatever mode it runs, and a USB 2.0 root port holds two. All four USB-A ports share one root port, so only 2 cameras fit there.
 
-We fixed that with a patched camera driver (`scripts/jetson/11-uvcvideo-payload-cap.sh`). It caps the Thriftiest Cam's reservation at 82 Mbps (UVC alternate setting 7), still about 1.4x the largest frame we've measured at 120 fps. Now **4 cameras fit on the USB-A ports**, and a hub in the USB-C port adds a second root port for more. Tested with 2 cameras: 122 fps each, every frame complete. The cost: a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so the robot's latency compensation should add ~3 ms (see `docs/VISION-RESEARCH.md`). Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
+We fixed that with a patched camera driver (`scripts/jetson/11-uvcvideo-payload-cap.sh`). It caps the Thriftiest Cam's reservation at 82 Mbps (UVC alternate setting 7), still about 1.4x the largest frame we've measured at 120 fps. Now **4 cameras fit on the USB-A ports**, and a hub in the USB-C port adds a second root port for more (tested: 121 fps there). Tested with 2 cameras: 122 fps each, every frame complete. The cost: a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so results reach the robot ~2 ms later. It does **not** make timestamps less accurate: the driver stamps a frame when its *first* USB packet arrives. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
+
+**Timestamps mark mid-exposure** (`photonvision-13`): the Jetson subtracts half the exposure from every frame's timestamp, so the robot shouldn't. The camera's own delay (readout and JPEG, before its first packet) is still to be measured on the robot with the spin-in-front-of-a-tag test, and set as `SPECTRUM_CAMERA_DELAY_US`. The camera doesn't send UVC hardware timestamps; we checked.
 
 What other teams' vision systems do (EagleEye, Code Orange's MLTag, 4533's Whacknet, 971's bos and cos), the full profiling story, and what's worth doing next: [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
 
@@ -150,7 +155,7 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 - Resolution: **1280x800 at 120 FPS, MJPEG**. Don't use YUYV, which only manages 5 fps at this resolution.
 - Auto Exposure off, Exposure **50** (5 ms), Brightness 100
 - AprilTagCuda tab: decision margin cutoff **15**
-- Low Latency Mode **off** (or on, for 3–4 cameras)
+- Low Latency Mode **off**
 - Processing Mode **3D** and **multi-tag on** (Output tab), once the camera is calibrated. The robot's pose code needs both.
 - Stream Resolution: small, to save CPU (it only affects the video you watch in the browser)
 - AprilTag field layout: **2026 Rebuilt AndyMark**. The robot code must use the same layout.
@@ -168,7 +173,7 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 
 All four USB-A ports share one USB 2.0 root port. Four cameras fit there only with our capped camera driver installed (`scripts/jetson/11-uvcvideo-payload-cap.sh --install`; the health check shows which driver is loaded). With the stock driver, only two fit.
 
-A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there. All four USB-A ports share one USB 2.0 hub; two MJPEG cameras fit easily, and 3–4 fit at ~60 fps each.
+A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there.
 
 **Calibration board settings** (ChArUco, 5x5 markers, 30 mm squares, 22 mm markers):
 
@@ -239,8 +244,9 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 | --- | --- | --- |
 | `lsusb` shows no NVIDIA device | Not in recovery mode, or a charge-only USB-C cable | Redo the FC REC–GND jumper with power off. Try a USB-C cable you know carries data. |
 | Flash hangs at "Waiting for target to boot-up" for minutes | NetworkManager or the firewall is interfering | Use `02-flash-nvme.sh`, which handles both. |
-| Camera doesn't show up (`lsusb`, no `/dev/video*`) | Loose cable, or plugged into the USB-C port | Use a USB-A port, and reseat or swap the cable. |
-| Low FPS (~34) | Exposure too long (the units are 100 µs) | Exposure 83 or lower. Anything up to ~150 still gets full fps. |
+| Camera doesn't show up (`lsusb`, no `/dev/video*`) | Loose cable, or plugged straight into the USB-C port | Reseat or swap the cable. Cameras work on USB-C through a hub (it's a separate USB root port). |
+| A 3rd or 4th camera won't start streaming ("No space left on device") | USB 2.0 bandwidth: the stock camera driver lets each camera reserve ~196 Mbps | Install the capped driver: `scripts/jetson/11-uvcvideo-payload-cap.sh --install`. The health check shows which driver is loaded. |
+| Low FPS (~34) | Exposure too long (the units are 100 µs; the slider shows ms) | Exposure 50–83 (5–8.3 ms). |
 | Tags flicker in and out | Decision margin near the cutoff (dim light, or flickering light) | Run `tests/flicker-check/run.sh`. If frames pulse, use exposure 83; otherwise lower the cutoff a little. Retune on the field. |
 | One camera shows no detections, and the log fills with "invalid JPEG image received" | The camera got stuck sending corrupt frames (seen once after rapid restarts) | Restart PhotonVision; if it persists, replug that camera. The health check warns about this. |
 | Image nearly black during calibration | Calibration uses its own exposure settings | In the calibration card: Auto Exposure off, Exposure ~150. |
@@ -264,8 +270,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoder and TensorRT object detector) |
 | `kernel/` | Our patch to Linux's USB camera driver (bandwidth cap), built by `11-uvcvideo-payload-cap.sh` |
-| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test |
-| `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, and the original handoff document that started the project |
+| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test, flicker check, CPU profiler, performance snapshot |
+| `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, the upstream PhotonVision port, the game-piece models, and the original handoff document that started the project |
 
 **Still to do before the October event:**
 
@@ -282,13 +288,13 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Rewind: record every camera to the SSD when robot code asks (bench-tested, no fps cost)
 - [x] Jetson sets its date from the robot's clock when it has no internet (`photonvision-08`; robot code publishes `/photonvision/clock/unixMs`, issue #10)
 - [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results, Rewind's robot-clock timestamps, the Jetson's date from the robot)
-- [ ] Turn off Wi-Fi and Bluetooth for competition
+- [ ] Turn off Wi-Fi for competition (Bluetooth is already off)
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
 - [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
 - [x] Decode speedup: both cameras at 122 fps, 13 ms latency, 1.3 of 6 CPU cores
 - [x] Upstream PhotonVision v2026.3.4 fixes, `setEnabled()` support, OpenCV leak fixes (`docs/UPSTREAM-PORT.md`)
 - [x] Frame timestamps moved to mid-exposure (`photonvision-13`); the camera's own delay is still to be measured with the robot spin test
-- [x] Game-piece detection: TensorRT backend, FUEL model working (62 fps)
+- [x] Game-piece detection: TensorRT backend, FUEL model working (76 fps uncapped)
 - [x] Game-piece pipelines capped at 30 fps by default (no measurable effect on AprilTag cameras)
 - [ ] Game-piece colour camera on the robot
 - [x] USB bandwidth: capped camera driver so 4 cameras fit on USB-A (alt 7, tested with 2: 122 fps, no bad frames)
@@ -297,3 +303,38 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Take a full backup image of the SSD, including PhotonVision's settings (`scripts/host/04-backup-ssd.sh`), and clone a spare SSD from it (`05-restore-ssd.sh`)
 
 **Next season:** faster CSI (ribbon-cable) cameras would skip the USB and MJPEG decoding and could reach 120+ fps. That's the setup Austin's AOS system is built around. For October, this USB setup is the right one.
+
+## Credits and licenses
+
+This setup stands on other people's work. We link to or patch their code rather than copy it into this repo, except where noted. Each project keeps its own license.
+
+**Code we build on:**
+
+| Project | What we use | License |
+| --- | --- | --- |
+| [PhotonVision](https://github.com/PhotonVision/photonvision) | The vision software itself. We merged release v2026.3.4 (patch 00) and ported the server side of `setEnabled` ([#2484](https://github.com/PhotonVision/photonvision/pull/2484), [#2499](https://github.com/PhotonVision/photonvision/pull/2499)) and OpenCV leak fixes ([#2511](https://github.com/PhotonVision/photonvision/pull/2511)). | GPL-3.0 |
+| [FRC-Team-4143/photonvision](https://github.com/FRC-Team-4143/photonvision) | The CUDA version of PhotonVision our build starts from (commit `d8c9e8e`). Also their earlier `GpuDetectorJNI` detector build. | GPL-3.0 |
+| Austin Schuh and FRC 971's CUDA AprilTag detector | The GPU detector, from [RealtimeRoboticsGroup/aos](https://github.com/RealtimeRoboticsGroup/aos) (Apache-2.0), built from [frc971/bos](https://github.com/frc971/bos) `third_party/971apriltag`. Our `bos-*` patches change it. | Apache-2.0 (aos); bos has no license file |
+| [WPILib allwpilib](https://github.com/wpilibsuite/allwpilib) | Built on the Jetson (v2026.2.1) for the detector; cscore and ntcore run inside PhotonVision. | BSD-3-Clause |
+| [Linux kernel](https://www.kernel.org/) `uvcvideo` | Our `kernel/uvcvideo-payload-cap.patch` modifies the stock v5.15.199 USB camera driver, fetched from the stable kernel's [GitHub mirror](https://github.com/gregkh/linux). | GPL-2.0 |
+| [libjpeg-turbo](https://libjpeg-turbo.org/) | Grayscale MJPEG decode in `detector/GpuDetectorJNI.cc` (the system library). | IJG / BSD-style |
+| NVIDIA JetPack, CUDA, TensorRT | The OS, GPU toolkit and inference engine. Not redistributed. | NVIDIA licenses |
+| [Ultralytics](https://github.com/ultralytics/ultralytics) | Exporting YOLO models to ONNX on the laptop. Not redistributed. | AGPL-3.0 |
+
+**Models:**
+
+- **FUEL YOLO11n by [Team 2826 Wave Robotics](https://www.chiefdelphi.com/t/introducing-wave-robotics-yolov11-model-for-rebuilt/512701).** It's the model PhotonVision ships for 2026; Wave gave PhotonVision permission to include it.
+- **FUEL YOLO26n by [Project516](https://huggingface.co/project516/rebuilt-fuel-model)** (AGPL-3.0), downloaded for comparison.
+
+We don't redistribute either; see [docs/GAME-PIECE-MODELS.md](docs/GAME-PIECE-MODELS.md).
+
+**Ideas and research we learned from** (no code copied):
+
+- EagleEye by Scythe-Engineering (grayscale-only decode). It's PolyForm Noncommercial, so we took ideas only.
+- Team 3476 Code Orange's ML-assisted AprilTags ("MLTag").
+- Team 4533's Whacknet (coprocessor constrained solve).
+- 971's bos and cos (TensorRT YOLO, hardware JPEG decode).
+- Mechanical Advantage 6328's Northstar.
+- Many Chief Delphi threads, linked in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
+
+**This repo:** the scripts, tests, docs and our own code (`detector/`, and the new files in our patches) were written by Spectrum 3847 with help from Claude (Anthropic). Our patches to PhotonVision are GPL-3.0, like PhotonVision itself, and the kernel patch is GPL-2.0.
