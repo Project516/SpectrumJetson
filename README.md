@@ -16,7 +16,7 @@ Measured on the bench:
 
 - **2 AprilTag cameras at 120 fps each, full resolution (1280x800), about 15 ms latency, using about 25% of the CPU.** The cameras are Thrifty Bot [Thriftiest Cams](https://www.thethriftybot.com/products/thriftiest-cam): mono, global shutter, USB 2.0, $50 each. The GPU finds the tags in about 2 ms per frame and is only about 12% busy (peaks under 25%).
 - **Set up for 4 AprilTag cameras** on the USB-A ports, with more on a USB-C hub.
-- **Game-piece detection at 30 fps alongside the AprilTag cameras,** with no measurable slowdown to them (76 fps if uncapped).
+- **Game-piece detection at 30 fps alongside the AprilTag cameras,** with no measurable slowdown to them (76 fps if uncapped). Speed only so far: it was tested on a mono camera, and how well it finds FUEL still needs a colour camera.
 - **Rewind:** robot code can record every camera at 30 fps, for 3% of one core, and you can download the recordings from the web UI.
 - **Accurate timing:** frames are timestamped at mid-exposure and synced to the robot's clock.
 - **Match-ready:**
@@ -247,7 +247,10 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
   ```
   Then give the camera a pipeline of type **Object Detection** and pick the model.
 - **The 2026 FUEL model** we started with is Team 2826 Wave Robotics' YOLO11n, the same one PhotonVision ships for other hardware. The models we have, their licenses and exports: [docs/GAME-PIECE-MODELS.md](docs/GAME-PIECE-MODELS.md).
-- **Measured on the bench** (mono camera, 1280x800 in; measured with nothing else using the GPU):
+- **Measured on the bench** (mono camera, 1280x800 in; measured with nothing else using the GPU). This measures **speed, not accuracy**:
+  - The Object Detection pipeline doesn't ask for gray frames, so a mono camera's JPEG is decoded to a colour image whose three channels are identical. The model runs on that.
+  - The model was trained on colour photos, and FUEL's yellow is lost in gray.
+  - Inference costs the same either way, so these numbers should hold for a colour camera. Detection rate and false positives still need measuring on one.
 
   | | AprilTag camera beside it | AprilTag detect (avg / worst) | GPU | PhotonVision CPU |
   | --- | --- | --- | --- | --- |
