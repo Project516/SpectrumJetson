@@ -48,6 +48,8 @@ cd "$SRC"
 git fetch -q origin
 # Reset to the pinned commit, then apply our patches (see patches/).
 git checkout -q -f "$FORK_SHA"
+git reset -q --hard "$FORK_SHA"
+git clean -fdq   # drop files created by earlier patch runs (ignored build caches stay)
 for p in "$REPO_ROOT"/patches/photonvision-*.patch; do
   [[ -e $p ]] || continue
   echo "==> Applying $(basename "$p")"

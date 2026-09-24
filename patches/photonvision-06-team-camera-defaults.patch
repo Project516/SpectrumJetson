@@ -1,0 +1,160 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/PipelineManager.java b/photon-core/src/main/java/org/photonvision/vision/processes/PipelineManager.java
+index 3302404d..d5588b6a 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/PipelineManager.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/PipelineManager.java
+@@ -40,6 +40,9 @@ public class PipelineManager {
+     public static final int CAL_3D_INDEX = -2;
+ 
+     protected final List<CVPipelineSettings> userPipelineSettings;
++
++    /** SpectrumJetson: true if this camera had no pipelines and got the team default one. */
++    boolean createdDefaultPipeline = false;
+     protected final Calibrate3dPipeline calibration3dPipeline;
+     protected final FocusPipeline focusPipeline = new FocusPipeline();
+     protected final DriverModePipeline driverModePipeline = new DriverModePipeline();
+@@ -70,7 +73,12 @@ public class PipelineManager {
+ 
+         this.driverModePipeline.setSettings(driverSettings);
+ 
+-        if (userPipelines.isEmpty()) addPipeline(PipelineType.AprilTag);
++        // SpectrumJetson: a new camera starts with the team's pipeline (AprilTagCuda on the
++        // Jetson); VisionModule then applies TeamCameraDefaults, which need the camera's modes.
++        if (userPipelines.isEmpty()) {
++            addPipeline(TeamCameraDefaults.defaultPipelineType());
++            createdDefaultPipeline = true;
++        }
+ 
+         calibration3dPipeline = new Calibrate3dPipeline();
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
+new file mode 100644
+index 00000000..f13587f9
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
+@@ -0,0 +1,95 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.processes;
++
++import edu.wpi.first.cscore.VideoMode;
++import edu.wpi.first.util.PixelFormat;
++import java.util.Map;
++import org.photonvision.common.hardware.Platform;
++import org.photonvision.vision.frame.FrameDivisor;
++import org.photonvision.vision.pipeline.CVPipelineSettings;
++import org.photonvision.vision.pipeline.PipelineType;
++
++/**
++ * SpectrumJetson: what a brand-new camera starts with on the Jetson, matching the tuned
++ * TopLeft/TopRight cameras (Thriftiest Cam, OV9281). Stock PhotonVision gives a new camera a CPU
++ * AprilTag pipeline at its first video mode (320x240 YUYV on these cameras). Change team defaults
++ * here. Existing cameras keep their saved settings; only cameras with no pipelines use these.
++ */
++public final class TeamCameraDefaults {
++    private TeamCameraDefaults() {}
++
++    /** 100 us units on the Thriftiest Cam: 83 = 8.3 ms, one 120 Hz mains-flicker period. */
++    public static final double EXPOSURE_RAW = 83;
++
++    public static final int BRIGHTNESS = 100;
++    public static final boolean AUTO_WHITE_BALANCE = false;
++    public static final double WHITE_BALANCE_TEMP = 2800;
++
++    /** Low Latency Mode (blockForFrames). Off: ~92 fps each with 2 cameras; on: ~60 fps, less CPU. */
++    public static final boolean LOW_LATENCY_MODE = false;
++
++    /** Only the browser preview stream; smaller saves CPU. */
++    public static final FrameDivisor STREAM_DIVISOR = FrameDivisor.SIXTH;
++
++    public static final int PREFERRED_WIDTH = 1280;
++    public static final int PREFERRED_HEIGHT = 800;
++
++    /** The CUDA detector is only built for the Jetson. */
++    public static PipelineType defaultPipelineType() {
++        return Platform.isJetson() ? PipelineType.AprilTagCuda : PipelineType.AprilTag;
++    }
++
++    /** Applies the team defaults to a new camera's first pipeline. */
++    public static void apply(CVPipelineSettings s, Map<Integer, VideoMode> modes) {
++        s.cameraAutoExposure = false;
++        s.cameraExposureRaw = EXPOSURE_RAW;
++        s.cameraBrightness = BRIGHTNESS;
++        s.cameraAutoWhiteBalance = AUTO_WHITE_BALANCE;
++        s.cameraWhiteBalanceTemp = WHITE_BALANCE_TEMP;
++        s.blockForFrames = LOW_LATENCY_MODE;
++        s.streamingFrameDivisor = STREAM_DIVISOR;
++        int mode = pickVideoMode(modes);
++        if (mode >= 0) s.cameraVideoModeIndex = mode;
++    }
++
++    /**
++     * Video mode indexes differ per camera, so pick by content: the preferred resolution in MJPEG
++     * at its highest fps; else the largest MJPEG mode running at least 60 fps; else the largest
++     * mode. Returns -1 if the camera reported no modes.
++     */
++    static int pickVideoMode(Map<Integer, VideoMode> modes) {
++        int best = -1;
++        long bestScore = Long.MIN_VALUE;
++        for (var e : modes.entrySet()) {
++            VideoMode m = e.getValue();
++            boolean mjpeg = m.pixelFormat == PixelFormat.kMJPEG;
++            boolean preferred = m.width == PREFERRED_WIDTH && m.height == PREFERRED_HEIGHT;
++            long score =
++                    (preferred && mjpeg ? 1L << 50 : 0)
++                            + (mjpeg && m.fps >= 60 ? 1L << 40 : 0)
++                            + (long) m.width * m.height * 1000
++                            + m.fps;
++            if (score > bestScore) {
++                bestScore = score;
++                best = e.getKey();
++            }
++        }
++        return best;
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index b57b01d9..14ca08d7 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -164,6 +164,26 @@ public class VisionModule {
+                 (result) ->
+                         lastPipelineResultBestTarget = result.hasTargets() ? result.targets.get(0) : null);
+ 
++        // SpectrumJetson: a brand-new camera gets the team's tuned settings (TeamCameraDefaults)
++        // instead of stock PhotonVision's CPU AprilTag at 320x240.
++        if (pipelineManager.createdDefaultPipeline && !pipelineManager.userPipelineSettings.isEmpty()) {
++            var first = pipelineManager.userPipelineSettings.get(0);
++            TeamCameraDefaults.apply(first, visionSource.getSettables().getAllVideoModes());
++            var mode = visionSource.getSettables().getAllVideoModes().get(first.cameraVideoModeIndex);
++            logger.info(
++                    "New camera: applied team defaults ("
++                            + first.pipelineType
++                            + ", "
++                            + (mode != null ? mode.width + "x" + mode.height + " " + mode.pixelFormat : "no video modes")
++                            + ", exposure "
++                            + first.cameraExposureRaw
++                            + ", brightness "
++                            + first.cameraBrightness
++                            + ")");
++            pipelineManager.createdDefaultPipeline = false;
++            saveModule();
++        }
++
+         // Sync VisionModule state with the first pipeline index
+         setPipeline(visionSource.getSettables().getConfiguration().currentPipelineIndex);
+ 
