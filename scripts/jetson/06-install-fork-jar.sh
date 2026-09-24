@@ -7,6 +7,8 @@ set -euo pipefail
 
 JAR=${1:?usage: $0 <photonvision-linuxarm64.jar>}
 JAVA17=/usr/lib/jvm/java-17-openjdk-arm64/bin/java
+NET_FLAG=""
+[[ ${PV_MANAGE_NETWORK:-1} == 0 ]] && NET_FLAG=" -n"
 DEST=/opt/photonvision/photonvision.jar
 
 [[ -x $JAVA17 ]] || { echo "Missing $JAVA17 (sudo apt install openjdk-17-jdk)" >&2; exit 1; }
@@ -30,14 +32,17 @@ if [[ -f $DEST ]] && unzip -tq "$DEST" >/dev/null 2>&1; then
 fi
 sudo install -m 644 "$JAR" "$DEST"
 
-# Drop-in override instead of editing the installer's unit. -n = PV does not manage networking.
+# Drop-in override instead of editing the installer's unit.
+# PhotonVision manages networking (static IP, hostname) from its UI unless
+# PV_MANAGE_NETWORK=0, which passes -n (--disable-networking). Before enabling it,
+# make sure PV's Hostname field holds the name you want: PV applies it to the system.
 # -XX:-CreateCoredumpOnCrash: a native crash otherwise dumps core through Apport, which took
 # ~28 s (and 156 MB) before systemd could restart PhotonVision.
 sudo mkdir -p /etc/systemd/system/photonvision.service.d
 sudo tee /etc/systemd/system/photonvision.service.d/java17.conf >/dev/null <<EOF
 [Service]
 ExecStart=
-ExecStart=$JAVA17 -Xmx512m -XX:-CreateCoredumpOnCrash -jar $DEST -n
+ExecStart=$JAVA17 -Xmx512m -XX:-CreateCoredumpOnCrash -jar $DEST$NET_FLAG
 EOF
 
 sudo systemctl daemon-reload
