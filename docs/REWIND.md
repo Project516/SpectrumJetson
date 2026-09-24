@@ -81,6 +81,20 @@ a delete button).
 
 Over the USB-C cable, or Ethernet in the pit. A match is ~1 GB, too much for the radio.
 
+**From the browser:** Settings → Rewind → the download button next to a recording. You get
+`<recording>.zip` with one `<Camera>.avi` per camera, `<Camera>.frames.csv` and `session.json`,
+the same files the script below makes. The Jetson builds the zip while it streams:
+- nothing extra is stored on the SSD;
+- the JPEGs are copied as they are, with no re-encoding;
+- the copy runs below the vision threads' priority.
+
+A download runs at up to ~125 MB/s over the USB cable (a match in about 10 s). While it runs,
+detection slows by about 15% (93 → 78 fps on the bench), because the kernel's network work isn't
+covered by the lower priority. It's back to normal as soon as the download ends. **Don't
+download while the robot is enabled.**
+
+**From a terminal**, to copy several at once or to make `.mp4`s:
+
 ```bash
 scripts/host/rewind-pull.sh --list
 ```

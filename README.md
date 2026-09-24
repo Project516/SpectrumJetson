@@ -196,6 +196,7 @@ Our replacement for Limelight Rewind. While robot code sets `/photonvision/rewin
 - **It saves the camera's own JPEG frames.** Nothing is decoded or re-encoded, so it costs 3% of one CPU core, and detection fps and latency don't change (measured).
 - **About 1 GB per match** with 4 cameras. The oldest recordings are deleted past 100 GB.
 - **For bench tests** there's a **Record now** switch in Settings → Rewind.
+- **To download a recording**, click the download button next to it in Settings → Rewind. You get a zip with one video (`.avi`) per camera; VLC or Ubuntu's Videos app plays it.
 
 Everything else, including the robot-code example and how to line video up with a log, is in [docs/REWIND.md](docs/REWIND.md).
 
