@@ -240,6 +240,19 @@ imported it (2026-04-03) is `c1c3b4607` (M_PI → std::numbers::pi, cosmetic).
   (`/dev/video0`), `Thrifty:_ (1)` on port 2.3 (`/dev/video2`). **Keep each camera in
   its port**, or calibrations and robot-to-camera transforms swap.
 
+### Calibration board (2026-09-23)
+
+The team's board is a ChArUco, DICT_5X5, 30 mm squares, 22 mm markers. It's labeled
+"9x12", but in PhotonVision it must be entered as **Board Width 12, Board Height 9**.
+9×12 recovers 0 corners and makes mrcal fail with "Negative corner in reprojection
+error calc" or null intrinsics. Use Tag Family `Dict_5X5_1000`, Pattern Spacing
+**1.181 in**, Marker Size **0.866 in** (this PV version takes inches), and Old OpenCV
+Pattern **off** (9 rows is odd, so both layouts are identical). Verified with
+`tests/charuco-board-check/check_board.py` on a live frame: 78/88 corners, 51/54 markers.
+
+Calibration uses its own camera settings. It switched to auto exposure at 20, which
+gave a near-black image. Set Auto Exposure off and Exposure ~150 in the calibration card.
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.
