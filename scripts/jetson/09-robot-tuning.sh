@@ -13,6 +13,11 @@
 #                               the system log is kept on the SSD, synced every 5 s (default: RAM
 #                               only, so it vanished at every power cut, taking brownout clues).
 #                               ext4's journal keeps the filesystem itself consistent.
+#   7. Fan at full speed      - jetson_clocks --fan (noise doesn't matter on a robot; NVIDIA's
+#                               "quiet" profile ran it at ~2000 rpm at 56 C)
+#   8. Recover from hangs     - hardware watchdog 30 s (NVIDIA's default 2 min), kernel panic ->
+#                               reboot in 3 s (default: hang forever), PhotonVision restarted on
+#                               any exit (default: only on failure), with no restart limit
 #
 # Usage: 09-robot-tuning.sh [--undo]
 set -euo pipefail
@@ -23,11 +28,20 @@ UDEV_RULE=/etc/udev/rules.d/90-spectrum-camera-power.rules
 SNAP_UNITS=(snapd.service snapd.socket snapd.seeded.service)
 SYSCTL_CONF=/etc/sysctl.d/90-spectrum-writeback.conf
 JOURNALD_CONF=/etc/systemd/journald.conf.d/90-spectrum-persistent.conf
+# zz-: systemd reads system.conf.d in name order and the last setting wins; NVIDIA's own
+# watchdog.conf (RuntimeWatchdogSec=120) must come first.
+WATCHDOG_CONF=/etc/systemd/system.conf.d/zz-spectrum-watchdog.conf
+PANIC_CONF=/etc/sysctl.d/90-spectrum-panic.conf
+PV_RESTART_CONF=/etc/systemd/system/photonvision.service.d/90-spectrum-restart.conf
 
 sudo -v
 
 if [[ ${1:-} == --undo ]]; then
   sudo rm -f "$APT_CONF" "$UDEV_RULE" "$SYSCTL_CONF" "$JOURNALD_CONF"
+  sudo rm -f "$WATCHDOG_CONF" "$PANIC_CONF" "$PV_RESTART_CONF"
+  sudo sysctl -q kernel.panic=0
+  sudo systemctl daemon-reexec
+  sudo systemctl start nvfancontrol || true   # back to NVIDIA's fan control
   sudo sysctl -q vm.dirty_expire_centisecs=3000 vm.dirty_writeback_centisecs=500
   sudo systemctl restart systemd-journald   # logs already on the SSD stay in /var/log/journal
   sudo systemctl enable apt-daily.timer apt-daily-upgrade.timer
@@ -69,13 +83,15 @@ sudo systemctl set-default multi-user.target
 echo "==> 4. jetson_clocks at boot"
 sudo tee "$CLOCKS_UNIT" >/dev/null <<'EOF'
 [Unit]
-Description=Lock Jetson CPU/GPU/EMC clocks at max for consistent vision latency (SpectrumJetson)
-After=nvpmodel.service
+Description=Lock Jetson CPU/GPU/EMC clocks and the fan at max for consistent vision latency (SpectrumJetson)
+# After nvfancontrol: --fan stops it and sets full speed; if nvfancontrol started later it would
+# take the fan back.
+After=nvpmodel.service nvfancontrol.service
 Before=photonvision.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/jetson_clocks
+ExecStart=/usr/bin/jetson_clocks --fan
 RemainAfterExit=yes
 
 [Install]
@@ -118,6 +134,33 @@ sudo systemd-tmpfiles --create --prefix /var/log/journal
 sudo systemctl restart systemd-journald
 sudo journalctl --flush
 
+echo "==> 7. Fan at full speed (jetson_clocks --fan, in step 4's service)"
+sudo systemctl restart jetson-clocks.service
+
+echo "==> 8. Recover from hangs"
+sudo mkdir -p "$(dirname "$WATCHDOG_CONF")" "$(dirname "$PV_RESTART_CONF")"
+sudo tee "$WATCHDOG_CONF" >/dev/null <<'CONF'
+# SpectrumJetson: reboot a hung Jetson after 30 s, not NVIDIA's 2 min (a match is 2:30).
+[Manager]
+RuntimeWatchdogSec=30s
+CONF
+sudo tee "$PANIC_CONF" >/dev/null <<'CONF'
+# SpectrumJetson: reboot 3 s after a kernel panic (default 0: hang until the watchdog fires).
+# NVIDIA already sets kernel.panic_on_oops = 1.
+kernel.panic = 3
+CONF
+sudo sysctl -q -p "$PANIC_CONF"
+sudo tee "$PV_RESTART_CONF" >/dev/null <<'CONF'
+# SpectrumJetson: restart PhotonVision whenever it exits, and never give up.
+[Unit]
+StartLimitIntervalSec=0
+[Service]
+Restart=always
+RestartSec=1
+CONF
+sudo systemctl daemon-reexec   # picks up the watchdog setting
+sudo systemctl daemon-reload
+
 echo
 echo "Summary:"
 # (|| true: systemctl is-enabled exits non-zero for disabled/masked units, which is the goal.)
@@ -132,4 +175,8 @@ for intf in /sys/bus/usb/drivers/uvcvideo/*:1.0; do
 done
 echo "  writeback: $(sysctl -n vm.dirty_expire_centisecs vm.dirty_writeback_centisecs | paste -sd/) centisecs (expire/interval)"
 echo "  journal: $( [[ -d /var/log/journal ]] && echo "on the SSD (/var/log/journal)" || echo "RAM only")"
+fan=$(cat /sys/devices/platform/pwm-fan*/hwmon/hwmon*/pwm1 2>/dev/null | head -1)
+echo "  fan: pwm ${fan:-?}/255, nvfancontrol $(systemctl is-active nvfancontrol 2>&1 || true)"
+echo "  watchdog: $(systemctl show -p RuntimeWatchdogUSec --value), kernel.panic=$(sysctl -n kernel.panic)"
+echo "  photonvision: Restart=$(systemctl show photonvision -p Restart --value)"
 echo "Reboot to apply the boot changes: sudo reboot"

@@ -122,6 +122,10 @@ avail=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
 [[ $avail -ge 1500 ]] && pass "memory available ${avail} MB" || warn "memory available only ${avail} MB"
 disk=$(df -P / | awk 'NR == 2 {print int($5)}')
 [[ $disk -lt 85 ]] && pass "disk ${disk}% used" || warn "disk ${disk}% used"
+fan=$(cat /sys/devices/platform/pwm-fan*/hwmon/hwmon*/pwm1 2>/dev/null | head -1)
+rpm=$(cat /sys/class/hwmon/hwmon*/rpm 2>/dev/null | head -1)
+if [[ ${fan:-0} -ge 250 ]]; then pass "fan at full speed (${rpm:-?} rpm)"
+else warn "fan not at full speed (pwm ${fan:-?}/255, ${rpm:-?} rpm): run 09-robot-tuning.sh"; fi
 year=$(date -u +%Y)
 if [[ $year -ge 2026 ]]; then pass "clock: $(date -u '+%Y-%m-%d %H:%M UTC')"
 else warn "clock says $year: not set yet (no internet, and robot code hasn't published /photonvision/clock/unixMs)"; fi

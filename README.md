@@ -225,11 +225,11 @@ The detailed technical reference, with exact versions, commits and measurements,
 
 | Folder | What's in it |
 | --- | --- |
-| `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
+| `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), back up and restore the SSD (04, 05), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
 | `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), plus `health-check.sh` |
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector |
-| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test |
+| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test |
 | `docs/` | The technical reference, Rewind, the Limelight 4 comparison, and the original handoff document that started the project |
 
 **Still to do before the October event:**
@@ -237,6 +237,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Calibrate both cameras at 1280x800 (done on the bench; redo on the robot)
 - [x] Deploy the jar with the Device Control and 8-coefficient fixes
 - [x] Robot tuning: no auto-updates, headless boot, clocks locked, USB autosuspend off, power-cut safety (data on the SSD within 3 s, system log kept across power cuts)
+- [x] Fan at full speed from boot (43 °C on the bench), 30 s hardware watchdog, reboot on kernel panic, PhotonVision always restarted
+- [x] Camera unplug test: the camera detects again ~1 s after it's plugged back in; the other camera is unaffected (`tests/camera-replug/run.sh`)
 - [x] Power-cut test: pulled the plug mid-recording. No filesystem errors, the log survived, PhotonVision came back healthy, 1.4 s of video lost (`tests/power-cut/run.sh`)
 - [x] Reboot test: tuning survives a reboot; boot 57 s → 16.5 s, first detection ~20 s after power-on
 - [x] Name the cameras after their ports (TopLeft, TopRight; BottomLeft/BottomRight when added)
@@ -249,6 +251,6 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
 - [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
 - [ ] Retune exposure and decision margin on the event field
-- [ ] Take a full backup image of the SSD and export PhotonVision's settings
+- [ ] Take a full backup image of the SSD, including PhotonVision's settings (`scripts/host/04-backup-ssd.sh`), and clone a spare SSD from it (`05-restore-ssd.sh`)
 
 **Next season:** faster CSI (ribbon-cable) cameras would skip the USB and MJPEG decoding and could reach 120+ fps. That's the setup Austin's AOS system is built around. For October, this USB setup is the right one.

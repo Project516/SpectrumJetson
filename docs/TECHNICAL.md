@@ -355,6 +355,24 @@ The robot is switched off, never shut down, so every power-off is a power cut.
 - **Robot half:** [2026-FM-SystemCore#10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10), section 6.
 - **Test:** `tests/robot-clock/run.sh` (a fake robot NT server on the Jetson).
 
+### Match readiness: fan, watchdog, camera unplug, backups (2026-09-24)
+
+- **Fan.** NVIDIA's `quiet` profile ran the fan at ~2,000 rpm at 56 °C. The profile tables in `/etc/nvfancontrol.conf` are inverted (PWM 255 = off) and it's hard to tell which profile cools harder at a given temperature, so instead `jetson-clocks.service` runs `jetson_clocks --fan`: it stops nvfancontrol and sets `pwm1=255`. It's ordered `After=nvfancontrol.service`, so nvfancontrol can't take the fan back at boot. After a reboot: pwm 255, 5,586 rpm, hottest sensor **56 → 43 °C** (2 cameras, bench).
+- **Hangs.**
+  - `RuntimeWatchdogSec=30s` in `/etc/systemd/system.conf.d/zz-spectrum-watchdog.conf`. NVIDIA's own `watchdog.conf` sets 120; systemd reads the files in name order and the last one wins, so ours is named `zz-`.
+  - `kernel.panic=3`. NVIDIA already sets `panic_on_oops=1`, but the default `panic=0` means a panic hung until the watchdog fired.
+  - PhotonVision `Restart=always`, `StartLimitIntervalSec=0`.
+  - All four checked after a reboot.
+- **Camera unplug** (`tests/camera-replug/run.sh`, TopLeft pulled for 7.4 s):
+  - cscore saw the disconnect at once and retried every ~0.3 s; TopRight kept detecting.
+  - After re-plugging: reconnected at 1280x800 in 0.35 s, detecting again on the same detector handle (calibration kept) in 0.9 s, full 105 fps within 2 s.
+  - This kernel logs a re-plug as `new high-speed USB device number N`, not `New USB device found`.
+- **Backups.**
+  - `scripts/host/04-backup-ssd.sh` wraps NVIDIA's `tools/backup_restore/l4t_backup_restore.sh -e nvme0n1 -b`: the Jetson boots a small system over the USB-C cable in recovery mode and NFS-mounts `tools/backup_restore`. The APP partition is saved as a `tar.zst` of its files, the rest with `dd`. The script also saves PhotonVision's settings export, `jetson-info.txt` and `SHA256SUMS`, and refuses to run with more than 1 GB of Rewind recordings on the SSD.
+  - `05-restore-ssd.sh` checks the checksums and asks you to type `restore`. It *moves* the backup into `tools/backup_restore/images` for the restore (a symlink wouldn't resolve over NFS on the Jetson) and moves it back afterwards.
+  - Both need the same host tweaks as flashing (NetworkManager, ufw) plus udisks2 stopped.
+  - A restore can target a blank spare SSD. The QSPI bootloader isn't in the backup, so a replacement *module* needs `02-flash-nvme.sh` first. **Not run yet.**
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.
