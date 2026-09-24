@@ -102,8 +102,8 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | --- | --- | --- | --- | --- |
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
-| 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance); leave it out to decode on the CPU. |
-| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–19. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance), gray and colour; it uses ~180 MB of memory per camera. Leave it out to decode on the CPU. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–20. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 | 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
 | 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
 
@@ -132,6 +132,7 @@ None of this code was written for our exact setup, so we found and fixed several
 | Truncated jar | A deploy copied a 228 KB piece of a 76 MB jar. PhotonVision couldn't start, and systemd gave up after 5 tries. | The install script now refuses invalid jars and keeps the previous working one. |
 | Colour decode hiding in cscore | Asking cscore for grayscale frames still decoded each JPEG to full colour first, then converted it: 8.9 ms a frame, most of a CPU core per camera. | We decode the camera's JPEG straight to gray in our detector library (`photonvision-09`): 2.6 ms. Both cameras went to 122 fps and CPU fell from 3.3 to 1.3 cores. |
 | Frozen frames from the JPEG hardware | The Jetson has hardware for decoding JPEGs. The obvious way of calling NVIDIA's library, the way another FRC codebase does it, returned the *first* frame over and over, and reported success every time. A speed test looked great. | We found it by checking every decoded frame against the CPU decoder, pixel for pixel. We call the library differently now (`detector/NvJpgDecoder.cc`), and while running, one frame per camera every 2 s is re-decoded on the CPU and compared. Any difference switches the hardware off (`tests/jpeg-hw/run.sh` repeats the full check). |
+| A memory leak in NVIDIA's JPEG library | NVIDIA's JPEG library leaked about 250 KB on every frame unless it's put in its "MJPEG" mode, which NVIDIA's own example code does but doesn't explain. PhotonVision grew to 5.6 GB within minutes, and Linux killed it twice. Our tests had only ever run for a minute at a time, so they never noticed. | One setting (`mjpeg_decode`) fixed it: memory now stays flat (8 minutes and ~116,000 frames measured). The test now fails if memory grows, and `health-check.sh` warns if PhotonVision uses over 2.5 GB or was killed for running out of memory. **Lesson: run new code for a long time and watch its memory, not just its speed.** |
 | Lens model cut short | Calibration produces 8 lens-distortion numbers, but the fork only passed the first 5 to the CUDA detector. The detector uses them to straighten tag edges when it refines corners, so corners near the image edges came out slightly wrong. | A new `setparams8` call passes all 8 (`photonvision-04` + `detector/`). The log now shows "(8 dist coeffs)" for each camera. |
 
 **Lesson:** check results by *measuring*, not by assuming. The truncated-jar bug happened partly because we trusted a log line from the *old* process. Now every check looks at the running process's own ID.
@@ -150,6 +151,8 @@ We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. Th
 | **Decode the JPEG straight to gray ourselves** (`photonvision-09`) | **122 each** | **13 ms** | cscore was secretly decoding every frame to full colour, then converting (8.9 ms a frame). Our decoder does gray only (2.6 ms). |
 | OpenCV's worker threads sleep instead of spin (tuning step 9) | 122 each | 13 ms | 2 cameras now use **1.3 of 6 cores**, down from 3.3 |
 | **Decode JPEGs on the Jetson's JPEG hardware** (`--jpeg nvjpg`) | 122 each | not measured | On the same bench scene, back to back: PhotonVision went from 0.85 to **0.52 cores**. The hardware takes ~2.6 ms a frame whatever the scene; the CPU decoder is faster on plain scenes and slower on busy ones. |
+| Dashboard stream only while someone is watching, at most 30 fps (`photonvision-15`) | 122 each | not measured | With no browser open, PhotonVision went from 0.49 to **0.43 cores**. It used to shrink, colour-convert and draw every frame for a stream nobody was watching. |
+| Colour frames on the JPEG hardware too (`photonvision-18`) | 120 (colour) | not measured | One colour camera at 120 fps (driver mode) beside an AprilTag camera: PhotonVision went from 1.12 to **0.59 cores**. The pixels are identical to cscore's own decode. |
 
 **Exposure units are a trap.** USB cameras count exposure in the UVC standard's **100 µs units**, so 295 means 29.5 ms, not 0.3 ms, and stock PhotonVision doesn't say so. We only found this by reading the camera's control directly with `v4l2-ctl`. Our build now shows milliseconds on the slider, e.g. "Exposure (5.0 ms)" (`photonvision-10`).
 
@@ -258,6 +261,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 - **The 2026 FUEL model** we started with is Team 2826 Wave Robotics' YOLO11n, the same one PhotonVision ships for other hardware. The models we have, their licenses and exports: [docs/GAME-PIECE-MODELS.md](docs/GAME-PIECE-MODELS.md).
 - **It works on our mono cameras.**
   - The Object Detection pipeline doesn't ask for gray frames, so a mono camera's JPEG is decoded to a colour image whose three channels are identical. The model runs on that.
+  - With the hardware decoder on (`--jpeg nvjpg`), that colour decode runs on the Jetson's JPEG hardware too (`photonvision-18`): about 1.6 ms of CPU a frame instead of ~5.7 ms.
   - The model was trained on colour photos, where FUEL is yellow, yet it found real FUEL balls on the bench surprisingly well.
   - We judged that by eye on the stream. Detection rate at distance and false positives haven't been measured yet (Rewind recordings are good for that).
   - Inference costs the same on gray or colour, so the speed numbers below hold for a colour camera too.
@@ -269,6 +273,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
   | FUEL uncapped (76 fps) | 122 fps | 1.96 / 28 ms | 29–44% | 176% |
 
   - **Object Detection pipelines are capped at 30 fps by default** (`SPECTRUM_OD_FPS_LIMIT`; a robot-set FPS limit takes precedence). At 30 fps they cost the AprilTag cameras nothing measurable.
+  - **Raising the cap:** the hardware colour decode saves CPU, but uncapped FUEL also pushed the AprilTag camera's worst detect time to 28 ms by sharing the GPU, and hardware decode doesn't change that. Measure the AprilTag worst case before running game pieces faster than 30 fps.
   - **Don't build TensorRT engines while measuring.** A `trtexec` build uses the GPU hard for ~8 minutes and made our first measurements look like FUEL doubled the AprilTag detect time. It didn't.
 - **Which camera:** a colour camera should do even better (FUEL is yellow), and a mono Thriftiest Cam works too. With 4 Thriftiest Cams on USB-A, put the game-piece camera on the USB-C port, or use a USB 3 camera.
 
@@ -294,7 +299,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 **Checking on it:** run `scripts/jetson/health-check.sh` for a readiness report. `journalctl -u photonvision -f` shows PhotonVision's live log on the Jetson. The `971 stats` lines show frames per second, detection time and decision margin for each camera. The `971 jpeg` lines (every 10 s) show which JPEG decoder is running and how its checks went.
 
 **Robot code sees the same health on NetworkTables** (`photonvision-16`), once a second:
-- `/photonvision/jetson/`: GPU load, temperatures, fan speed, power, and the JPEG decoder's state.
+- `/photonvision/jetson/`: GPU load, temperatures, fan speed, power, the JPEG decoder's state, and a **throttle reason** (`OVER-CURRENT` when the supply sags, `HIGH TEMP`, or clocks capped, `photonvision-20`). It's also on the Settings page as **CPU Throttling**.
 - `/photonvision/<camera>/health/`: fps, pipeline time, latency, and failed JPEG decodes.
 - The topics and suggested alerts are in [docs/TECHNICAL.md](docs/TECHNICAL.md) and issue #10.
 - `tests/jetson-telemetry/run.sh` prints them on the bench.
@@ -337,6 +342,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Frame timestamps moved to mid-exposure (`photonvision-13`); the camera's own delay is still to be measured with the robot spin test
 - [x] Game-piece detection: TensorRT backend, FUEL model working (76 fps uncapped)
 - [x] Game-piece pipelines capped at 30 fps by default (no measurable effect on AprilTag cameras)
+- [x] JPEG hardware decode for gray and colour cameras, with pixel checks and a memory-leak test (`--jpeg nvjpg`, `tests/jpeg-hw/run.sh`)
+- [x] Dashboard stream only while someone is watching, capped at 30 fps (`photonvision-15`)
 - [ ] Game-piece colour camera on the robot
 - [x] USB bandwidth: capped camera driver so 4 cameras fit on USB-A (alt 7, tested with 2: 122 fps, no bad frames)
 - [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`

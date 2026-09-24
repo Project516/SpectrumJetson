@@ -423,15 +423,30 @@ Full write-up in [VISION-RESEARCH.md](VISION-RESEARCH.md).
 - **Camera stuck after rapid restarts.** After 4 PhotonVision restarts in 3 minutes, TopRight sent only corrupt frames: cscore logged "invalid JPEG image received from camera" 120 times a second, and nothing reached the pipeline. One more restart fixed it. `health-check.sh` now warns about this, and when fewer detectors report than cameras are plugged in.
 - **Exposure 50 (5 ms), decision margin 15** (team-tuned), now the new-camera defaults (`photonvision-10`). `tests/flicker-check`: 0.6% average and 1% maximum frame-to-frame brightness change under the shop LEDs, so no flicker.
 
+### Dashboard stream only when watched (`photonvision-15`, 2026-09-24)
+
+PhotonVision's stream thread shrinks, colour-converts and draws on every frame for the dashboard, even when no browser is watching, and it used to get every frame (122 fps). Now `VisionModule` hands it a frame only while a stream has a viewer (cscore enables a source only while an MjpegServer client streams from it) or a snapshot is pending, and at most `SPECTRUM_STREAM_FPS` a second (default 30; 0 = every frame). Snapshots are never delayed.
+
+| 2 cameras, hardware decode on | PhotonVision CPU | Stream |
+|---|---|---|
+| Before, no viewer | 0.49 cores | |
+| After, no viewer | **0.43 cores** | |
+| Before, one viewer | 0.52 cores | 121 fps |
+| After, one viewer | **0.47 cores** | 30 fps |
+
+Tested: snapshots with no viewer (the websocket `saveInputSnapshot`/`saveOutputSnapshot` commands the UI sends) still saved both images. They're 213x133, because snapshots were always taken from the shrunken stream image.
+
 ### Hardware JPEG decode: NVJPG (2026-09-24)
 
-The camera JPEGs can be decoded on the Orin Nano's two NVJPG engines instead of the CPU. It's on for this Jetson (`08-select-detector.sh bos --mwbd 20 --jpeg nvjpg`), with libjpeg-turbo as the fallback. The research and the pitfalls are in [VISION-RESEARCH.md](VISION-RESEARCH.md).
+The camera JPEGs can be decoded on the Orin Nano's two NVJPG engines instead of the CPU, both gray (AprilTags) and colour (game pieces, driver mode, calibration). It's switched on with `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg`, with libjpeg-turbo as the fallback. The research and the pitfalls are in [VISION-RESEARCH.md](VISION-RESEARCH.md).
 
-- **How it works.** It's the same Java call, `decodeMjpegGray`, so the jar is unchanged. The detector library hands each JPEG to `libspectrumnvjpg.so` (`detector/NvJpgDecoder.cc`):
+- **How it works (gray).** It's the same Java call, `decodeMjpegGray`, so no jar change was needed for AprilTag cameras. The detector library hands each JPEG to `libspectrumnvjpg.so` (`detector/NvJpgDecoder.cc`):
   - libnvjpeg decodes into its own buffer (`IsVendorbuf`), and CUDA copies the Y plane into PhotonVision's Mat (0.24 ms).
   - libnvjpeg cycles through 4 buffers behind one fd number. Each gets its own CUDA registration, keyed by its dmabuf inode.
   - It's a separate library because libnvjpeg exports libjpeg-turbo's function names. `lib971apriltag.so` loads it with `dlopen(RTLD_DEEPBIND)`.
   - There's one decoder per camera thread.
+  - **MJPEG mode (`cinfo.mjpeg_decode = TRUE`) is required.** Without it, libnvjpeg leaked ~250 KB every frame: PhotonVision grew to 5.6 GB and was OOM-killed twice (2026-09-24). NVIDIA's own NvJPEGDecoder class sets it. With it, each decoder takes ~180 MB once and then stays flat: 8 minutes in PhotonVision with 2 cameras, ~116,000 frames, RSS 1.078 → 1.092 GB.
+- **How it works (colour, `photonvision-18`).** When the hardware decoder is on, `USBFrameProvider` takes the camera's raw JPEG for colour frames too, and calls `decodeMjpegBgr`. The hardware decodes to Y/Cb/Cr planes, then a CUDA kernel (`detector/nvjpg_bgr.cu`) converts them to BGR with libjpeg's own arithmetic ("fancy" chroma upsampling and the jdcolor.c tables). So the pixels are identical to cscore's decode, and the safety-net check can be exact. Only 4:2:2 JPEGs, which UVC cameras send, use the hardware; others go to libjpeg-turbo. With the decoder off (`hardwareJpegDecode()` false), colour frames stay on cscore's own path.
 - **Measured in PhotonVision** (2 cameras at 122 fps, bench scene, no tags):
 
   | Decoder | PhotonVision CPU | Decode per frame |
@@ -440,22 +455,26 @@ The camera JPEGs can be decoded on the Orin Nano's two NVJPG engines instead of 
   | NVJPG | **0.52 cores** | 2.6 ms |
 
   The engine takes ~2.3 ms whatever the scene; it already runs at its 499.2 MHz maximum. libjpeg-turbo's time grows with detail: 2.9 ms on our recorded frames, 2.0 ms on this plain bench scene. Detect times and fps didn't change.
+
+  **Colour** (TopRight in driver mode at 120 fps, TopLeft on AprilTags): PhotonVision used **0.59 cores** with the hardware colour decode (3.1 ms a frame), against **1.12 cores** with cscore's own decode. That's about half a core saved per colour camera at 120 fps.
+- **Memory cost:** ~180 MB per camera (libnvjpeg's decoder). With 4 cameras, PhotonVision should sit near 1.5 GB instead of ~0.7 GB.
 - **Safety net.**
   - A frame the hardware can't decode goes to libjpeg-turbo. After a decode error the decoder is re-created.
   - Every 240 hardware frames per camera (~2 s), a low-priority thread decodes the same JPEG with libjpeg-turbo and compares every pixel. Any difference turns the hardware decoder off until PhotonVision restarts (`971 jpeg: HARDWARE DECODE DIFFERS`). Frames libjpeg-turbo warns about (corrupt ones) aren't compared.
   - A CUDA error in the decoder also turns it off. The detector's watchdog handles a broken context as before.
-  - `health-check.sh` shows the decoder in use, its checks, fallbacks and any difference.
-- **Logs.** A `971 jpeg` line every 10 s: frames/s and ms for each decoder, fallbacks, and checks since start.
+  - `health-check.sh` shows the decoder in use, its checks, fallbacks and any difference. It also warns when PhotonVision uses over 2.5 GB, or was OOM-killed since boot.
+- **Logs.** A `971 jpeg` line every 10 s: frames/s and ms for each decoder, fallbacks, and checks since start, plus a `colour:` clause when colour frames were decoded.
 - **Tested.**
-  - `tests/jpeg-hw/run.sh`: every frame of the Rewind recordings (2,856) identical to libjpeg-turbo; bad input (truncated, corrupted, garbage, not a JPEG, wrong size, empty), each followed by a good frame that decodes on the hardware; 4 decoders at once. **Run it after every L4T update.**
+  - `tests/jpeg-hw/run.sh`: every frame of the Rewind recordings identical to libjpeg-turbo, in gray and in BGR; bad input (truncated, corrupted, garbage, not a JPEG, wrong size, empty), each followed by a good frame that decodes on the hardware; format changes; 4 decoders at once; and memory growth (fails over 64 MB). **Run it after every L4T update.**
+  - Colour content: our cameras are mono, so `tests/jpeg-hw/make-colour-recordings.py` pans across real colour photos already on the Jetson (Ubuntu wallpapers, OpenCV samples) and writes 4:2:2 recordings at quality 50/80/95 plus 4:2:0 and 4:4:4 ones. All 2,038 colour 4:2:2 frames came out identical to libjpeg-turbo; 4:2:0 and 4:4:4 were refused, as they should be. **Re-run it with a real colour camera's Rewind recording when one arrives.**
   - Safety net: `touch /tmp/spectrum-jpeg-fault` changes one pixel of every hardware frame. The next check caught it, the hardware turned off, and both cameras stayed at 122 fps.
   - Sticky CUDA fault (`echo sticky > /tmp/spectrum-971-fault-every`): the decoder fell back to libjpeg-turbo, the watchdog restarted PhotonVision after 1 s, and it came back on the hardware.
 - **Switches.**
   - `SPECTRUM_JPEG_DECODER=nvjpg`, set by `08-select-detector.sh --jpeg nvjpg`. Without it, libjpeg-turbo.
   - A/B without a restart: `echo turbo > /tmp/spectrum-jpeg-decoder` (or `nvjpg`). It's read every 2 s; `rm` it to go back to the setting.
-- **Rollback.** `08-select-detector.sh bos --mwbd 20` without `--jpeg` goes back to libjpeg-turbo. The library from before this change is `/usr/lib/lib971apriltag.so.pre-nvjpg`.
+- **Rollback.** `08-select-detector.sh bos --mwbd 20` without `--jpeg` goes back to libjpeg-turbo, and colour frames go back to cscore. The libraries from before are `/usr/lib/lib971apriltag.so.pre-nvjpg` (before any hardware decode) and `*.pre-colour` (before the colour path and the leak fix).
 - **Measured and dropped: the detector reading the decoder's buffer directly.** bos's `Detect(host, device)` takes a GPU pointer, and detections were identical on 2,856 frames. Against this path it skips the copy into PhotonVision's Mat (0.27 ms) and the detector's upload (0.16 ms). But the detector's first kernel reads the decoder's buffer 3x slower (0.21 against 0.07 ms), and its CPU step reads that uncached buffer too (+0.13 ms). Net: ~0.15 ms and ~0.1 ms of CPU a frame, plus ~0.15 ms more from PhotonVision skipping its full-size copies. Not worth a PhotonVision patch. (End-to-end totals in the harness were noisy: our test decodes queued behind PhotonVision's live decodes on the same engines. The per-step times above are consistent between runs.)
-- **Not done yet:** 4 real cameras, and the colour camera.
+- **Not done yet:** 4 real cameras, and a real colour camera.
 
 ### CUDA error handling (bos build)
 
@@ -489,13 +508,16 @@ Robot-side use is in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemC
 | `jpegDecoder` | string | `nvjpg` or `libjpeg-turbo` (the decoder in use) |
 | `jpegHardwareOff` | boolean | the hardware decoder was switched off (a check differed, or CUDA failed) |
 | `jpegChecksOk`, `jpegChecksDiffer` | integer | hardware-vs-CPU frame checks since start |
+| `throttle` | string | why the Jetson is slowing itself down: `None`, `OVER-CURRENT`, `HIGH TEMP (cpu, ...)`, `CPU CLOCK CAPPED`, `GPU CLOCK CAPPED`, or `Prev. over-current (N)` (`photonvision-20`, below) |
+| `overCurrentEvents` | integer | soctherm over-current throttle events since boot |
 | `heartbeat` | integer | +1 per publish; a stalled value means the telemetry (or PhotonVision) stopped |
 
 - Topics the hardware doesn't have aren't published.
 - The JPEG topics need the detector library with `nativeJpegStatus` (rebuild with 07, then
   `08-select-detector.sh bos --mwbd 20`).
-- The hardware decoder (`--jpeg nvjpg`) is off for now, because it leaked memory inside
-  PhotonVision (2026-09-24). Until it's back on, `jpegDecoder` reads `libjpeg-turbo`.
+- The hardware decoder (`--jpeg nvjpg`) leaked memory inside PhotonVision until it was switched to
+  libnvjpeg's MJPEG mode (2026-09-24, see Hardware JPEG decode). While it's off, `jpegDecoder` reads
+  `libjpeg-turbo`.
 - PhotonVision's own metrics (`/photonvision//metrics/<host>`: CPU temperature and use, RAM,
   disk, uptime) are unchanged.
 
@@ -532,6 +554,22 @@ Robot-side use is in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemC
 - It's added to the metrics record the UI gets (`gpuUtil`), but not to PhotonVision's
   NetworkTables protobuf. Robot code reads `/photonvision/jetson/gpuLoadPct` instead.
 - Checked on the websocket: 10–13% with 2 cameras.
+
+**Throttle reason** (`photonvision-20`, `JetsonThrottle`): the Jetson's version of the Raspberry Pi's
+under-voltage and high-temperature flags. It reads only files that don't need root:
+
+| Reason | Source |
+|---|---|
+| `OVER-CURRENT` | soctherm's over-current event counters (hwmon `soctherm_oc`, `oc1..3_event_cnt`) went up in the last 10 s. The chip throttles when its supply current spikes, e.g. when the robot's battery sags. |
+| `Prev. over-current (N)` | N such events since boot, none recently |
+| `HIGH TEMP (cpu, gpu, ...)` | a thermal throttle alert is active (`*-throttle-alert` and `hot-surface-alert` cooling devices) |
+| `CPU CLOCK CAPPED`, `GPU CLOCK CAPPED` | the thermal framework is holding the clock below its maximum (`cpufreq-cpu*`, `devfreq-17000000.gpu` cooling devices) |
+
+- It fills the Settings page's **CPU Throttling** row and `cpu_thr` in PhotonVision's own
+  NetworkTables metrics, via `SystemMonitorJetson`.
+- It's also published as `/photonvision/jetson/throttle`.
+- Found on the bench: 3 over-current counters, 9 alerts, 2 CPU and 1 GPU clock caps. Reads `None`
+  with the fan at full speed; checked on the websocket.
 
 **Bench check:** `tests/jetson-telemetry/run.sh` runs a NetworkTables server on the Jetson and prints
 every topic above. Not run yet: the NT topics are published by the running build but haven't been

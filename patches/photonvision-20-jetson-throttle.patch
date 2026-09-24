@@ -1,0 +1,253 @@
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonTelemetry.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonTelemetry.java
+index 1fa667d3..5eeb32bc 100644
+--- a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonTelemetry.java
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonTelemetry.java
+@@ -48,6 +48,8 @@ import org.photonvision.jni.JetsonStatusJNI;
+  *   <li>{@code jpegDecoder} ("nvjpg" or "libjpeg-turbo"), {@code jpegHardwareOff} (the hardware
+  *       decoder was switched off after a failed check), {@code jpegChecksOk}, {@code
+  *       jpegChecksDiffer} (counts since PhotonVision started)
++ *   <li>{@code throttle}: why the Jetson is slowing itself down, e.g. "None", "OVER-CURRENT",
++ *       "HIGH TEMP (cpu)" (JetsonThrottle, photonvision-20); {@code overCurrentEvents} since boot
+  *   <li>{@code heartbeat}: goes up by one every publish
+  * </ul>
+  *
+@@ -69,8 +71,8 @@ public final class JetsonTelemetry {
+     private final Map<String, Path> temps = new LinkedHashMap<>(); // thermal zone type -> temp file
+     private final Map<String, Path[]> rails = new LinkedHashMap<>(); // label -> {mV, mA} files
+     private Path fanRpm = null;
+-    private IntegerPublisher heartbeat, jpegChecksOk, jpegChecksDiffer;
+-    private StringPublisher jpegDecoder;
++    private IntegerPublisher heartbeat, jpegChecksOk, jpegChecksDiffer, overCurrentEvents;
++    private StringPublisher jpegDecoder, throttle;
+     private BooleanPublisher jpegHardwareOff;
+     private boolean jpegStatusAvailable = true;
+     private long beats = 0;
+@@ -140,6 +142,7 @@ public final class JetsonTelemetry {
+             put("socPowerW", railW("VDD_SOC"));
+ 
+             publishJpegStatus();
++            publishThrottle();
+             heartbeat.set(++beats);
+         } catch (RuntimeException e) {
+             logger.error("Jetson telemetry failed", e);
+@@ -165,6 +168,17 @@ public final class JetsonTelemetry {
+         jpegChecksDiffer.set(s[3]);
+     }
+ 
++    private void publishThrottle() {
++        long oc = JetsonThrottle.overCurrentEvents();
++        if (oc < 0) return; // not a Jetson
++        if (throttle == null) {
++            throttle = table.getStringTopic("throttle").publish();
++            overCurrentEvents = table.getIntegerTopic("overCurrentEvents").publish();
++        }
++        throttle.set(JetsonThrottle.reason());
++        overCurrentEvents.set(oc);
++    }
++
+     private void put(String key, Double value) {
+         if (value == null) return;
+         doubles.computeIfAbsent(key, k -> table.getDoubleTopic(k).publish()).set(value);
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonThrottle.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonThrottle.java
+new file mode 100644
+index 00000000..b3edbbba
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonThrottle.java
+@@ -0,0 +1,148 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.hardware.metrics;
++
++import java.io.IOException;
++import java.nio.file.DirectoryStream;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * SpectrumJetson: why the Jetson is slowing itself down, or has since boot, from files readable
++ * without root (photonvision-20). The Jetson's version of the Raspberry Pi's "get_throttled":
++ *
++ * <ul>
++ *   <li><b>OVER-CURRENT</b>: soctherm's over-current events ({@code soctherm_oc}
++ *       {@code oc*_event_cnt}) went up in the last 10 s. The chip throttles itself when its
++ *       supply current spikes, e.g. when the robot's battery sags. "Prev. over-current (N)" means
++ *       N events since boot but none recently.
++ *   <li><b>HIGH TEMP (cpu, gpu, ...)</b>: a thermal throttle alert is active (the {@code
++ *       *-throttle-alert} and {@code hot-surface-alert} cooling devices).
++ *   <li><b>CPU CLOCK CAPPED</b> / <b>GPU CLOCK CAPPED</b>: the thermal framework is holding the
++ *       CPU or GPU clock below its maximum ({@code cpufreq-cpu*}, {@code devfreq-*.gpu} cooling
++ *       devices).
++ * </ul>
++ *
++ * "None" when none of these apply.
++ */
++public final class JetsonThrottle {
++    private JetsonThrottle() {}
++
++    private static final long RECENT_NS = 10_000_000_000L;
++
++    private static boolean discovered = false;
++    private static final List<Path> ocCounters = new ArrayList<>();
++    private static final List<String[]> alerts = new ArrayList<>(); // {name, cur_state path}
++    private static final List<Path> cpuCaps = new ArrayList<>(), gpuCaps = new ArrayList<>();
++
++    private static long lastOcTotal = -1, lastOcIncreaseNs = 0;
++
++    /** The current throttle reason; see the class comment. */
++    public static synchronized String reason() {
++        discover();
++        long now = System.nanoTime();
++        long oc = overCurrentEventsLocked();
++        if (lastOcTotal >= 0 && oc > lastOcTotal) lastOcIncreaseNs = now;
++        lastOcTotal = oc;
++
++        var parts = new ArrayList<String>();
++        if (lastOcIncreaseNs != 0 && now - lastOcIncreaseNs < RECENT_NS) parts.add("OVER-CURRENT");
++        var hot = new ArrayList<String>();
++        for (String[] a : alerts) {
++            if (state(Path.of(a[1])) > 0) hot.add(a[0]);
++        }
++        if (!hot.isEmpty()) parts.add("HIGH TEMP (" + String.join(", ", hot) + ")");
++        if (anyAbove(cpuCaps)) parts.add("CPU CLOCK CAPPED");
++        if (anyAbove(gpuCaps)) parts.add("GPU CLOCK CAPPED");
++
++        if (!parts.isEmpty()) return String.join(", ", parts);
++        return oc > 0 ? "Prev. over-current (" + oc + ")" : "None";
++    }
++
++    /** Over-current throttle events since boot, or -1 if the Jetson doesn't report them. */
++    public static synchronized long overCurrentEvents() {
++        discover();
++        return ocCounters.isEmpty() ? -1 : overCurrentEventsLocked();
++    }
++
++    private static long overCurrentEventsLocked() {
++        long total = 0;
++        for (Path p : ocCounters) total += Math.max(0, state(p));
++        return total;
++    }
++
++    private static void discover() {
++        if (discovered) return;
++        discovered = true;
++        try (DirectoryStream<Path> mons = Files.newDirectoryStream(Path.of("/sys/class/hwmon"), "hwmon*")) {
++            for (Path h : mons) {
++                if (!"soctherm_oc".equals(read(h.resolve("name")))) continue;
++                try (DirectoryStream<Path> f = Files.newDirectoryStream(h, "oc*_event_cnt")) {
++                    for (Path p : f) ocCounters.add(p);
++                }
++            }
++        } catch (IOException | RuntimeException e) {
++            // Not a Jetson: no over-current counters.
++        }
++        try (DirectoryStream<Path> devs = Files.newDirectoryStream(Path.of("/sys/class/thermal"), "cooling_device*")) {
++            for (Path d : devs) {
++                String type = read(d.resolve("type"));
++                if (type == null) continue;
++                Path cur = d.resolve("cur_state");
++                if (type.endsWith("-throttle-alert")) {
++                    alerts.add(new String[] {type.substring(0, type.length() - "-throttle-alert".length()), cur.toString()});
++                } else if (type.equals("hot-surface-alert")) {
++                    alerts.add(new String[] {"surface", cur.toString()});
++                } else if (type.startsWith("cpufreq-")) {
++                    cpuCaps.add(cur);
++                } else if (type.startsWith("devfreq-") && type.endsWith(".gpu")) {
++                    gpuCaps.add(cur);
++                }
++            }
++        } catch (IOException | RuntimeException e) {
++            // No thermal cooling devices.
++        }
++    }
++
++    private static boolean anyAbove(List<Path> states) {
++        for (Path p : states) {
++            if (state(p) > 0) return true;
++        }
++        return false;
++    }
++
++    private static long state(Path p) {
++        String s = read(p);
++        if (s == null) return -1;
++        try {
++            return Long.parseLong(s);
++        } catch (NumberFormatException e) {
++            return -1;
++        }
++    }
++
++    private static String read(Path p) {
++        try {
++            return Files.readString(p).strip();
++        } catch (IOException | RuntimeException e) {
++            return null;
++        }
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitor.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitor.java
+index 2aa9a09a..cbe07144 100644
+--- a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitor.java
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitor.java
+@@ -105,6 +105,8 @@ public class SystemMonitor {
+                 instance = new SystemMonitorQCS6490();
+             } else if (Platform.isWindows()) {
+                 instance = new SystemMonitorWindows();
++            } else if (Platform.isJetson()) {
++                instance = new SystemMonitorJetson(); // SpectrumJetson: throttle reason
+             } else {
+                 instance = new SystemMonitor();
+             }
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitorJetson.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitorJetson.java
+new file mode 100644
+index 00000000..9e572502
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitorJetson.java
+@@ -0,0 +1,30 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.hardware.metrics;
++
++/**
++ * SpectrumJetson: Jetson metrics (photonvision-20). Fills the "CPU Throttling" row on the Settings
++ * page and {@code cpu_thr} in PhotonVision's NetworkTables metrics, like the Raspberry Pi's
++ * under-voltage and high-temperature flags. See {@link JetsonThrottle}.
++ */
++public class SystemMonitorJetson extends SystemMonitor {
++    @Override
++    public String getCpuThrottleReason() {
++        return JetsonThrottle.reason();
++    }
++}
