@@ -284,7 +284,7 @@ Everything else, including the robot-code example and how to line video up with 
 A page in PhotonVision's web UI (**Field Calibration** in the sidebar, `photonvision-30`). With the robot on and disabled, pushed by hand:
 
 1. **Tune camera settings** (optional, about a minute). Park the robot where every camera sees tags, near and far. The Jetson steps each camera through exposure, gain, brightness, contrast, gamma and sharpness under the event's lights. It recommends the shortest exposure that still finds every tag (less motion blur), and changes the others only if they clearly help. **Apply** saves them to each camera's pipeline in use.
-2. **Record the spots.** Push the robot to 10–20 spots and hold it still at each until the page says the spot counts (about 2 s, and it beeps). A field map shows which tags need more views, where each camera is, and a suggested next spot.
+2. **Record the spots.** Push the robot to 10–20 spots and hold it still at each until the page says the spot counts (about 2 s, and it beeps). A field map shows which tags need more views, where each camera is, and a suggested next spot. It can also be shown in 3D, with the 2026 field elements placed by their tags. The mouse works like Onshape's: right-drag turns, middle-drag or Ctrl + right-drag moves, the wheel zooms.
 3. **Solve.** The Jetson replays the recording through the same 971 GPU detector it uses in matches, then solves every tag's real pose and every camera's mount. It takes about a minute.
 4. **Results:**
    - **Tags:** each tag marked as drawn or moved, with its offset.
@@ -407,7 +407,8 @@ The detailed technical reference, with exact versions, commits and measurements,
   - [x] Runs on the Jetson, replaying the recording through the 971 GPU detector at ~400 fps (`scripts/jetson/13-build-fieldcal-detect.sh --install`)
   - [x] A Field Calibration page in PhotonVision (`photonvision-30`): tune camera settings, guided recording, solve, results, apply/undo the layout. Tested on the bench through the API (a synthetic recording solved, apply and undo round-trip exact); the page itself not yet looked at
   - [ ] Robot code publishes each camera's `robotToCamera` at `/photonvision/<camera>/robotToCamera`
-  - [ ] A 3D view of the field with simplified field elements, like Limelight's
+  - [x] A 3D view of the field (Onshape mouse controls) with simplified 2026 elements placed by their tags
+  - [ ] The real field CAD in the 3D view (FIRST's STEP, converted), each element following its tags
   - [ ] Shop test on our half field, including the settings tuning with real tags
   - [ ] Recalibrate the lenses with board views right into the corners: our calibrations can't model the outer 1–4% of the image
 - [x] The camera controls PhotonVision's UI didn't show (contrast, gamma, sharpness, backlight compensation) are on the Input tab (`photonvision-28`), at the camera's defaults unless set

@@ -12,6 +12,329 @@ index deb43d6b..5af91ef1 100644
        <v-list-item link to="/docs" prepend-icon="mdi-bookshelf">
          <v-list-item-title>Documentation</v-list-item-title>
        </v-list-item>
+diff --git a/photon-client/src/components/fieldcal/FieldCal3D.vue b/photon-client/src/components/fieldcal/FieldCal3D.vue
+new file mode 100644
+index 00000000..543108b5
+--- /dev/null
++++ b/photon-client/src/components/fieldcal/FieldCal3D.vue
+@@ -0,0 +1,317 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-30): the field in 3D for the field-calibration page, with simplified
++// field elements placed by their tags (lib/FieldElements.ts). Tags are coloured like the 2D map;
++// live cameras, captured spots and (on results) each tag's solved offset, drawn 10x.
++// @ts-expect-error Intellisense says these conflict with the dynamic imports below
++import type { Group, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from "three";
++import { onBeforeUnmount, onMounted, ref, watch } from "vue";
++import { useTheme } from "vuetify";
++import type { AprilTagFieldLayout } from "@/types/PhotonTrackingTypes";
++import type { MapCamera, MapOffset, MapPoint } from "@/types/FieldCalTypes";
++import { buildField, detectGame, FIELD_GAMES } from "@/lib/FieldElements";
++
++const T = await import("three");
++const { OrbitControls } = await import("three/examples/jsm/controls/OrbitControls");
++
++const props = defineProps<{
++  layout: AprilTagFieldLayout;
++  tagSpots?: Record<string, number>;
++  inView?: number[];
++  cameras?: MapCamera[];
++  spots?: MapPoint[];
++  offsets?: Record<string, MapOffset>;
++}>();
++
++const theme = useTheme();
++const container = ref<HTMLDivElement | null>(null);
++const game = ref(detectGame(props.layout));
++let scene: Scene | undefined;
++let camera: PerspectiveCamera | undefined;
++let renderer: WebGLRenderer | undefined;
++let controls: InstanceType<typeof OrbitControls> | undefined;
++let fieldGroup: Group | undefined;
++let tagGroup: Group | undefined;
++let liveGroup: Group | undefined;
++let frame = 0;
++let resize: ResizeObserver | undefined;
++
++const TAG = 0.1651;
++const tagTexture = new Map<number, InstanceType<typeof T.CanvasTexture>>();
++const textureFor = (id: number) => {
++  let t = tagTexture.get(id);
++  if (t) return t;
++  const c = document.createElement("canvas");
++  c.width = c.height = 128;
++  const x = c.getContext("2d")!;
++  x.fillStyle = "#fff";
++  x.fillRect(0, 0, 128, 128);
++  x.fillStyle = "#000";
++  x.fillRect(10, 10, 108, 108);
++  x.fillStyle = "#fff";
++  x.fillRect(26, 26, 76, 76);
++  x.fillStyle = "#000";
++  x.font = "bold 56px sans-serif";
++  x.textAlign = "center";
++  x.textBaseline = "middle";
++  x.fillText(String(id), 64, 68);
++  t = new T.CanvasTexture(c);
++  tagTexture.set(id, t);
++  return t;
++};
++
++const statusColor = (id: number): number => {
++  if (props.offsets) {
++    const o = props.offsets[String(id)];
++    return o ? (o.moved ? 0xe53935 : 0x43a047) : 0x9e9e9e;
++  }
++  const n = props.tagSpots?.[String(id)] ?? 0;
++  if (n >= 2) return 0x43a047;
++  if (n === 1) return 0xfb8c00;
++  return props.inView?.includes(id) ? 0x1e88e5 : 0x9e9e9e;
++};
++
++// A plane faces +Z with +X right and +Y up; a tag faces its +x, with +y to the viewer's right and +z up.
++const TAG_BASIS = new T.Quaternion().setFromRotationMatrix(
++  new T.Matrix4().makeBasis(new T.Vector3(0, 1, 0), new T.Vector3(0, 0, 1), new T.Vector3(1, 0, 0))
++);
++
++const disposeGroup = (g: Object3D | undefined) => {
++  if (!g || !scene) return;
++  scene.remove(g);
++  g.traverse((o: any) => {
++    o.geometry?.dispose?.();
++    o.material?.dispose?.(); // tag textures are shared and kept (disposed on unmount)
++  });
++};
++
++const drawField = () => {
++  if (!scene) return;
++  disposeGroup(fieldGroup);
++  fieldGroup = buildField(T, props.layout, game.value);
++  scene.add(fieldGroup);
++};
++
++const drawTags = () => {
++  if (!scene) return;
++  disposeGroup(tagGroup);
++  tagGroup = new T.Group();
++  for (const t of props.layout.tags) {
++    const q = t.pose.rotation.quaternion;
++    const quat = new T.Quaternion(q.X, q.Y, q.Z, q.W).multiply(TAG_BASIS);
++    const pos = new T.Vector3(t.pose.translation.x, t.pose.translation.y, t.pose.translation.z);
++    const normal = new T.Vector3(1, 0, 0).applyQuaternion(new T.Quaternion(q.X, q.Y, q.Z, q.W));
++    // coloured frame behind, the tag in front (both just off the element's face)
++    const frameMesh = new T.Mesh(
++      new T.PlaneGeometry(TAG * 1.7, TAG * 1.7),
++      new T.MeshBasicMaterial({ color: statusColor(t.ID), side: T.DoubleSide })
++    );
++    frameMesh.quaternion.copy(quat);
++    frameMesh.position.copy(pos).addScaledVector(normal, 0.01);
++    const face = new T.Mesh(
++      new T.PlaneGeometry(TAG * 1.25, TAG * 1.25),
++      new T.MeshBasicMaterial({ map: textureFor(t.ID) })
++    );
++    face.quaternion.copy(quat);
++    face.position.copy(pos).addScaledVector(normal, 0.015);
++    tagGroup.add(frameMesh, face);
++    const o = props.offsets?.[String(t.ID)];
++    if (o) {
++      const d = new T.Vector3(o.dxCm / 10, o.dyCm / 10, 0); // cm drawn 10x: /100 * 10
++      if (d.length() > 0.01) {
++        tagGroup.add(
++          new T.ArrowHelper(d.clone().normalize(), pos, d.length(), o.moved ? 0xe53935 : 0x43a047, 0.12, 0.08)
++        );
++      }
++    }
++  }
++  scene.add(tagGroup);
++};
++
++const drawLive = () => {
++  if (!scene) return;
++  disposeGroup(liveGroup);
++  liveGroup = new T.Group();
++  for (const s of props.spots ?? []) {
++    const disc = new T.Mesh(
++      new T.CircleGeometry(0.18, 24),
++      new T.MeshBasicMaterial({ color: 0x1e88e5, transparent: true, opacity: 0.6 })
++    );
++    disc.position.set(s.x, s.y, 0.01);
++    liveGroup.add(disc);
++  }
++  for (const c of props.cameras ?? []) {
++    if (!c.pose) continue;
++    const cone = new T.Mesh(new T.ConeGeometry(0.1, 0.25, 16), new T.MeshLambertMaterial({ color: 0x00acc1 }));
++    // cone points along +y; turn it to the camera's heading
++    cone.rotation.z = c.pose[2] - Math.PI / 2;
++    cone.position.set(c.pose[0], c.pose[1], 0.45);
++    liveGroup.add(cone);
++    const ray = new T.ArrowHelper(
++      new T.Vector3(Math.cos(c.pose[2]), Math.sin(c.pose[2]), 0),
++      new T.Vector3(c.pose[0], c.pose[1], 0.45),
++      1.2,
++      0x00acc1,
++      0.15,
++      0.08
++    );
++    liveGroup.add(ray);
++  }
++  scene.add(liveGroup);
++};
++
++// Draw now, not just on the next animation frame (which a hidden tab never gets).
++const renderNow = () => {
++  if (renderer && scene && camera) renderer.render(scene, camera);
++};
++
++const setBackground = () => {
++  if (scene) scene.background = new T.Color(theme.global.current.value.dark ? 0x101418 : 0xd9dde1);
++};
++
++const view = (which: "blue" | "red" | "top") => {
++  if (!camera || !controls) return;
++  const L = props.layout.field.length,
++    W = props.layout.field.width;
++  if (which === "top") {
++    // High enough that the whole field fits the canvas, whichever way it's shaped.
++    const t = Math.tan((camera.fov * Math.PI) / 360);
++    const h = 1.1 * Math.max(L / 2 / (t * camera.aspect), W / 2 / t);
++    camera.position.set(L / 2, W / 2 - 0.01, h);
++    controls.target.set(L / 2, W / 2, 0);
++  } else if (which === "blue") {
++    camera.position.set(-4, W / 2, 5.5);
++    controls.target.set(L * 0.3, W / 2, 0);
++  } else {
++    camera.position.set(L + 4, W / 2, 5.5);
++    controls.target.set(L * 0.7, W / 2, 0);
++  }
++  controls.update();
++  renderNow();
++};
++
++onMounted(() => {
++  const el = container.value;
++  if (!el) return;
++  scene = new T.Scene();
++  setBackground();
++  camera = new T.PerspectiveCamera(50, el.clientWidth / Math.max(1, el.clientHeight), 0.05, 200);
++  camera.up.set(0, 0, 1);
++  renderer = new T.WebGLRenderer({ antialias: true });
++  renderer.setPixelRatio(window.devicePixelRatio);
++  renderer.setSize(el.clientWidth, el.clientHeight);
++  el.appendChild(renderer.domElement);
++  controls = new OrbitControls(camera, renderer.domElement);
++  controls.enableDamping = true;
++  // Onshape's default mouse: right-drag turns, middle-drag (or Ctrl + right-drag) moves, the wheel
++  // zooms toward the cursor. Left-drag also turns (there's nothing to select), for trackpads.
++  controls.mouseButtons = { LEFT: T.MOUSE.ROTATE, MIDDLE: T.MOUSE.PAN, RIGHT: T.MOUSE.ROTATE };
++  controls.zoomToCursor = true;
++  controls.screenSpacePanning = true;
++  scene.add(new T.AmbientLight(0xffffff, 1.6));
++  const sun = new T.DirectionalLight(0xffffff, 1.4);
++  sun.position.set(5, -3, 10);
++  scene.add(sun);
++  drawField();
++  drawTags();
++  drawLive();
++  view(
++    props.layout.tags.some(
++      (t) => (props.tagSpots?.[String(t.ID)] ?? 0) > 0 && t.pose.translation.x > props.layout.field.length / 2
++    )
++      ? "red"
++      : "blue"
++  );
++  resize = new ResizeObserver(() => {
++    if (!renderer || !camera || !el) return;
++    renderer.setSize(el.clientWidth, el.clientHeight);
++    camera.aspect = el.clientWidth / Math.max(1, el.clientHeight);
++    camera.updateProjectionMatrix();
++  });
++  resize.observe(el);
++  const loop = () => {
++    frame = requestAnimationFrame(loop);
++    controls?.update();
++    if (renderer && scene && camera) renderer.render(scene, camera);
++  };
++  loop();
++});
++
++onBeforeUnmount(() => {
++  cancelAnimationFrame(frame);
++  resize?.disconnect();
++  disposeGroup(fieldGroup);
++  disposeGroup(tagGroup);
++  disposeGroup(liveGroup);
++  tagTexture.forEach((t) => t.dispose());
++  controls?.dispose();
++  renderer?.dispose();
++  renderer?.domElement.remove();
++});
++
++watch(
++  () => [props.layout, game.value],
++  () => {
++    drawField();
++    renderNow();
++  }
++);
++watch(
++  () => [props.layout, props.tagSpots, props.inView, props.offsets],
++  () => {
++    drawTags();
++    renderNow();
++  },
++  { deep: true }
++);
++watch(
++  () => [props.cameras, props.spots],
++  () => {
++    drawLive();
++    renderNow();
++  },
++  { deep: true }
++);
++watch(
++  () => theme.global.current.value.dark,
++  () => {
++    setBackground();
++    renderNow();
++  }
++);
++</script>
++
++<template>
++  <div>
++    <div class="d-flex align-center flex-wrap mb-1" style="gap: 6px">
++      <v-btn size="x-small" variant="tonal" @click="view('blue')">Blue wall</v-btn>
++      <v-btn size="x-small" variant="tonal" @click="view('red')">Red wall</v-btn>
++      <v-btn size="x-small" variant="tonal" @click="view('top')">Top</v-btn>
++      <v-select
++        v-model="game"
++        :items="FIELD_GAMES"
++        item-title="name"
++        item-value="id"
++        density="compact"
++        hide-details
++        variant="outlined"
++        style="max-width: 220px"
++        class="ml-2"
++      />
++    </div>
++    <div ref="container" class="fieldcal-3d" />
++    <div class="text-caption">
++      Like Onshape: right-drag to turn, middle-drag or Ctrl + right-drag to move, scroll to zoom. Field elements are
++      simplified.
++    </div>
++  </div>
++</template>
++
++<style scoped>
++.fieldcal-3d {
++  width: 100%;
++  height: 55vh;
++  min-height: 320px;
++  border-radius: 8px;
++  overflow: hidden;
++}
++</style>
 diff --git a/photon-client/src/components/fieldcal/FieldCalMap.vue b/photon-client/src/components/fieldcal/FieldCalMap.vue
 new file mode 100644
 index 00000000..b70eea25
@@ -229,6 +552,230 @@ index 00000000..b70eea25
 +  }
 +}
 +</style>
+diff --git a/photon-client/src/lib/FieldElements.ts b/photon-client/src/lib/FieldElements.ts
+new file mode 100644
+index 00000000..83970d3d
+--- /dev/null
++++ b/photon-client/src/lib/FieldElements.ts
+@@ -0,0 +1,218 @@
++// SpectrumJetson (photonvision-30): simplified 3D field elements, like Limelight's field view.
++// Each element is placed by the tags mounted on it, not by fixed coordinates: the same code draws
++// the AndyMark and welded fields, and after a field calibration the elements sit where their tags
++// really are (a misplaced hub shows up misplaced). Dimensions: the 2026 game manual (arena section).
++import type * as ThreeNS from "three";
++import type { AprilTagFieldLayout } from "@/types/PhotonTrackingTypes";
++
++type Three = typeof ThreeNS;
++type TagPose = { x: number; y: number; z: number; yaw: number };
++
++export type FieldGame = { id: string; name: string };
++export const FIELD_GAMES: FieldGame[] = [
++  { id: "2026", name: "2026 REBUILT" },
++  { id: "none", name: "Tags and walls only" }
++];
++
++/** Which game a layout is for, from its size and tags. */
++export const detectGame = (layout: AprilTagFieldLayout): string =>
++  layout.tags.length === 32 && Math.abs(layout.field.length - 16.54) < 0.1 && Math.abs(layout.field.width - 8.05) < 0.1
++    ? "2026"
++    : "none";
++
++const IN = 0.0254;
++const BLUE = 0x1e63d6;
++const RED = 0xd63a2f;
++const GREY = 0x9aa0a6;
++
++// 2026 REBUILT: which tags sit on which element (blue, red).
++const REBUILT = {
++  hubs: [
++    [18, 19, 20, 21, 24, 25, 26, 27],
++    [2, 3, 4, 5, 8, 9, 10, 11]
++  ],
++  trenches: [
++    [17, 28],
++    [22, 23],
++    [1, 12],
++    [6, 7]
++  ],
++  outposts: [
++    [29, 30],
++    [13, 14]
++  ],
++  towers: [
++    [31, 32],
++    [15, 16]
++  ]
++};
++const HUB = { size: 47 * IN, height: 72 * IN };
++const TRENCH = {
++  width: 65.65 * IN,
++  depth: 47.0 * IN,
++  height: 40.25 * IN,
++  openWidth: 50.34 * IN,
++  openHeight: 22.25 * IN
++};
++const BUMP = { depth: 44.4 * IN, height: 6.513 * IN };
++const TOWER = { width: 49.25 * IN, depth: 45.0 * IN, height: 78.25 * IN, upright: 72.1 * IN, spacing: 32.25 * IN };
++const RUNGS = [27.0 * IN, 45.0 * IN, 63.0 * IN];
++const GUARDRAIL = 20.0 * IN;
++const WALL = 78 * IN; // driver station wall with its transparent panel
++
++export const yawOf = (q: { W: number; X: number; Y: number; Z: number }) =>
++  Math.atan2(2 * (q.W * q.Z + q.X * q.Y), 1 - 2 * (q.Y * q.Y + q.Z * q.Z));
++
++/** The field, walls and elements for a layout; tags are drawn by the caller. */
++export function buildField(T: Three, layout: AprilTagFieldLayout, game: string): ThreeNS.Group {
++  const g = new T.Group();
++  const L = layout.field.length,
++    W = layout.field.width;
++  const mat = (color: number, opacity = 1) =>
++    new T.MeshLambertMaterial({ color, transparent: opacity < 1, opacity, side: T.DoubleSide });
++  const box = (
++    sx: number,
++    sy: number,
++    sz: number,
++    x: number,
++    y: number,
++    z: number,
++    yaw: number,
++    m: ThreeNS.Material
++  ) => {
++    const b = new T.Mesh(new T.BoxGeometry(sx, sy, sz), m);
++    b.position.set(x, y, z);
++    b.rotation.z = yaw;
++    g.add(b);
++    return b;
++  };
++
++  // Carpet, alliance zones and centre line.
++  const carpet = new T.Mesh(new T.PlaneGeometry(L, W), mat(0x5a5f63));
++  carpet.position.set(L / 2, W / 2, 0);
++  g.add(carpet);
++  const line = (x: number, color: number) => {
++    const l = new T.Mesh(new T.PlaneGeometry(0.05, W), mat(color));
++    l.position.set(x, W / 2, 0.002);
++    g.add(l);
++  };
++  line(L / 2, 0xffffff);
++  // Guardrails and alliance walls (translucent so the field stays visible).
++  box(L, 0.05, GUARDRAIL, L / 2, -0.025, GUARDRAIL / 2, 0, mat(GREY, 0.35));
++  box(L, 0.05, GUARDRAIL, L / 2, W + 0.025, GUARDRAIL / 2, 0, mat(GREY, 0.35));
++  // Alliance walls: faint, with their edges drawn, so the view through them stays clear.
++  for (const [x, c] of [
++    [-0.025, BLUE],
++    [L + 0.025, RED]
++  ]) {
++    const w = box(0.05, W, WALL, x, W / 2, WALL / 2, 0, mat(c, 0.08));
++    w.add(new T.LineSegments(new T.EdgesGeometry(w.geometry), new T.LineBasicMaterial({ color: c })));
++  }
++
++  if (game !== "2026") return g;
++
++  const tags = new Map<number, TagPose>();
++  for (const t of layout.tags) {
++    tags.set(t.ID, {
++      x: t.pose.translation.x,
++      y: t.pose.translation.y,
++      z: t.pose.translation.z,
++      yaw: yawOf(t.pose.rotation.quaternion)
++    });
++  }
++  const group = (ids: number[]) => ids.map((i) => tags.get(i)).filter((t): t is TagPose => !!t);
++  const mean = (ts: TagPose[]) => ({
++    x: ts.reduce((a, t) => a + t.x, 0) / ts.length,
++    y: ts.reduce((a, t) => a + t.y, 0) / ts.length
++  });
++  const colour = (x: number) => (x < L / 2 ? BLUE : RED);
++
++  // HUBs: a 47 in square, 72 in tall, centred on its tags, square to them.
++  const hubs: { x: number; y: number }[] = [];
++  for (const ids of REBUILT.hubs) {
++    const ts = group(ids);
++    if (ts.length < 3) continue;
++    const c = mean(ts);
++    hubs.push(c);
++    box(HUB.size, HUB.size, HUB.height, c.x, c.y, HUB.height / 2, ts[0].yaw, mat(colour(c.x), 0.55));
++    // the hexagonal opening at the top, as a dark ring
++    const ring = new T.Mesh(new T.CylinderGeometry(0.53, 0.53, 0.04, 6, 1, true), mat(0x222222));
++    ring.rotation.x = Math.PI / 2;
++    ring.position.set(c.x, c.y, HUB.height);
++    g.add(ring);
++  }
++
++  // TRENCHes: against the guardrail, a slab on two legs over a 22.25 in tall tunnel.
++  for (const ids of REBUILT.trenches) {
++    const ts = group(ids);
++    if (!ts.length) continue;
++    const c = mean(ts);
++    const nearZero = c.y < W / 2;
++    const y0 = nearZero ? 0 : W - TRENCH.width;
++    const yc = y0 + TRENCH.width / 2;
++    const m = mat(colour(c.x), 0.6);
++    const slab = TRENCH.height - TRENCH.openHeight;
++    box(TRENCH.depth, TRENCH.width, slab, c.x, yc, TRENCH.openHeight + slab / 2, 0, m);
++    const leg = (TRENCH.width - TRENCH.openWidth) / 2;
++    box(TRENCH.depth, leg, TRENCH.openHeight, c.x, y0 + leg / 2, TRENCH.openHeight / 2, 0, m);
++    box(TRENCH.depth, leg, TRENCH.openHeight, c.x, y0 + TRENCH.width - leg / 2, TRENCH.openHeight / 2, 0, m);
++  }
++
++  // BUMPs: 15-degree ramps either side of each hub, out to the trenches.
++  for (const h of hubs) {
++    for (const [a, b] of [
++      [TRENCH.width, h.y - HUB.size / 2],
++      [h.y + HUB.size / 2, W - TRENCH.width]
++    ]) {
++      if (b - a < 0.2) continue;
++      const shape = new T.Shape();
++      shape.moveTo(-BUMP.depth / 2, 0);
++      shape.lineTo(0, BUMP.height);
++      shape.lineTo(BUMP.depth / 2, 0);
++      shape.lineTo(-BUMP.depth / 2, 0);
++      const geo = new T.ExtrudeGeometry(shape, { depth: b - a, bevelEnabled: false });
++      const bump = new T.Mesh(geo, mat(colour(h.x), 0.8));
++      // shape x -> field x, shape y -> up, extrusion -> field y
++      bump.rotation.x = Math.PI / 2;
++      bump.position.set(h.x, b, 0);
++      g.add(bump);
++    }
++  }
++
++  // TOWERs: on the alliance wall at its tags, a base, two uprights and three rungs.
++  for (const ids of REBUILT.towers) {
++    const ts = group(ids);
++    if (!ts.length) continue;
++    const c = mean(ts);
++    const dir = Math.cos(ts[0].yaw) >= 0 ? 1 : -1; // into the field
++    const m = mat(colour(c.x), 0.85);
++    const xMid = c.x + (dir * TOWER.depth) / 2;
++    box(TOWER.depth, TOWER.width, 0.04, xMid, c.y, 0.02, 0, m);
++    box(0.05, TOWER.width, TOWER.height, c.x + dir * 0.03, c.y, TOWER.height / 2, 0, mat(colour(c.x), 0.3));
++    for (const s of [-1, 1])
++      box(0.06, 0.06, TOWER.upright, xMid, c.y + (s * TOWER.spacing) / 2, TOWER.upright / 2, 0, m);
++    for (const z of RUNGS) {
++      const rung = new T.Mesh(new T.CylinderGeometry(0.03, 0.03, TOWER.spacing, 12), mat(0xdddddd));
++      rung.position.set(xMid, c.y, z);
++      g.add(rung);
++    }
++  }
++
++  // OUTPOSTs: a panel in the alliance wall at its tags, with the low corral in front.
++  for (const ids of REBUILT.outposts) {
++    const ts = group(ids);
++    if (!ts.length) continue;
++    const c = mean(ts);
++    const dir = Math.cos(ts[0].yaw) >= 0 ? 1 : -1;
++    box(0.12, 1.1, 1.2, c.x + dir * 0.06, c.y, 0.6, 0, mat(colour(c.x), 0.5));
++    const cw = 35.8 * IN,
++      cd = 37.6 * IN,
++      ch = 8.13 * IN;
++    const m = mat(colour(c.x), 0.7);
++    const x0 = c.x + dir * 0.12;
++    box(cd, 0.03, ch, x0 + (dir * cd) / 2, c.y - cw / 2, ch / 2, 0, m);
++    box(cd, 0.03, ch, x0 + (dir * cd) / 2, c.y + cw / 2, ch / 2, 0, m);
++    box(0.03, cw, ch, x0 + dir * cd, c.y, ch / 2, 0, m);
++  }
++  return g;
++}
 diff --git a/photon-client/src/router/index.ts b/photon-client/src/router/index.ts
 index 1535b16e..88e5ef10 100644
 --- a/photon-client/src/router/index.ts
@@ -266,10 +813,10 @@ index 00000000..2c62d7d1
 +export type MapOffset = { dxCm: number; dyCm: number; moved: boolean };
 diff --git a/photon-client/src/views/FieldCalibrationView.vue b/photon-client/src/views/FieldCalibrationView.vue
 new file mode 100644
-index 00000000..39cc857b
+index 00000000..667b108c
 --- /dev/null
 +++ b/photon-client/src/views/FieldCalibrationView.vue
-@@ -0,0 +1,786 @@
+@@ -0,0 +1,811 @@
 +<script setup lang="ts">
 +// SpectrumJetson (photonvision-30): field calibration. Tune the camera settings at one spot, then
 +// push the robot by hand to still spots while every camera records; the Jetson then solves every
@@ -279,6 +826,7 @@ index 00000000..39cc857b
 +import { useStateStore } from "@/stores/StateStore";
 +import { useSettingsStore } from "@/stores/settings/GeneralSettingsStore";
 +import FieldCalMap from "@/components/fieldcal/FieldCalMap.vue";
++import FieldCal3D from "@/components/fieldcal/FieldCal3D.vue";
 +import type { MapOffset, MapPoint, MapSuggestion } from "@/types/FieldCalTypes";
 +
 +type Mount = { x: number; y: number; z: number; rollDeg: number; pitchDeg: number; yawDeg: number };
@@ -375,6 +923,7 @@ index 00000000..39cc857b
 +const results = ref<Results | null>(null);
 +const resultsRun = ref("");
 +const beep = ref(true);
++const mapMode = ref<"2d" | "3d">("2d");
 +let timer: ReturnType<typeof setTimeout> | undefined;
 +
 +const layout = computed(() => useSettingsStore().currentFieldLayout);
@@ -805,7 +1354,12 @@ index 00000000..39cc857b
 +          </v-alert>
 +          <v-row>
 +            <v-col cols="12" md="8">
++              <v-btn-toggle v-model="mapMode" density="compact" mandatory class="mb-2">
++                <v-btn value="2d" size="small">Map</v-btn>
++                <v-btn value="3d" size="small">3D</v-btn>
++              </v-btn-toggle>
 +              <FieldCalMap
++                v-if="mapMode === '2d'"
 +                :layout="layout"
 +                :tag-spots="status.tagSpots"
 +                :in-view="inView"
@@ -814,6 +1368,16 @@ index 00000000..39cc857b
 +                :suggestion="suggestion"
 +                focus-seen
 +              />
++              <Suspense v-else>
++                <FieldCal3D
++                  :layout="layout"
++                  :tag-spots="status.tagSpots"
++                  :in-view="inView"
++                  :cameras="liveCameras"
++                  :spots="spotPoints"
++                />
++                <template #fallback>Loading the 3D field…</template>
++              </Suspense>
 +              <div class="text-caption mt-1">
 +                Tags: <span class="text-success">green</span> seen from 2+ spots,
 +                <span class="text-warning">orange</span> from 1, <span class="text-info">blue</span> in view now, grey
@@ -976,7 +1540,15 @@ index 00000000..39cc857b
 +          <div class="text-h6 mt-4">Tags</div>
 +          <v-row>
 +            <v-col cols="12" md="6">
-+              <FieldCalMap :layout="layout" :offsets="offsets" focus-seen />
++              <v-btn-toggle v-model="mapMode" density="compact" mandatory class="mb-2">
++                <v-btn value="2d" size="small">Map</v-btn>
++                <v-btn value="3d" size="small">3D</v-btn>
++              </v-btn-toggle>
++              <FieldCalMap v-if="mapMode === '2d'" :layout="layout" :offsets="offsets" focus-seen />
++              <Suspense v-else>
++                <FieldCal3D :layout="layout" :offsets="offsets" />
++                <template #fallback>Loading the 3D field…</template>
++              </Suspense>
 +              <div class="text-caption">
 +                Arrows: each tag's offset from the layout, drawn 10× larger. Red: moved.
 +                <span v-if="results.alignment.tagsIgnored?.length"

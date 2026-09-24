@@ -793,6 +793,17 @@ on the Jetson. The user guide is in the README; how the solver works is in
     applyTuning, apply, undo.
   - `GET /api/fieldcal/file?session=&name=`: report.md, results.json, corrected-layout.json,
     mounts.json.
+- **3D view** (`FieldCal3D.vue`, three.js already in the UI):
+  - **Elements:** simplified 2026 elements from `lib/FieldElements.ts`, sized from the game
+    manual. Each is placed by the tags mounted on it, so the AndyMark and welded layouts both work,
+    and after a calibration each element sits where its tags really are:
+    - hubs: tags 18–21, 24–27 and 2–5, 8–11;
+    - trenches: tags 17/28, 22/23, 1/12 and 6/7, against the guardrail;
+    - bumps: between each hub and its trenches;
+    - towers: tags 31/32 and 15/16;
+    - outposts: tags 29/30 and 13/14.
+  - **Mouse:** Onshape's defaults (right-drag turns, middle or Ctrl + right-drag pans, the wheel
+    zooms toward the cursor); left-drag also turns.
 - **Install:** `scripts/jetson/13-build-fieldcal-detect.sh --install`.
 - **Checked on the bench (no tags in view):**
   - start, live status, stop-and-solve: the replay ran at 560+ fps and reported "nothing to solve";
