@@ -283,7 +283,11 @@ Everything else, including the robot-code example and how to line video up with 
 
 A page in PhotonVision's web UI (**Field Calibration** in the sidebar, `photonvision-30`). With the robot on and disabled, pushed by hand:
 
-1. **Tune camera settings** (optional, about a minute). Park the robot where every camera sees tags, near and far. The Jetson steps each camera through exposure, gain, brightness, contrast, gamma and sharpness under the event's lights. It recommends the shortest exposure that still finds every tag (less motion blur), and changes the others only if they clearly help. **Apply** saves them to each camera's pipeline in use.
+1. **Tune camera settings** (optional, about a minute per camera).
+   - Each camera has its own card: its live stream, the tags it sees right now with their margins, a slider for every setting, and its own **Tune**. Turn the robot so that camera faces tags, near and far, and press Tune.
+   - The Jetson steps it through exposure, gain, brightness, contrast, gamma and sharpness under the event's lights. It recommends the shortest exposure that still finds every tag (less motion blur), and changes the others only if they clearly help.
+   - Set any setting by hand with its slider: it saves to the pipeline in use, like the Camera page. Tick a setting's lock to keep it while the rest are tuned.
+   - **Apply recommended** saves that camera's results. Each camera keeps its results until it's tuned again, so the robot can be turned between cameras.
 2. **Record the spots.** Push the robot to 10–20 spots and hold it still at each until the page says the spot counts (about 2 s, and it beeps). A field map shows which tags need more views, where each camera is, and a suggested next spot. It can also be shown in 3D, using *FIRST*'s own field CAD. Each element is placed by its tags, so it matches the AndyMark or welded layout in use, and after a calibration it shows where things really are. The mouse works like Onshape's: right-drag turns, middle-drag or Ctrl + right-drag moves, the wheel zooms.
 3. **Solve.** The Jetson replays the recording through the same 971 GPU detector it uses in matches, then solves every tag's real pose and every camera's mount. It takes about a minute.
 4. **Results:**

@@ -12,6 +12,287 @@ index deb43d6b..5af91ef1 100644
        <v-list-item link to="/docs" prepend-icon="mdi-bookshelf">
          <v-list-item-title>Documentation</v-list-item-title>
        </v-list-item>
+diff --git a/photon-client/src/components/fieldcal/CameraTuneCard.vue b/photon-client/src/components/fieldcal/CameraTuneCard.vue
+new file mode 100644
+index 00000000..6368f3bd
+--- /dev/null
++++ b/photon-client/src/components/fieldcal/CameraTuneCard.vue
+@@ -0,0 +1,275 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-30): one camera in the field-calibration settings step. Its stream,
++// the tags it sees right now, sliders to set each control by hand (saved to the pipeline in use,
++// like the Input tab), a lock per control that the tuner leaves alone, and its own Tune / Apply.
++import { computed, ref, watch } from "vue";
++import PhotonCameraStream from "@/components/app/photon-camera-stream.vue";
++import { useCameraSettingsStore } from "@/stores/settings/CameraSettingsStore";
++import type { Control, TuneCamera } from "@/types/FieldCalTypes";
++
++const props = defineProps<{
++  name: string;
++  controls?: Record<string, Control | number | boolean>;
++  preview?: { margins: Record<string, number>; ageMs: number };
++  tune?: TuneCamera;
++  tuningRunning: boolean;
++  phase: string;
++  progress: number;
++  disabled: boolean;
++  act: (body: object, done?: string) => Promise<void>;
++}>();
++
++const ORDER = ["exposure", "gain", "brightness", "contrast", "gamma", "sharpness", "backlight"];
++const LABEL: Record<string, string> = {
++  exposure: "Exposure",
++  gain: "Gain",
++  brightness: "Brightness",
++  contrast: "Contrast",
++  gamma: "Gamma",
++  sharpness: "Sharpness",
++  backlight: "Backlight comp."
++};
++const HINT: Record<string, string> = {
++  exposure: "Shorter means less motion blur. Set it first.",
++  gain: "Brightens without longer exposure, but adds noise.",
++  brightness: "An offset on every pixel.",
++  contrast: "The camera's contrast curve.",
++  gamma: "Brightens the darks.",
++  sharpness: "The camera's edge sharpening; too much puts halos on tag edges.",
++  backlight: "Brightens for bright backgrounds. Usually off for tags."
++};
++
++const ctl = computed(() =>
++  ORDER.filter((k) => typeof props.controls?.[k] === "object").map((k) => ({
++    key: k,
++    ...(props.controls![k] as Control)
++  }))
++);
++const pipelineIndex = computed(() => props.controls?.pipelineIndex as number | undefined);
++const autoExposure = computed(() => props.controls?.autoExposure === true);
++
++// What the camera sees right now (the page's preview, a few times a second).
++const seen = computed(() =>
++  props.preview && props.preview.ageMs < 2000
++    ? Object.entries(props.preview.margins).map(([id, m]) => ({ id: Number(id), margin: m }))
++    : []
++);
++const fresh = computed(() => !!props.preview && props.preview.ageMs < 2000);
++
++// Locks, remembered in this browser.
++const lockKey = `fieldcal-locked-${props.name}`;
++const readLocks = () => {
++  try {
++    return new Set<string>(JSON.parse(localStorage.getItem(lockKey) ?? "[]"));
++  } catch {
++    return new Set<string>();
++  }
++};
++const locked = ref(readLocks());
++const toggleLock = (k: string) => {
++  const s = new Set(locked.value);
++  if (s.has(k)) s.delete(k);
++  else s.add(k);
++  locked.value = s;
++  try {
++    localStorage.setItem(lockKey, JSON.stringify([...s]));
++  } catch {
++    // private window: the lock just isn't remembered
++  }
++};
++
++// Sliders: a local copy while dragging; exposure on a log scale (it spans 1 to thousands).
++// A control keeps its dragged value until the change has been saved (the status poll mustn't
++// snap the slider back mid-drag).
++const drag = ref<Record<string, number>>({});
++const toSlider = (k: string, v: number) => (k === "exposure" ? Math.log10(Math.max(1, v)) : v);
++const fromSlider = (k: string, s: number) => (k === "exposure" ? Math.round(10 ** s) : Math.round(s));
++const sliderValue = (c: { key: string; value: number }) => drag.value[c.key] ?? toSlider(c.key, c.value);
++const shown = (c: { key: string; value: number }) => fromSlider(c.key, sliderValue(c));
++const fmt = (k: string, v: number) => (k === "exposure" ? `${v} (${(v / 10).toFixed(1)} ms)` : String(v));
++const forget = (k: string) => {
++  const d = { ...drag.value };
++  delete d[k];
++  drag.value = d;
++};
++const setControl = async (k: string, s: number) => {
++  await props.act({ action: "setControl", camera: props.name, control: k, value: fromSlider(k, s) });
++  setTimeout(() => forget(k), 3000); // in case the camera never reports exactly that value
++};
++// Let go of a dragged value once the camera reports it.
++watch(
++  () => props.controls,
++  (cs) => {
++    for (const k of Object.keys(drag.value)) {
++      const c = cs?.[k];
++      if (typeof c === "object" && Math.abs(c.value - fromSlider(k, drag.value[k])) < 1) forget(k);
++    }
++  }
++);
++// Controls the pipeline can leave at the camera's own default (-1).
++const HAS_DEFAULT = new Set(["contrast", "gamma", "sharpness", "backlight"]);
++const resetControl = (k: string) =>
++  props.act({ action: "setControl", camera: props.name, control: k, value: -1 }, `${LABEL[k]}: camera default`);
++
++const busyHere = computed(() => props.tuningRunning && !!props.tune?.tuning);
++const hasRecommendations = computed(
++  () =>
++    !!props.tune &&
++    !props.tune.tuning &&
++    Object.entries(props.tune.recommended).some(([k, v]) => v !== props.tune!.startValues[k])
++);
++const tried = (k: string) => (props.tune?.results ?? []).filter((r) => r.control === k);
++const startTune = () => props.act({ action: "tune", camera: props.name, locked: { [props.name]: [...locked.value] } });
++
++const cameraSettings = computed(() =>
++  Object.values(useCameraSettingsStore().cameras).find((c) => c.nickname === props.name)
++);
++const showStream = ref(true);
++</script>
++
++<template>
++  <v-card variant="outlined" class="pa-3 h-100">
++    <div class="d-flex align-center flex-wrap" style="gap: 8px">
++      <span class="text-h6">{{ name }}</span>
++      <v-chip v-if="pipelineIndex !== undefined" size="small">pipeline {{ pipelineIndex }}</v-chip>
++      <v-chip v-if="!fresh" size="small" color="grey">no recent frames</v-chip>
++      <v-chip v-else-if="seen.length" size="small" color="success">
++        sees {{ seen.map((s) => `${s.id} (${s.margin})`).join(", ") }}
++      </v-chip>
++      <v-chip v-else size="small" color="warning">sees no tags: turn the robot</v-chip>
++      <v-spacer />
++      <v-btn
++        size="x-small"
++        variant="text"
++        :icon="showStream ? 'mdi-eye-off' : 'mdi-eye'"
++        @click="showStream = !showStream"
++      />
++    </div>
++
++    <photon-camera-stream
++      v-if="showStream && cameraSettings"
++      :id="`fieldcal-stream-${name}`"
++      :camera-settings="cameraSettings"
++      stream-type="Processed"
++      class="mt-2 mx-auto"
++      style="width: 100%; max-width: 560px; height: auto; display: block"
++    />
++
++    <div class="d-flex align-center flex-wrap mt-3" style="gap: 8px">
++      <v-btn
++        v-if="!busyHere"
++        color="primary"
++        size="small"
++        prepend-icon="mdi-tune"
++        :disabled="disabled || tuningRunning || !seen.length"
++        @click="startTune"
++        >Tune {{ name }}</v-btn
++      >
++      <template v-else>
++        <span class="text-caption">{{ phase }}</span>
++        <v-progress-linear :model-value="progress" color="primary" height="6" style="max-width: 160px" />
++        <v-btn size="x-small" variant="tonal" @click="act({ action: 'cancelTune' })">Stop</v-btn>
++      </template>
++      <v-btn
++        v-if="hasRecommendations"
++        size="small"
++        color="success"
++        prepend-icon="mdi-content-save"
++        :disabled="disabled || tuningRunning"
++        @click="act({ action: 'applyTuning', camera: name }, `Saved ${name}'s recommended settings`)"
++        >Apply recommended</v-btn
++      >
++      <span v-if="tune?.outcome && !busyHere" class="text-caption">{{ tune.outcome }}</span>
++    </div>
++    <div v-if="tune?.baseline && tune.baselineTags.length && !busyHere" class="text-caption mt-1">
++      Measured on tags {{ tune.baselineTags.join(", ") }}: margin {{ Math.round(tune.baseline.margin) }}, jitter
++      {{ tune.baseline.jitterPx.toFixed(2) }} px at the start.
++    </div>
++    <v-alert v-if="autoExposure" density="compact" variant="tonal" color="warning" class="mt-2">
++      Auto exposure is on for this pipeline: setting exposure here (or tuning it) turns it off.
++    </v-alert>
++
++    <v-table density="compact" class="mt-2 controls">
++      <thead>
++        <tr>
++          <th title="Locked settings are left as they are when tuning">
++            <v-icon size="small">mdi-lock</v-icon>
++          </th>
++          <th>Setting</th>
++          <th style="min-width: 150px"></th>
++          <th>Now</th>
++          <th>Tuned</th>
++        </tr>
++      </thead>
++      <tbody>
++        <tr v-for="c in ctl" :key="c.key">
++          <td>
++            <v-checkbox-btn
++              :model-value="locked.has(c.key)"
++              density="compact"
++              :disabled="busyHere"
++              @update:model-value="toggleLock(c.key)"
++            />
++          </td>
++          <td :title="HINT[c.key]">{{ LABEL[c.key] }}</td>
++          <td>
++            <v-slider
++              :model-value="sliderValue(c)"
++              :min="toSlider(c.key, c.min)"
++              :max="toSlider(c.key, c.max)"
++              :step="c.key === 'exposure' ? 0.01 : 1"
++              density="compact"
++              hide-details
++              :disabled="disabled || busyHere"
++              @update:model-value="(v: number) => (drag = { ...drag, [c.key]: v })"
++              @end="(v: number) => setControl(c.key, v)"
++            />
++          </td>
++          <td class="text-no-wrap">
++            {{ fmt(c.key, shown(c)) }}
++            <v-btn
++              v-if="HAS_DEFAULT.has(c.key)"
++              size="x-small"
++              variant="text"
++              icon="mdi-restore"
++              :title="`Camera default (${c.default})`"
++              :disabled="disabled || busyHere"
++              @click="resetControl(c.key)"
++            />
++          </td>
++          <td class="text-caption">
++            <template v-if="tune && tune.recommended[c.key] !== undefined">
++              <b v-if="tune.recommended[c.key] !== tune.startValues[c.key]">{{
++                fmt(c.key, tune.recommended[c.key])
++              }}</b>
++              <span v-else>keep</span>
++            </template>
++            <span v-else-if="tune?.locked?.includes(c.key)">locked</span>
++            <span v-if="tune?.notes[c.key]"> ({{ tune.notes[c.key] }})</span>
++            <div v-if="tried(c.key).length" class="tried">
++              {{
++                tried(c.key)
++                  .map((r) => `${r.value}: ${Math.round(100 * r.found)}%/${Math.round(r.margin)}`)
++                  .join("  ")
++              }}
++            </div>
++          </td>
++        </tr>
++      </tbody>
++    </v-table>
++    <div class="text-caption mt-1">
++      Tried: value: tags found / decision margin. Changes here save to pipeline {{ pipelineIndex }}, like the Camera
++      page's Input tab.
++    </div>
++  </v-card>
++</template>
++
++<style scoped>
++.controls td {
++  padding: 0 6px !important;
++}
++.tried {
++  opacity: 0.75;
++  white-space: normal;
++}
++</style>
 diff --git a/photon-client/src/components/fieldcal/FieldCal3D.vue b/photon-client/src/components/fieldcal/FieldCal3D.vue
 new file mode 100644
 index 00000000..30304375
@@ -913,21 +1194,46 @@ index 1535b16e..88e5ef10 100644
        name: "Docs",
 diff --git a/photon-client/src/types/FieldCalTypes.ts b/photon-client/src/types/FieldCalTypes.ts
 new file mode 100644
-index 00000000..2c62d7d1
+index 00000000..35ac2260
 --- /dev/null
 +++ b/photon-client/src/types/FieldCalTypes.ts
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,30 @@
 +// SpectrumJetson (photonvision-30): shapes the field-calibration map draws.
 +export type MapCamera = { name: string; pose: number[] | null };
 +export type MapPoint = { x: number; y: number; label?: string };
 +export type MapSuggestion = { x: number; y: number; tag: number; faceX: number; faceY: number };
 +export type MapOffset = { dxCm: number; dyCm: number; moved: boolean };
++
++// The settings step (CameraTuneCard).
++export type Control = { min: number; max: number; default: number; value: number };
++export type TuneStep = {
++  control: string;
++  value: number;
++  frames: number;
++  found: number;
++  margin: number;
++  jitterPx: number;
++  brightness: number;
++};
++export type TuneCamera = {
++  problem: string;
++  outcome: string;
++  tuning: boolean;
++  locked: string[];
++  baselineTags: number[];
++  baseline: TuneStep | null;
++  startValues: Record<string, number>;
++  recommended: Record<string, number>;
++  notes: Record<string, string>;
++  results: TuneStep[];
++  pipelineIndex: number;
++};
 diff --git a/photon-client/src/views/FieldCalibrationView.vue b/photon-client/src/views/FieldCalibrationView.vue
 new file mode 100644
-index 00000000..667b108c
+index 00000000..d56ca125
 --- /dev/null
 +++ b/photon-client/src/views/FieldCalibrationView.vue
-@@ -0,0 +1,811 @@
+@@ -0,0 +1,756 @@
 +<script setup lang="ts">
 +// SpectrumJetson (photonvision-30): field calibration. Tune the camera settings at one spot, then
 +// push the robot by hand to still spots while every camera records; the Jetson then solves every
@@ -938,31 +1244,10 @@ index 00000000..667b108c
 +import { useSettingsStore } from "@/stores/settings/GeneralSettingsStore";
 +import FieldCalMap from "@/components/fieldcal/FieldCalMap.vue";
 +import FieldCal3D from "@/components/fieldcal/FieldCal3D.vue";
-+import type { MapOffset, MapPoint, MapSuggestion } from "@/types/FieldCalTypes";
++import type { Control, MapOffset, MapPoint, MapSuggestion, TuneCamera } from "@/types/FieldCalTypes";
++import CameraTuneCard from "@/components/fieldcal/CameraTuneCard.vue";
 +
 +type Mount = { x: number; y: number; z: number; rollDeg: number; pitchDeg: number; yawDeg: number };
-+type StepResult = {
-+  control: string;
-+  value: number;
-+  frames: number;
-+  found: number;
-+  margin: number;
-+  jitterPx: number;
-+  brightness: number;
-+  tags: number;
-+};
-+type TuneCamera = {
-+  problem: string;
-+  baselineTags: number[];
-+  baseline: StepResult | null;
-+  pipeline: Record<string, number>;
-+  startValues: Record<string, number>;
-+  ranges: Record<string, number[]>;
-+  recommended: Record<string, number>;
-+  notes: Record<string, string>;
-+  results: StepResult[];
-+  pipelineIndex: number;
-+};
 +type Status = {
 +  state: "IDLE" | "RECORDING" | "SOLVING" | "SOLVED" | "FAILED";
 +  session: string;
@@ -988,6 +1273,8 @@ index 00000000..667b108c
 +    result: string;
 +    cameras: Record<string, TuneCamera>;
 +  };
++  controls: Record<string, Record<string, Control | number | boolean>>;
++  preview: Record<string, { margins: Record<string, number>; ageMs: number }>;
 +  robotMounts: Record<string, Mount>;
 +  robotConnected: boolean;
 +  cameras: Record<string, { calibration: { resolution: string } | null; videoMode?: string }>;
@@ -1187,23 +1474,26 @@ index 00000000..667b108c
 +
 +// ---- tuning
 +const tuning = computed(() => status.value?.tuning);
-+const controlLabel: Record<string, string> = {
-+  exposure: "Exposure (raw)",
-+  gain: "Gain",
-+  brightness: "Brightness",
-+  contrast: "Contrast",
-+  gamma: "Gamma",
-+  sharpness: "Sharpness",
-+  backlight: "Backlight compensation"
-+};
-+const fmtSetting = (control: string, v: number | undefined) => {
-+  if (v === undefined) return "";
-+  if (control === "exposure") return v < 0 ? "auto" : `${v} (${(v / 10).toFixed(1)} ms)`;
-+  return v < 0 ? "camera default" : String(v);
-+};
-+const anyRecommendation = computed(() =>
-+  Object.values(tuning.value?.cameras ?? {}).some((c) => Object.keys(c.recommended).length > 0)
++const tuneProgress = computed(() =>
++  tuning.value?.stepsTotal ? (100 * tuning.value.stepsDone) / tuning.value.stepsTotal : 0
 +);
++const camerasSeeingTags = computed(() =>
++  cameraNames.value.filter((c) => {
++    const p = status.value?.preview[c];
++    return p && p.ageMs < 2000 && Object.keys(p.margins).length > 0;
++  })
++);
++const lockedAll = () => {
++  const out: Record<string, string[]> = {};
++  for (const c of cameraNames.value) {
++    try {
++      out[c] = JSON.parse(localStorage.getItem(`fieldcal-locked-${c}`) ?? "[]");
++    } catch {
++      out[c] = [];
++    }
++  }
++  return out;
++};
 +
 +// ---- results
 +const loadResults = async (run: string) => {
@@ -1345,86 +1635,47 @@ index 00000000..667b108c
 +
 +    <!-- Step 1: camera settings -->
 +    <v-card v-if="status" class="mb-3 rounded-12" color="surface">
-+      <v-card-title>1. Camera settings (optional, about a minute)</v-card-title>
++      <v-card-title>1. Camera settings (optional, about a minute per camera)</v-card-title>
 +      <v-card-text>
 +        <p class="mb-2">
-+          Park the robot where every camera sees tags, some close and some far, under the lights you'll play under. Keep
-+          people out of view and don't touch the robot. Each camera steps through exposure (as short as still finds
-+          every tag: less motion blur), then gain, brightness, contrast, gamma and sharpness, keeping a value only if it
-+          clearly beats the current one.
++          Under the lights you'll play under, turn the robot so a camera faces tags, some close and some far, and press
++          its <b>Tune</b>. It steps through exposure (the shortest that still finds every tag: less motion blur), then
++          gain, brightness, contrast, gamma and sharpness, keeping a value only if it clearly beats the current one.
++          Keep people out of view and don't touch the robot while it runs. Then turn the robot for the next camera; each
++          camera's results stay until you tune it again.
 +        </p>
-+        <v-btn
-+          v-if="!tuning?.running"
-+          color="primary"
-+          :disabled="busy || recording || status.state === 'SOLVING'"
-+          prepend-icon="mdi-tune"
-+          @click="act({ action: 'tune' })"
-+          >Tune camera settings</v-btn
-+        >
-+        <div v-else>
-+          <div class="mb-1">{{ tuning.phase }}</div>
-+          <v-progress-linear
-+            :model-value="tuning.stepsTotal ? (100 * tuning.stepsDone) / tuning.stepsTotal : 0"
-+            color="primary"
-+            height="8"
-+            class="mb-2"
-+          />
-+          <v-btn size="small" variant="tonal" @click="act({ action: 'cancelTune' })">Stop</v-btn>
++        <p class="mb-3 text-caption">
++          Set any setting by hand with its slider (it saves to the pipeline in use, like the Camera page) and tick its
++          <v-icon size="x-small">mdi-lock</v-icon> to keep it while tuning the rest.
++        </p>
++        <div class="d-flex align-center flex-wrap mb-3" style="gap: 8px">
++          <v-btn
++            size="small"
++            variant="tonal"
++            prepend-icon="mdi-tune-variant"
++            :disabled="
++              busy || recording || status.state === 'SOLVING' || tuning?.running || camerasSeeingTags.length < 2
++            "
++            @click="act({ action: 'tune', locked: lockedAll() })"
++            >Tune every camera that sees tags ({{ camerasSeeingTags.length }})</v-btn
++          >
++          <span v-if="tuning?.result && !tuning.running" class="text-caption">Last tuning: {{ tuning.result }}</span>
 +        </div>
-+        <v-alert v-if="tuning?.result && !tuning.running" class="mt-3" density="compact" variant="tonal">
-+          {{ tuning.result }}
-+        </v-alert>
-+        <template v-for="(c, name) in tuning?.cameras ?? {}" :key="name">
-+          <div class="mt-4 text-subtitle-1">
-+            {{ name }} <span class="text-caption">(pipeline {{ c.pipelineIndex }})</span>
-+          </div>
-+          <div v-if="c.problem" class="text-error">{{ c.problem }}</div>
-+          <template v-else>
-+            <div class="text-caption mb-1">
-+              Tags at the start: {{ c.baselineTags.join(", ") }} · margin {{ fmt(c.baseline?.margin) }} · jitter
-+              {{ fmt(c.baseline?.jitterPx, 2) }} px
-+            </div>
-+            <v-table density="compact">
-+              <thead>
-+                <tr>
-+                  <th>Setting</th>
-+                  <th>Now</th>
-+                  <th>Recommended</th>
-+                  <th>Tried (found % / margin / brightness)</th>
-+                </tr>
-+              </thead>
-+              <tbody>
-+                <tr v-for="(r, control) in c.ranges" :key="control">
-+                  <td>{{ controlLabel[control] ?? control }}</td>
-+                  <td>{{ fmtSetting(String(control), c.pipeline[control]) }}</td>
-+                  <td>
-+                    <b
-+                      v-if="c.recommended[control] !== undefined && c.recommended[control] !== c.startValues[control]"
-+                      >{{ fmtSetting(String(control), c.recommended[control]) }}</b
-+                    >
-+                    <span v-else-if="c.recommended[control] !== undefined">keep</span>
-+                    <span v-if="c.notes[control]" class="text-caption"> ({{ c.notes[control] }})</span>
-+                  </td>
-+                  <td class="text-caption">
-+                    <span v-for="s in c.results.filter((x) => x.control === control)" :key="s.value" class="mr-2">
-+                      {{ s.value }}: {{ Math.round(100 * s.found) }}% / {{ fmt(s.margin, 0) }} /
-+                      {{ fmt(s.brightness, 0) }}
-+                    </span>
-+                  </td>
-+                </tr>
-+              </tbody>
-+            </v-table>
-+          </template>
-+        </template>
-+        <v-btn
-+          v-if="anyRecommendation && !tuning?.running"
-+          class="mt-3"
-+          color="primary"
-+          :disabled="busy"
-+          prepend-icon="mdi-content-save"
-+          @click="act({ action: 'applyTuning' }, 'Settings saved to each camera\'s pipeline')"
-+          >Apply the recommended settings</v-btn
-+        >
++        <v-row>
++          <v-col v-for="c in cameraNames" :key="c" cols="12" lg="6">
++            <CameraTuneCard
++              :name="c"
++              :controls="status.controls[c]"
++              :preview="status.preview[c]"
++              :tune="tuning?.cameras[c]"
++              :tuning-running="!!tuning?.running"
++              :phase="tuning?.phase ?? ''"
++              :progress="tuneProgress"
++              :disabled="busy || recording || status.state === 'SOLVING'"
++              :act="act"
++            />
++          </v-col>
++        </v-row>
 +      </v-card-text>
 +    </v-card>
 +
@@ -1741,10 +1992,10 @@ index 00000000..667b108c
 +</style>
 diff --git a/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java b/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
 new file mode 100644
-index 00000000..5a2c366b
+index 00000000..dafd75be
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
-@@ -0,0 +1,540 @@
+@@ -0,0 +1,592 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -1769,6 +2020,7 @@ index 00000000..5a2c366b
 +import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Set;
 +import java.util.TreeMap;
 +import java.util.TreeSet;
 +import org.opencv.core.Core;
@@ -1833,6 +2085,8 @@ index 00000000..5a2c366b
 +        Map<Integer, double[]> baselineCentres = new HashMap<>();
 +        StepResult baseline;
 +        String problem = "";
++        String outcome = "";
++        Set<String> locked = Set.of(); // controls the user fixed: not swept, left as they are
 +        final List<Sample> samples = new ArrayList<>();
 +        long lastBrightnessNs = 0;
 +
@@ -1845,29 +2099,10 @@ index 00000000..5a2c366b
 +                        ps.cameraExposureRaw, ps.cameraAutoExposure ? 1 : 0, ps.cameraBrightness, ps.cameraGain,
 +                        ps.cameraContrast, ps.cameraGamma, ps.cameraSharpness, ps.cameraBacklightCompensation
 +                    };
-+            var s = m.getCameraSettables();
-+            ranges.put("exposure", new double[] {s.getMinExposureRaw(), s.getMaxExposureRaw(), ps.cameraExposureRaw});
-+            current.put("exposure", ps.cameraExposureRaw);
-+            if (m.hasGainControl()) {
-+                ranges.put("gain", new double[] {0, 100, 50});
-+                current.put("gain", (double) Math.max(0, ps.cameraGain));
-+            }
-+            ranges.put("brightness", new double[] {0, 100, 50});
-+            current.put("brightness", (double) ps.cameraBrightness);
-+            for (var c : s.getExtraControls()) {
-+                String key = switch ((String) c.get("key")) {
-+                    case "cameraContrast" -> "contrast";
-+                    case "cameraGamma" -> "gamma";
-+                    case "cameraSharpness" -> "sharpness";
-+                    case "cameraBacklightCompensation" -> "backlight";
-+                    default -> null;
-+                };
-+                if (key == null) continue;
-+                double min = ((Number) c.get("min")).doubleValue(), max = ((Number) c.get("max")).doubleValue();
-+                double def = ((Number) c.get("default")).doubleValue(), val = ((Number) c.get("value")).doubleValue();
-+                if (max <= min) continue;
-+                ranges.put(key, new double[] {min, max, def});
-+                current.put(key, val);
++            for (var e : controls(m).entrySet()) {
++                double[] c = e.getValue(); // min, max, default, value
++                ranges.put(e.getKey(), new double[] {c[0], c[1], c[2]});
++                current.put(e.getKey(), c[3]);
 +            }
 +            startValues.putAll(current);
 +        }
@@ -1949,11 +2184,66 @@ index 00000000..5a2c366b
 +        }
 +    }
 +
++    /**
++     * The camera's tunable controls: {min, max, default, value}, in the units the pipeline stores
++     * (exposure raw, 0-100 brightness and gain, the camera's own units for the rest). A pipeline
++     * value of -1 ("camera default") shows the camera's current value.
++     */
++    public static Map<String, double[]> controls(VisionModule m) {
++        Map<String, double[]> out = new LinkedHashMap<>();
++        CVPipelineSettings ps = m.getCurrentPipelineSettings();
++        var s = m.getCameraSettables();
++        out.put("exposure", new double[] {s.getMinExposureRaw(), s.getMaxExposureRaw(), ps.cameraExposureRaw, ps.cameraExposureRaw});
++        if (m.hasGainControl()) out.put("gain", new double[] {0, 100, 50, Math.max(0, ps.cameraGain)});
++        out.put("brightness", new double[] {0, 100, 50, ps.cameraBrightness});
++        for (var c : s.getExtraControls()) {
++            String key = switch ((String) c.get("key")) {
++                case "cameraContrast" -> "contrast";
++                case "cameraGamma" -> "gamma";
++                case "cameraSharpness" -> "sharpness";
++                case "cameraBacklightCompensation" -> "backlight";
++                default -> null;
++            };
++            if (key == null) continue;
++            double min = ((Number) c.get("min")).doubleValue(), max = ((Number) c.get("max")).doubleValue();
++            if (max <= min) continue;
++            out.put(key, new double[] {min, max, ((Number) c.get("default")).doubleValue(), ((Number) c.get("value")).doubleValue()});
++        }
++        return out;
++    }
++
++    /** Sets one control in the camera's pipeline in use, applies it and saves (as the Input tab does). */
++    public static void setControl(VisionModule m, String control, double v) {
++        CVPipelineSettings ps = m.getCurrentPipelineSettings();
++        int iv = (int) Math.round(v);
++        switch (control) {
++            case "exposure" -> {
++                ps.cameraAutoExposure = false;
++                ps.cameraExposureRaw = v;
++            }
++            case "gain" -> ps.cameraGain = iv;
++            case "brightness" -> ps.cameraBrightness = iv;
++            case "contrast" -> ps.cameraContrast = iv;
++            case "gamma" -> ps.cameraGamma = iv;
++            case "sharpness" -> ps.cameraSharpness = iv;
++            case "backlight" -> ps.cameraBacklightCompensation = iv;
++            default -> throw new IllegalArgumentException("Unknown control " + control);
++        }
++        m.reapplyPipelineCameraSettings();
++        m.saveAndBroadcastAll();
++    }
++
++    /** Whether this camera is being tuned now (manual changes would fight the sweep). */
++    public boolean tuning(String camera) {
++        return running && active.containsKey(camera);
++    }
++
 +    private static double[] centre(double[] c) {
 +        return new double[] {(c[0] + c[2] + c[4] + c[6]) / 4, (c[1] + c[3] + c[5] + c[7]) / 4};
 +    }
 +
-+    private final Map<String, Cam> cams = new TreeMap<>();
++    private final Map<String, Cam> cams = new TreeMap<>(); // every camera's last tuning, kept for "apply"
++    private final Map<String, Cam> active = new TreeMap<>(); // the cameras being tuned now
 +    private volatile boolean running = false;
 +    private volatile boolean cancel = false;
 +    private volatile boolean sampling = false;
@@ -1970,15 +2260,25 @@ index 00000000..5a2c366b
 +        cancel = true;
 +    }
 +
-+    /** Starts the sweep on every camera that has an AprilTag pipeline running. */
-+    public synchronized void start() {
-+        if (running) return;
-+        cams.clear();
++    /**
++     * Starts the sweep on one camera ({@code only}), or on every running camera if null. Each
++     * camera's results are kept until it's tuned again, so cameras can be tuned one at a time, the
++     * robot turned in between so each faces tags.
++     */
++    public synchronized void start(String only, Map<String, ? extends java.util.Collection<String>> locked) {
++        if (running) throw new IllegalStateException("Tuning is already running");
++        active.clear();
 +        for (var m : VisionSourceManager.getInstance().vmm.getModules()) {
 +            if (!m.getEnabled()) continue;
-+            cams.put(m.getNickname(), new Cam(m));
++            if (only != null && !only.isEmpty() && !only.equals(m.getNickname())) continue;
++            var c = new Cam(m);
++            if (locked != null && locked.get(c.name) != null) c.locked = Set.copyOf(locked.get(c.name));
++            active.put(c.name, c);
++            cams.put(c.name, c);
 +        }
-+        if (cams.isEmpty()) throw new IllegalStateException("No cameras running");
++        if (active.isEmpty()) {
++            throw new IllegalStateException(only == null || only.isEmpty() ? "No cameras running" : "No running camera named " + only);
++        }
 +        running = true;
 +        cancel = false;
 +        moved = false;
@@ -1991,7 +2291,7 @@ index 00000000..5a2c366b
 +    /** Every pipeline result of every camera, while the sweep runs. */
 +    public void onResult(String camera, CVPipelineResult r) {
 +        if (!sampling) return;
-+        var c = cams.get(camera);
++        var c = active.get(camera);
 +        if (c == null) return;
 +        var s = new Sample();
 +        for (var t : r.targets) {
@@ -2027,7 +2327,7 @@ index 00000000..5a2c366b
 +    }
 +
 +    private void collect(long ms) throws InterruptedException {
-+        for (var c : cams.values()) {
++        for (var c : active.values()) {
 +            synchronized (c) {
 +                c.samples.clear();
 +            }
@@ -2041,9 +2341,9 @@ index 00000000..5a2c366b
 +        try {
 +            List<String> order = List.of("exposure", "gain", "brightness", "contrast", "gamma", "sharpness", "backlight");
 +            // Baseline: the camera as it is.
-+            phase = "Measuring the cameras as they are";
++            phase = "Measuring the camera" + (active.size() > 1 ? "s" : "") + " as set now";
 +            collect(BASELINE_MS);
-+            for (var c : cams.values()) {
++            for (var c : active.values()) {
 +                Map<Integer, Integer> count = new HashMap<>();
 +                Map<Integer, double[]> sum = new HashMap<>();
 +                synchronized (c) {
@@ -2066,17 +2366,16 @@ index 00000000..5a2c366b
 +                if (c.baselineTags.isEmpty()) c.problem = "no tags in view: turn the robot so this camera sees tags";
 +                c.baseline = c.measure("baseline", 0);
 +            }
-+            cams.values().removeIf(c -> !c.problem.isEmpty() && keepProblem(c));
 +            stepsTotal = 0;
-+            for (var c : cams.values()) stepsTotal = Math.max(stepsTotal, plannedSteps(c, order));
++            for (var c : active.values()) stepsTotal = Math.max(stepsTotal, plannedSteps(c, order));
 +            stepsDone = 0;
 +
 +            for (String control : order) {
 +                if (cancel || moved) break;
 +                // Every camera's values for this control; cameras without it just hold.
 +                Map<Cam, List<Double>> values = new LinkedHashMap<>();
-+                for (var c : cams.values()) {
-+                    if (!c.problem.isEmpty() || !c.ranges.containsKey(control)) continue;
++                for (var c : active.values()) {
++                    if (!c.problem.isEmpty() || !c.ranges.containsKey(control) || c.locked.contains(control)) continue;
 +                    values.put(c, candidates(c, control));
 +                }
 +                int n = values.values().stream().mapToInt(List::size).max().orElse(0);
@@ -2103,13 +2402,14 @@ index 00000000..5a2c366b
 +                }
 +                if (!values.isEmpty()) Thread.sleep(SETTLE_MS);
 +            }
-+            boolean anyTags = cams.values().stream().anyMatch(c -> c.problem.isEmpty());
++            boolean anyTags = active.values().stream().anyMatch(c -> c.problem.isEmpty());
 +            result = moved
 +                    ? "The robot moved: hold it still and tune again."
 +                    : cancel
 +                            ? "Stopped."
 +                            : !anyTags
-+                                    ? "No camera sees tags here: turn or move the robot so every camera sees tags, near and far, then tune again."
++                                    ? (active.size() > 1 ? "No camera sees" : "This camera doesn't see")
++                                            + " tags here: turn the robot so it faces tags, near and far, then tune again."
 +                                    : "Done.";
 +        } catch (InterruptedException e) {
 +            result = "Stopped.";
@@ -2118,29 +2418,28 @@ index 00000000..5a2c366b
 +            result = "Tuning failed: " + e.getMessage();
 +        } finally {
 +            sampling = false;
++            for (var c : active.values()) {
++                c.outcome = moved ? "The robot moved: hold it still and tune again." : cancel ? "Stopped." : c.problem.isEmpty() ? "Done." : c.problem;
++            }
 +            // Back to the pipelines' own settings; "apply" is separate.
-+            for (var c : cams.values()) {
++            for (var c : active.values()) {
 +                try {
 +                    c.module.reapplyPipelineCameraSettings();
 +                } catch (Exception e) {
 +                    logger.warn("Field calibration: couldn't restore " + c.name + "'s settings: " + e.getMessage());
 +                }
 +            }
-+            if (moved || cancel) for (var c : cams.values()) c.recommended.clear();
++            if (moved || cancel) for (var c : active.values()) c.recommended.clear();
 +            phase = "";
 +            running = false;
 +            logger.info("Field calibration: settings tuning " + result);
 +        }
 +    }
 +
-+    private static boolean keepProblem(Cam c) {
-+        return false; // keep cameras with problems in the report, just don't sweep them
-+    }
-+
 +    private int plannedSteps(Cam c, List<String> order) {
 +        int n = 0;
 +        if (!c.problem.isEmpty()) return 0;
-+        for (String k : order) if (c.ranges.containsKey(k)) n += candidates(c, k).size();
++        for (String k : order) if (c.ranges.containsKey(k) && !c.locked.contains(k)) n += candidates(c, k).size();
 +        return n;
 +    }
 +
@@ -2220,11 +2519,12 @@ index 00000000..5a2c366b
 +        return cur;
 +    }
 +
-+    /** Writes the recommendations into each camera's pipeline in use, and saves. */
-+    public synchronized List<String> apply() {
++    /** Writes one camera's recommendations (or every camera's, if null) into its pipeline in use, and saves. */
++    public synchronized List<String> apply(String only) {
 +        if (running) throw new IllegalStateException("Tuning is still running");
 +        List<String> changed = new ArrayList<>();
 +        for (var c : cams.values()) {
++            if (only != null && !only.isEmpty() && !only.equals(c.name)) continue;
 +            if (c.recommended.isEmpty()) continue;
 +            CVPipelineSettings ps = c.module.getCurrentPipelineSettings();
 +            for (var e : c.recommended.entrySet()) {
@@ -2262,6 +2562,9 @@ index 00000000..5a2c366b
 +        for (var c : cams.values()) {
 +            Map<String, Object> e = new LinkedHashMap<>();
 +            e.put("problem", c.problem);
++            e.put("outcome", c.outcome);
++            e.put("tuning", running && active.containsKey(c.name));
++            e.put("locked", c.locked);
 +            e.put("baselineTags", c.baselineTags);
 +            e.put("baseline", c.baseline);
 +            Map<String, Object> orig = new LinkedHashMap<>();
@@ -2287,10 +2590,10 @@ index 00000000..5a2c366b
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java b/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java
 new file mode 100644
-index 00000000..db08a9a6
+index 00000000..1f53509a
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java
-@@ -0,0 +1,557 @@
+@@ -0,0 +1,623 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -2661,22 +2964,66 @@ index 00000000..db08a9a6
 +
 +    // ---- camera settings tuning
 +
-+    public synchronized void tune() {
++    /**
++     * Tunes one camera's settings, or every camera's if {@code camera} is null. {@code locked}:
++     * per camera, the controls to leave as they are.
++     */
++    public synchronized void tune(String camera, Map<String, List<String>> locked) {
 +        if (state == State.RECORDING) throw new IllegalStateException("Stop recording first");
-+        tuner.start();
++        if (state == State.SOLVING) throw new IllegalStateException("A solve is running");
++        tuner.start(camera, locked);
++    }
++
++    /** A manual change from the page: one control of one camera's pipeline in use. */
++    public void setControl(String camera, String control, double value) {
++        var m = module(camera);
++        if (tuner.tuning(camera)) throw new IllegalStateException(camera + " is being tuned: wait, or stop the tuning");
++        CameraSettingsTuner.setControl(m, control, value);
++    }
++
++    private static org.photonvision.vision.processes.VisionModule module(String camera) {
++        for (var m : org.photonvision.vision.processes.VisionSourceManager.getInstance().vmm.getModules()) {
++            if (m.getNickname().equals(camera)) return m;
++        }
++        throw new IllegalArgumentException("No camera named " + camera);
 +    }
 +
 +    public void cancelTune() {
 +        tuner.cancel();
 +    }
 +
-+    public List<String> applyTuning() {
-+        return tuner.apply();
++    public List<String> applyTuning(String camera) {
++        return tuner.apply(camera);
++    }
++
++    // ---- preview: what each camera sees right now, while the page is open
++
++    private static final long PREVIEW_NS = 250_000_000L;
++    private volatile long lastPollNs = 0;
++    private final Map<String, Map<String, Object>> preview = new java.util.concurrent.ConcurrentHashMap<>();
++    private final Map<String, Long> previewNs = new java.util.concurrent.ConcurrentHashMap<>();
++
++    private void previewSample(String camera, CVPipelineResult result, long now) {
++        Long last = previewNs.get(camera);
++        if (last != null && now - last < PREVIEW_NS) return;
++        previewNs.put(camera, now);
++        Map<String, Double> margins = new TreeMap<>();
++        for (var t : result.targets) {
++            if (t.getFiducialId() >= 0) margins.put(Integer.toString(t.getFiducialId()), (double) Math.round(t.getDecisionMargin()));
++        }
++        Map<String, Object> m = new LinkedHashMap<>();
++        m.put("margins", margins);
++        m.put("ageMs", 0);
++        m.put("ns", now);
++        preview.put(camera, m);
 +    }
 +
 +    /** Called with every pipeline result of every camera; cheap unless recording or tuning. */
 +    public void onResult(String camera, CVPipelineResult result) {
 +        if (tuner.running()) tuner.onResult(camera, result);
++        if (lastPollNs != 0 && System.nanoTime() - lastPollNs < 5_000_000_000L) {
++            previewSample(camera, result, System.nanoTime());
++        }
 +        if (state != State.RECORDING) return;
 +        long now = System.nanoTime();
 +        synchronized (this) {
@@ -2769,6 +3116,14 @@ index 00000000..db08a9a6
 +
 +    public synchronized Map<String, Object> status() {
 +        long now = System.nanoTime();
++        lastPollNs = now; // the page is open: keep the preview going
++        Map<String, Object> pv = new TreeMap<>();
++        preview.forEach((cam, m) -> {
++            var copy = new LinkedHashMap<>(m);
++            copy.put("ageMs", (now - (long) m.get("ns")) / 1_000_000);
++            copy.remove("ns");
++            pv.put(cam, copy);
++        });
 +        Map<String, Object> m = new LinkedHashMap<>();
 +        m.put("state", state.name());
 +        m.put("session", session);
@@ -2811,6 +3166,20 @@ index 00000000..db08a9a6
 +        m.put("cameraSpots", cameraSpots);
 +        m.put("solveLog", new ArrayList<>(solveLog));
 +        m.put("tuning", tuner.status());
++        Map<String, Object> controls = new TreeMap<>();
++        for (var mod : org.photonvision.vision.processes.VisionSourceManager.getInstance().vmm.getModules()) {
++            try {
++                Map<String, Object> c = new LinkedHashMap<>();
++                CameraSettingsTuner.controls(mod).forEach((k, v) -> c.put(k, Map.of("min", v[0], "max", v[1], "default", v[2], "value", v[3])));
++                c.put("pipelineIndex", mod.getCurrentPipelineIndex());
++                c.put("autoExposure", mod.getCurrentPipelineSettings().cameraAutoExposure);
++                controls.put(mod.getNickname(), c);
++            } catch (Exception e) {
++                // camera unplugged: its controls come back on the next poll
++            }
++        }
++        m.put("controls", controls);
++        m.put("preview", pv);
 +        m.put("robotMounts", robotMounts());
 +        m.put("robotConnected", NetworkTablesManager.getInstance().getNTInst().isConnected());
 +        m.put("cameras", CameraSettingsPublisher.snapshots());
@@ -2988,7 +3357,7 @@ index 74899398..d6d2618d 100644
          return m_poseAmbiguity;
      }
 diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
-index 77cf5ff7..1210c880 100644
+index 77cf5ff7..c8e67084 100644
 --- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 +++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 @@ -53,6 +53,7 @@ import org.photonvision.common.hardware.Platform;
@@ -2999,13 +3368,19 @@ index 77cf5ff7..1210c880 100644
  import org.photonvision.rewind.RewindManager;
  import org.photonvision.common.util.ShellExec;
  import org.photonvision.common.util.TimedTaskManager;
-@@ -595,6 +596,100 @@ public class RequestHandler {
+@@ -595,6 +596,114 @@ public class RequestHandler {
          }
      }
  
 +    // ---- SpectrumJetson (photonvision-30): field calibration page
 +
-+    private record FieldCalRequest(String action, String session) {}
++    private record FieldCalRequest(
++            String action,
++            String session,
++            String camera,
++            String control,
++            Double value,
++            Map<String, List<String>> locked) {}
 +
 +    /** GET /api/fieldcal: state, live guidance, solve progress, recordings and results. */
 +    public static void onFieldCalStatusRequest(Context ctx) {
@@ -3023,9 +3398,11 @@ index 77cf5ff7..1210c880 100644
 +
 +    /**
 +     * POST /api/fieldcal {"action": "start" | "stop" | "solve" | "cancel" | "tune" | "cancelTune" |
-+     * "applyTuning" | "apply" | "undo", "session": name}. "tune" steps every camera through its
-+     * settings with the robot still; "applyTuning" writes the recommendations into each camera's
-+     * pipeline in use. "apply" puts a solve's corrected layout into PhotonVision (after saving the
++     * "applyTuning" | "setControl" | "apply" | "undo", "session": name, "camera": nickname, "control",
++     * "value", "locked": {camera: [control]}}. "tune" steps one camera ("camera"), or every camera,
++     * through its settings with the robot still, leaving the "locked" controls alone; "applyTuning"
++     * writes that camera's (or every camera's) recommendations into its pipeline in use;
++     * "setControl" sets one control by hand. "apply" puts a solve's corrected layout into PhotonVision (after saving the
 +     * current one) and restarts; "undo" puts back the layout saved by the last apply.
 +     */
 +    public static void onFieldCalActionRequest(Context ctx) {
@@ -3040,9 +3417,15 @@ index 77cf5ff7..1210c880 100644
 +                    else fc.stopAndSolve();
 +                }
 +                case "cancel" -> fc.cancelSolve();
-+                case "tune" -> fc.tune();
++                case "tune" -> fc.tune(req.camera(), req.locked());
++                case "setControl" -> {
++                    if (req.camera() == null || req.control() == null || req.value() == null) {
++                        throw new IllegalArgumentException("setControl needs camera, control and value");
++                    }
++                    fc.setControl(req.camera(), req.control(), req.value());
++                }
 +                case "cancelTune" -> fc.cancelTune();
-+                case "applyTuning" -> fc.applyTuning();
++                case "applyTuning" -> fc.applyTuning(req.camera());
 +                case "apply", "undo" -> {
 +                    Path layout;
 +                    if (req.action().equals("apply")) {

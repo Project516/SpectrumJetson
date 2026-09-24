@@ -773,7 +773,20 @@ on the Jetson. The user guide is in the README; how the solver works is in
   - **Apply:** saves the layout in use to `/opt/photonvision/fieldcal/layout-backups/`, then loads
     the corrected layout the way an uploaded layout is loaded, and restarts.
   - **Undo:** loads the newest backup and deletes it.
-- **Settings tuner:** `CameraSettingsTuner`, run with the robot still.
+- **Settings tuner:** `CameraSettingsTuner`, run with the robot still, on one camera or on all.
+  - **Per camera:** each camera's last results are kept until it's tuned again, and **apply**
+    works per camera, so the robot can be turned so each camera faces tags in turn.
+  - **Locks:** locked controls (`"locked": {camera: [control]}` in the tune request) are skipped
+    and left as they are. The page remembers the ticks in the browser.
+  - **By hand:** `setControl` writes one control into the pipeline in use, applies it and saves,
+    as the Input tab does. -1 restores the camera's default for contrast, gamma, sharpness and
+    backlight. It's refused while that camera is being tuned.
+  - **Preview:** while the page is being polled (within 5 s), every camera's result consumer
+    records the tags in view and their decision margins, 4 times a second, for the per-camera
+    cards. The page also shows each camera's processed stream.
+  - **Checked on the bench:** a manual contrast of 40 reached the camera (`v4l2-ctl`: 40), and -1
+    put back the default (32) and the saved pipeline's -1; a locked single-camera tune ran on
+    TopLeft alone.
   - **Baseline:** the tags each camera finds in at least 60% of frames over 1.5 s.
   - **Each setting:** 0.4 s to settle, then 0.9 s of frames. It records, for the baseline tags,
     how often each is found, the mean decision margin (`TrackedTarget.getDecisionMargin()`, new)
