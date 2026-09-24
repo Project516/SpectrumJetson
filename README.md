@@ -6,9 +6,25 @@ vision coprocessor: what we built, why, and how to redo it. The detailed technic
 
 *Last updated September 24, 2026.*
 
+## Headlines
+
+Measured on the bench:
+
+- **2 AprilTag cameras at 120 fps each, full resolution (1280x800), about 15 ms latency, using about 25% of the CPU.** The GPU finds the tags in about 2 ms per frame.
+- **Set up for 4 AprilTag cameras** on the USB-A ports, with more on a USB-C hub.
+- **Game-piece detection at 30 fps alongside the AprilTag cameras,** with no measurable slowdown to them (76 fps if uncapped).
+- **Rewind:** robot code can record every camera at 30 fps, for 3% of one core, and you can download the recordings from the web UI.
+- **Accurate timing:** frames are timestamped at mid-exposure and synced to the robot's clock.
+- **Match-ready:**
+  - detecting tags about 20 s after power-on
+  - an unplugged camera is back in about 1 s
+  - survives power cuts
+  - restarts itself after errors
+- **Works with stock PhotonLib** on a SystemCore (2027 alpha-2).
+
 ## Overview
 
-We turned an NVIDIA Jetson Orin Nano Super into a vision coprocessor that finds AprilTags on its GPU. It runs two cameras at their full 120 frames per second each, with about 15 ms of latency and 1.3 of its 6 CPU cores, and it's set up for four. It also records every camera's video on request (Rewind) and can detect game pieces with a YOLO model on the GPU. It will run on team 8515's robot at the October 2026 off-season event.
+We turned an NVIDIA Jetson Orin Nano Super into a vision coprocessor that finds AprilTags on its GPU, for team 8515's robot at the October 2026 off-season event.
 
 The robot controller is a SystemCore running 2027 alpha-6 robot code. The Jetson runs PhotonVision, the same software many FRC teams use on an Orange Pi. Ours is a special version that sends the AprilTag math to the GPU using a detector written by FRC team 971. The robot code talks to it through PhotonLib over NetworkTables, like any other PhotonVision camera.
 
@@ -290,7 +306,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results, Rewind's robot-clock timestamps, the Jetson's date from the robot)
 - [ ] Turn off Wi-Fi for competition (Bluetooth is already off)
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
-- [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
+- [ ] Check temperatures with the Jetson mounted on the robot (44 °C on the bench with the fan at full speed)
 - [x] Decode speedup: both cameras at 122 fps, 13 ms latency, 1.3 of 6 CPU cores
 - [x] Upstream PhotonVision v2026.3.4 fixes, `setEnabled()` support, OpenCV leak fixes (`docs/UPSTREAM-PORT.md`)
 - [x] Frame timestamps moved to mid-exposure (`photonvision-13`); the camera's own delay is still to be measured with the robot spin test
@@ -300,7 +316,9 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] USB bandwidth: capped camera driver so 4 cameras fit on USB-A (alt 7, tested with 2: 122 fps, no bad frames)
 - [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
-- [ ] Take a full backup image of the SSD, including PhotonVision's settings (`scripts/host/04-backup-ssd.sh`), and clone a spare SSD from it (`05-restore-ssd.sh`)
+- [x] Full backup image of the SSD with PhotonVision's settings (`scripts/host/04-backup-ssd.sh`: 8.7 GB, 7 min). Keep it on the team drive, never GitHub (it holds the Wi-Fi password and SSH keys)
+- [x] GitHub release [v2026.09.24](https://github.com/Spectrum3847/SpectrumJetson/releases/tag/v2026.09.24): the PhotonVision jar, TensorRT backend, camera driver and settings
+- [ ] Clone a spare SSD from the backup (`scripts/host/05-restore-ssd.sh`)
 
 **Next season:** faster CSI (ribbon-cable) cameras would skip the USB and MJPEG decoding and could reach 120+ fps. That's the setup Austin's AOS system is built around. For October, this USB setup is the right one.
 
