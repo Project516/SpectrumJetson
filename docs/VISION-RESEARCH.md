@@ -121,8 +121,9 @@ PhotonVision 2027.
   - Porting it means leaving out its `messages.yaml` change, which would break the wire format.
   - Its `speedup` branch only reconfigures the detector when settings change; that part is cheap
     to take.
-- **frc971 cos** decodes MJPEG with the Jetson's hardware JPEG decoder (`NvJPEGDecoder`). Not
-  needed now that CPU decode is 2.6 ms, but it's the reference if we ever are.
+- **frc971 cos** decodes MJPEG with the Jetson's hardware JPEG decoder, through NVIDIA's
+  `NvJPEGDecoder` class, which calls `exit()` on a bad JPEG. We built our own (see Jetson-specific
+  findings).
 - **STEM-Alliance and joelamaldas forks** duplicate what we already have, including recording.
 - **PhotonLib alpha-2 already has `PhotonCamera.setEnabled()`**
   ([#2484](https://github.com/PhotonVision/photonvision/pull/2484)), but our 2026-based
@@ -198,8 +199,11 @@ PhotonVision 2027.
   - **PhotonVision still wants a full-size image for the stream.** It shrinks every frame to
     213x133 for the dashboard, with no fps cap, even when no one is watching (~0.3 ms a frame).
     The direct path would give the stream its own small image instead.
-  - With 4 cameras it would free about a core. Next season, as an opt-in with libjpeg-turbo as
-    the fallback. The colour game-piece camera gains most: cscore's colour decode is 8.9 ms.
+  - **Built and on (2026-09-24), see [TECHNICAL.md](TECHNICAL.md).** With 2 cameras, PhotonVision
+    fell from 0.85 to 0.52 cores. libjpeg-turbo decodes any frame the hardware can't, and one
+    frame per camera every ~2 s is checked pixel for pixel against it. Still to do: the detector
+    reading the decoder's buffer directly, and the colour game-piece camera, which gains most
+    (cscore's colour decode is 8.9 ms).
 - **Tag range: the GPU detector looks for tags on a half-size image.** It finds tag outlines at
   640x400, then refines the corners and reads the ID at full size, so found tags keep full
   accuracy. The half size is hard-wired (`CHECK_EQ(quad_decimate, 2)`). Tested 2026-09-24: 40
@@ -268,14 +272,14 @@ localizer).
 |---|---|---|---|
 | **Logging that starts itself.** Every camera's raw MJPEG from enable to 10 s after disable, named by event and match from FMS, in 5 s chunks, stopping below 50 GB free. 254 does the same from the `/AdvantageKit/DriverStation` topics our robot code already publishes. | `frc/vision/image_logger.cc` | **High / high** | Rewind already records. Starting on enable and naming by match is a small change, and no match gets missed. |
 | **Replay:** logged frames run back through the real detector, with MCAP output for Foxglove | `image_replay.cc`, bos `src/camera/disk_camera.cc` | Med / **high** | Tune thresholds and regression-test patches on real match footage. |
-| **Edge rejection:** drop a tag if any corner is within 25 px of the image edge | `frc/orin/gpu_apriltag.cc` | **High / high** | Tags cut off by the edge, where distortion is worst, give the worst poses. A few lines in our pipeline. |
+| **Edge rejection:** drop a tag if any corner is within 25 px of the image edge (`--pixel_border`; the code default is 50) | `frc/orin/gpu_apriltag.cc` | Med / med, **as a robot-side trust falloff** | Distortion is strongest and calibration weakest near the edge, and tags there are often cut off. A hard drop throws away ~10% of the image, so we'll trust edge tags less on the robot instead, with tunable dials (issue #10, 8b). No Jetson change. |
 | Minimum decision margin **50** (ours is 15, team-tuned at 5 ms) | same | Med / med | A data point for field tuning. Check false positives in Rewind footage before choosing. |
 | Frames older than 55 ms dropped instead of queued | same | Low / med | Keeps latency bounded if the Jetson is overloaded. |
 | **Noise per detection:** how far undistortion moved the corners, pose-error ratio, noise growing with distance, per-tag trust, counters for 10 rejection reasons | `swerve_localizer/localizer.cc`, `status.fbs` | Med / high | Robot-side, from PhotonLib's corners (issue #10). |
 | **Health telemetry:** temperatures, fan, power rails every 5 s; good/failed JPEG decodes per camera; free disk | `frc/orin/hardware_monitor.cc`, `turbojpeg_decoder_status.fbs` | Med / med | A failed-decode count would catch frames the bandwidth cap cuts short. |
 | **Camera-mount calibration from data:** spin the robot between two ChArUco diamond targets | `calibrate_multi_cameras_lib.cc`, [971's procedure](https://github.com/frc971/971-Robot-Code/blob/master/y2024/vision/README.md) | Med / high | Measured robot-to-camera transforms beat CAD numbers. |
 | **Field tag map from logs** (Ceres solve) | `target_mapper.cc` | Low / med | WPILib's [WPIcal](https://docs.wpilib.org/en/stable/docs/software/wpilib-tools/wpical/index.html) measures tag positions from video, so Rewind footage could feed it. |
-| Hardware JPEG decode | see above | Low / med | Frees about a core with 4 cameras. Only one way of calling it gives the right frames. |
+| Hardware JPEG decode | see above | **Done** | On since 2026-09-24 ([TECHNICAL.md](TECHNICAL.md)). Only one way of calling it gives the right frames. |
 | Live focus score while turning the lens | bos `src/calibration/focus_calibrate.cc` | Med / low | Cheap, and a sharper image helps every tag. |
 | USB interrupt pinning, real-time priorities | | Low / low | Less jitter, but risky a month out. |
 | Exposure set by alliance side | `field_side_exposure_adjuster.cc` | Low / low | It's effectively off in their config. |
@@ -358,7 +362,7 @@ What an ideal system has that ours doesn't yet, roughly in order of value for ef
    automatically, instead of warning.
 4. **Quality metadata on every tag,** so the robot can weigh each one: distance from the image
    edge, how far undistortion moved the corners, reprojection error, decision margin.
-   - Tags near the edge are dropped on the Jetson.
+   - Tags near the edge are trusted less, on a tunable curve (robot side).
    - The robot chooses which tags to trust.
 5. **Health in the robot log:** temperatures, fps, failed decodes, USB resets and free disk, as
    dashboard alerts. Today it's an SSH script.
@@ -372,7 +376,8 @@ What an ideal system has that ours doesn't yet, roughly in order of value for ef
 9. **Cameras exposing at the same instant** (hardware trigger), so observations from different
    cameras share one timestamp. Needs cameras with a trigger input.
 10. **A joint multi-camera solve** that uses the gyro: all cameras' corners in one fit.
-11. **Hardware JPEG decode,** to free CPU for more cameras.
+11. **Hardware JPEG decode,** to free CPU for more cameras. Done for the gray cameras; the colour
+    camera is next.
 12. **A reproducible image built from source** (Yocto or similar), instead of a configured stock
     image. Our backups make this the least urgent.
 
@@ -407,7 +412,7 @@ easy, and it's worth benchmarking.
 **Before October (cheap):**
 1. Test 3–4 cameras when they arrive (`tests/perf-snapshot.sh`).
 2. Rewind auto-start on enable, named by event and match (robot half: issue #10).
-3. Drop tags with a corner within 25 px of the image edge.
+3. Trust tags less as they near the image edge, on the robot (issue #10, 8b), instead of dropping them on the Jetson.
 4. Reset a stuck camera's USB port automatically.
 5. Per-camera failed-decode counts and temperatures in NetworkTables.
 6. The calibration and event routine above. Rerun `tests/flicker-check` under the event lights.
@@ -417,7 +422,8 @@ easy, and it's worth benchmarking.
 **Next season:**
 - A replay tool for Rewind recordings.
 - Camera-mount calibration and field mapping from data.
-- Hardware JPEG decode.
+- Hardware JPEG decode, the rest: the detector reading the decoder's buffer directly, and the
+  colour camera.
 - Full-size tag search for range, if the robot code will use far tags (see Jetson-specific
   findings).
 - A joint or heading-constrained solve (Whacknet, bos).
@@ -434,3 +440,4 @@ easy, and it's worth benchmarking.
 - game pieces with TensorRT (patch 14)
 - the USB bandwidth cap
 - mid-exposure timestamps (patch 13)
+- hardware JPEG decode (NVJPG), with libjpeg-turbo as the fallback

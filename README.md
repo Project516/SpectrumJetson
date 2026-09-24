@@ -102,7 +102,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | --- | --- | --- | --- | --- |
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
-| 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. |
+| 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance); leave it out to decode on the CPU. |
 | 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–14. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 | 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
 | 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
@@ -131,6 +131,7 @@ None of this code was written for our exact setup, so we found and fixed several
 | Missing Device Control card | PhotonVision used a brand-new browser feature (`Intl.DurationFormat`) to format the uptime. Firefox 130 doesn't have it, so the whole card, including the Restart button, disappeared. | Check for the feature and fall back (`photonvision-03`). Also: keep your browser updated. |
 | Truncated jar | A deploy copied a 228 KB piece of a 76 MB jar. PhotonVision couldn't start, and systemd gave up after 5 tries. | The install script now refuses invalid jars and keeps the previous working one. |
 | Colour decode hiding in cscore | Asking cscore for grayscale frames still decoded each JPEG to full colour first, then converted it: 8.9 ms a frame, most of a CPU core per camera. | We decode the camera's JPEG straight to gray in our detector library (`photonvision-09`): 2.6 ms. Both cameras went to 122 fps and CPU fell from 3.3 to 1.3 cores. |
+| Frozen frames from the JPEG hardware | The Jetson has hardware for decoding JPEGs. The obvious way of calling NVIDIA's library, the way another FRC codebase does it, returned the *first* frame over and over, and reported success every time. A speed test looked great. | We found it by checking every decoded frame against the CPU decoder, pixel for pixel. We call the library differently now (`detector/NvJpgDecoder.cc`), and while running, one frame per camera every 2 s is re-decoded on the CPU and compared. Any difference switches the hardware off (`tests/jpeg-hw/run.sh` repeats the full check). |
 | Lens model cut short | Calibration produces 8 lens-distortion numbers, but the fork only passed the first 5 to the CUDA detector. The detector uses them to straighten tag edges when it refines corners, so corners near the image edges came out slightly wrong. | A new `setparams8` call passes all 8 (`photonvision-04` + `detector/`). The log now shows "(8 dist coeffs)" for each camera. |
 
 **Lesson:** check results by *measuring*, not by assuming. The truncated-jar bug happened partly because we trusted a log line from the *old* process. Now every check looks at the running process's own ID.
@@ -148,6 +149,7 @@ We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. Th
 | Two cameras, all of the above | 92 and 104 | ~23 ms | Used 3.3 of 6 CPU cores |
 | **Decode the JPEG straight to gray ourselves** (`photonvision-09`) | **122 each** | **13 ms** | cscore was secretly decoding every frame to full colour, then converting (8.9 ms a frame). Our decoder does gray only (2.6 ms). |
 | OpenCV's worker threads sleep instead of spin (tuning step 9) | 122 each | 13 ms | 2 cameras now use **1.3 of 6 cores**, down from 3.3 |
+| **Decode JPEGs on the Jetson's JPEG hardware** (`--jpeg nvjpg`) | 122 each | not measured | On the same bench scene, back to back: PhotonVision went from 0.85 to **0.52 cores**. The hardware takes ~2.6 ms a frame whatever the scene; the CPU decoder is faster on plain scenes and slower on busy ones. |
 
 **Exposure units are a trap.** USB cameras count exposure in the UVC standard's **100 µs units**, so 295 means 29.5 ms, not 0.3 ms, and stock PhotonVision doesn't say so. We only found this by reading the camera's control directly with `v4l2-ctl`. Our build now shows milliseconds on the slider, e.g. "Exposure (5.0 ms)" (`photonvision-10`).
 
@@ -157,7 +159,7 @@ We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. Th
 
 **Measure before optimizing.** We added a once-per-second stats line to the detector (calls per second, milliseconds per frame, tags per frame, decision margin). It showed right away that the GPU was idle and the camera pipeline was the problem, which saved us from optimizing the wrong thing.
 
-**More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), so 4 cameras should fit. The limit was **USB bandwidth**. With the stock driver each camera reserves ~196 Mbps whatever mode it runs, and a USB 2.0 root port holds two. All four USB-A ports share one root port, so only 2 cameras fit there.
+**More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), and less with the JPEG hardware, so 4 cameras should fit. The limit was **USB bandwidth**. With the stock driver each camera reserves ~196 Mbps whatever mode it runs, and a USB 2.0 root port holds two. All four USB-A ports share one root port, so only 2 cameras fit there.
 
 We fixed that with a patched camera driver (`scripts/jetson/11-uvcvideo-payload-cap.sh`). It caps the Thriftiest Cam's reservation at 82 Mbps (UVC alternate setting 7), still about 1.4x the largest frame we've measured at 120 fps. Now **4 cameras fit on the USB-A ports**, and a hub in the USB-C port adds a second root port for more (tested: 121 fps there). Tested with 2 cameras: 122 fps each, every frame complete. The cost: a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so results reach the robot ~2 ms later. It does **not** make timestamps less accurate: the driver stamps a frame when its *first* USB packet arrives. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
 
@@ -282,7 +284,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 | Robot code throws about a PhotonLib version or message mismatch | Robot PhotonLib upgraded past alpha-6 | Keep `photonlib v2027.0.0-alpha-2`. |
 | Gradle build fails with a PKIX/SSL error | The shop network's filter blocked `frcmaven.wpi.edu` | Use another network, or get it allowlisted. |
 
-**Checking on it:** run `scripts/jetson/health-check.sh` for a readiness report. `journalctl -u photonvision -f` shows PhotonVision's live log on the Jetson. The `971 stats` lines show frames per second, detection time and decision margin for each camera.
+**Checking on it:** run `scripts/jetson/health-check.sh` for a readiness report. `journalctl -u photonvision -f` shows PhotonVision's live log on the Jetson. The `971 stats` lines show frames per second, detection time and decision margin for each camera. The `971 jpeg` lines (every 10 s) show which JPEG decoder is running and how its checks went.
 
 ## Where everything lives, and what's left
 
@@ -293,7 +295,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 | `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), back up and restore the SSD (04, 05), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
 | `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), install a YOLO model (12), plus `health-check.sh` |
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
-| `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoder and TensorRT object detector) |
+| `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoders, CPU and hardware, and the TensorRT object detector) |
 | `kernel/` | Our patch to Linux's USB camera driver (bandwidth cap), built by `11-uvcvideo-payload-cap.sh` |
 | `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test, flicker check, CPU profiler, performance snapshot |
 | `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, the upstream PhotonVision port, the game-piece models, and the original handoff document that started the project |
@@ -326,7 +328,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
 - [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
-- [ ] Cheap wins from other teams' systems: Rewind starting itself on enable and named by match, dropping tags at the image edge, auto-resetting a stuck camera (same doc)
+- [ ] Cheap wins from other teams' systems: Rewind starting itself on enable and named by match, auto-resetting a stuck camera (same doc). Robot-side items, like trusting tags less near the image edge, are in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10)
 - [x] Full backup image of the SSD with PhotonVision's settings (`scripts/host/04-backup-ssd.sh`: 8.7 GB, 7 min). Keep it on the team drive, never GitHub (it holds the Wi-Fi password and SSH keys)
 - [x] GitHub release [v2026.09.24](https://github.com/Spectrum3847/SpectrumJetson/releases/tag/v2026.09.24): the PhotonVision jar, TensorRT backend, camera driver and settings
 - [ ] Clone a spare SSD from the backup (`scripts/host/05-restore-ssd.sh`)
@@ -347,7 +349,7 @@ This setup stands on other people's work. We link to or patch their code rather 
 | [WPILib allwpilib](https://github.com/wpilibsuite/allwpilib) | Built on the Jetson (v2026.2.1) for the detector; cscore and ntcore run inside PhotonVision. | BSD-3-Clause |
 | [Linux kernel](https://www.kernel.org/) `uvcvideo` | Our `kernel/uvcvideo-payload-cap.patch` modifies the stock v5.15.199 USB camera driver, fetched from the stable kernel's [GitHub mirror](https://github.com/gregkh/linux). | GPL-2.0 |
 | [libjpeg-turbo](https://libjpeg-turbo.org/) | Grayscale MJPEG decode in `detector/GpuDetectorJNI.cc` (the system library). | IJG / BSD-style |
-| NVIDIA JetPack, CUDA, TensorRT | The OS, GPU toolkit and inference engine. Not redistributed. | NVIDIA licenses |
+| NVIDIA JetPack, CUDA, TensorRT | The OS, GPU toolkit and inference engine. Hardware JPEG decode uses JetPack's `libnvjpeg` and the Jetson Multimedia API headers. Not redistributed. | NVIDIA licenses |
 | [Ultralytics](https://github.com/ultralytics/ultralytics) | Exporting YOLO models to ONNX on the laptop. Not redistributed. | AGPL-3.0 |
 
 **Models:**
