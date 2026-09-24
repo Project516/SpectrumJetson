@@ -90,7 +90,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 
 **Safe deploys.** `06-install-fork-jar.sh` refuses to install a jar that isn't a valid zip, and it keeps the previous working jar as `photonvision.jar.prev`. We added that after a truncated jar took PhotonVision down (see the bugs section).
 
-**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, and USB autosuspend off for cameras. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
+**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, and USB autosuspend off for cameras. After it, the Jetson boots in 16.5 s instead of 57 s, and both cameras are detecting about 20 s after power-on. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
 
 ## Bugs we found and fixed
 
@@ -213,7 +213,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Calibrate both cameras at 1280x800 (done on the bench; redo on the robot)
 - [x] Deploy the jar with the Device Control and 8-coefficient fixes
 - [x] Robot tuning: no auto-updates, headless boot, clocks locked, USB autosuspend off
-- [ ] Reboot test: confirm the tuning survives a reboot and measure boot time
+- [x] Reboot test: tuning survives a reboot; boot 57 s → 16.5 s, first detection ~20 s after power-on
 - [ ] Name the cameras (e.g. front/back) and label their USB ports
 - [ ] Robot network: give the Jetson a static IP on `10.85.15.x` and test it with the SystemCore (NetworkTables, time sync, PhotonLib reading results)
 - [ ] Turn off Wi-Fi and Bluetooth for competition

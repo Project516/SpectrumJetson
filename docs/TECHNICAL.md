@@ -268,6 +268,30 @@ port 2.3: 41 snapshots, 96% kept, mean 0.97 px, fx 737.0, cx/cy 597.9/371.6. Han
 calibrations wouldn't go below ~0.8 px. The outlier rate is the useful quality signal:
 42% when the board hung off the frame, 3–4% when it stayed inside and touched the edges.
 
+### Robot tuning and boot time (2026-09-24)
+
+`scripts/jetson/09-robot-tuning.sh` (`--undo` reverses it):
+- apt timers disabled, plus an APT::Periodic override
+- snapd masked (no snaps installed; `snapd.seeded` took 45 s of every boot)
+- `multi-user.target` default (headless)
+- `jetson-clocks.service` (After=nvpmodel, Before=photonvision)
+- a udev rule setting `power/control=on` for every uvcvideo device
+
+Measured after reboot:
+
+| | Before | After |
+|---|---|---|
+| `systemd-analyze` | 56.9 s (6.9 kernel + 50.0 userspace) | **16.5 s** (9.0 + 7.6) |
+| PhotonVision started (s since kernel start) | ~12 (it never waited on snapd) | 14.7 (now after jetson_clocks) |
+| First detection, cameras 1 / 2 | not measured | **19.9 / 20.1 s** |
+
+Everything survived the reboot: MAXN SUPER, clocks locked (CPU 1728 MHz, GPU 1020 MHz),
+camera autosuspend off, the bos detector (mwbd 20), and both calibrations (8
+coefficients). `health-check.sh` reports READY; the only warnings are no robot and Wi-Fi on.
+
+JVM (`tests/jvm-check.sh`, 2 cameras at ~90 fps): 28 MB peak heap of 512 MB, 0 GCs in
+20 s, 787 MB RSS (native frame memory). `-Xmx512m` stays.
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.
