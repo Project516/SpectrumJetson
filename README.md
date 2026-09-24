@@ -221,11 +221,16 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
   ~/SpectrumJetson/scripts/jetson/12-install-yolo-model.sh ~/models/fuel.onnx "Fuel" Fuel
   ```
   Then give the camera a pipeline of type **Object Detection** and pick the model.
-- **The 2026 FUEL model** we started with is Team 2826 Wave Robotics' YOLO11n, the same one PhotonVision ships for other hardware.
-- **Measured on the bench** (mono camera, 1280x800 in): **62 fps, 31 ms latency**, while another camera kept detecting AprilTags at 122 fps.
-  - It shares the GPU. Unthrottled (62 fps), the GPU sat at ~70% and AprilTag detect time went from 1.6 to 3.5 ms.
-  - **Object Detection pipelines are now capped at 30 fps by default** (`SPECTRUM_OD_FPS_LIMIT`; a robot-set FPS limit takes precedence). At 30 fps: GPU 12–31%, PhotonVision CPU 118–128%, and the AprilTag camera at 118–119 fps with ~3.2 ms detect. While the model runs it fills the GPU, so AprilTag frames take ~1.6 ms longer.
-  - We tried GPU stream priorities (AprilTag highest, TensorRT lowest): no change (3.25 vs 3.2 ms), so it was reverted. The contention is the model occupying the GPU's compute units and memory bandwidth, not scheduling order.
+- **The 2026 FUEL model** we started with is Team 2826 Wave Robotics' YOLO11n, the same one PhotonVision ships for other hardware. The models we have, their licenses and exports: [docs/GAME-PIECE-MODELS.md](docs/GAME-PIECE-MODELS.md).
+- **Measured on the bench** (mono camera, 1280x800 in; measured with nothing else using the GPU):
+
+  | | AprilTag camera beside it | AprilTag detect (avg / worst) | GPU | PhotonVision CPU |
+  | --- | --- | --- | --- | --- |
+  | FUEL capped at 30 fps (default) | 122 fps | 1.62 / 3.75 ms (same as without FUEL) | 11–30% | 107% |
+  | FUEL uncapped (76 fps) | 122 fps | 1.96 / 28 ms | 29–44% | 176% |
+
+  - **Object Detection pipelines are capped at 30 fps by default** (`SPECTRUM_OD_FPS_LIMIT`; a robot-set FPS limit takes precedence). At 30 fps they cost the AprilTag cameras nothing measurable.
+  - **Don't build TensorRT engines while measuring.** A `trtexec` build uses the GPU hard for ~8 minutes and made our first measurements look like FUEL doubled the AprilTag detect time. It didn't.
 - **Use a colour camera** for game pieces (FUEL is yellow). With 4 Thriftiest Cams on USB-A, put it on the USB-C port, or use a USB 3 camera.
 
 ## Troubleshooting quick reference
@@ -284,7 +289,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Upstream PhotonVision v2026.3.4 fixes, `setEnabled()` support, OpenCV leak fixes (`docs/UPSTREAM-PORT.md`)
 - [x] Frame timestamps moved to mid-exposure (`photonvision-13`); the camera's own delay is still to be measured with the robot spin test
 - [x] Game-piece detection: TensorRT backend, FUEL model working (62 fps)
-- [x] Game-piece pipelines capped at 30 fps by default (GPU 12–31% alongside AprilTags)
+- [x] Game-piece pipelines capped at 30 fps by default (no measurable effect on AprilTag cameras)
 - [ ] Game-piece colour camera on the robot
 - [x] USB bandwidth: capped camera driver so 4 cameras fit on USB-A (alt 7, tested with 2: 122 fps, no bad frames)
 - [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
