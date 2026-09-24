@@ -667,6 +667,37 @@ only goes out when it changes.
 - **Calibration card:** says its long exposure is only for a still board.
 - **Blur numbers:** from f ≈ 737 px: 3 rad/s × 5 ms = 0.015 rad ≈ 11 px; 20 ms ≈ 44 px.
 
+### A camera stuck at the wrong resolution (2026-09-24, `photonvision-27`)
+
+**What happened** after a PhotonVision restart at 14:19:
+- TopRight streamed 320x240 MJPEG (`v4l2-ctl --get-fmt-video`) while PhotonVision and cscore both
+  believed 1280x800.
+- At every start, PhotonVision's `setVideoMode` races cscore's connect-time "restoring video mode"
+  (logged as "Failed to set video mode!"). Usually the result is still 1280x800; this time it wasn't.
+  About 1 in 20 restarts today.
+- The direct decode correctly returned "size mismatch" (-3). After 30 in a row it permanently fell
+  back to cscore's conversion, which *upscaled* 320x240 to 1280x800.
+- Detection kept running at 122 fps, with less range and 1.7 cores instead of 0.5. Found by the
+  JPEG-decode session.
+
+**Fix:** `DirectDecode`, one per path, for gray and BGR.
+- **A size mismatch never falls back.** The frame is dropped. Once the mismatch lasts 1 s,
+  `USBFrameProvider.reconnectForVideoMode` sets the camera's connection strategy to `kForceClose`,
+  waits for it to close (up to 1 s), and returns it to `kAutoManage` (PhotonVision's default).
+- **Why reconnect:** on reconnect, cscore pushes its `m_mode` to the device ("restoring video
+  mode"). Setting the same mode again is a no-op: `UsbCameraImpl::DeviceCmdSetMode` returns when the
+  mode is unchanged.
+- **Throttled** to every 3 s, and logged as a warning.
+- **Real decode failures** (30 in a row) still fall back, but the direct path is retried every 10 s,
+  and one failed retry switches straight back.
+- **A detector library without the decoder** is never retried.
+- **Unit tests:** `DirectDecodeTest` passes 4/4.
+- **After deploy:** both cameras at 1280x800, nvjpg 242 frames/s, PhotonVision 0.44 cores.
+- **Not yet seen in action:** the race is rare, so watch the log for "reconnecting it so the mode is
+  applied again".
+- **Health check:** the JPEG session's check now fails any camera whose V4L2 format differs from
+  what PhotonVision set.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,
