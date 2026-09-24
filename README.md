@@ -1,301 +1,225 @@
-# SpectrumJetson
+# SpectrumJetson: Jetson Vision Coprocessor Setup
 
-Imaging and setup for a **Jetson Orin Nano Super Developer Kit** (P3768 carrier +
-P3767-0005 8GB module) running PhotonVision with FRC 971's CUDA AprilTag detector,
-for Spectrum 3847/8515. Boots from NVMe, with no SD card.
+How FRC 3847 / 8515 turned an NVIDIA Jetson Orin Nano Super into a GPU-accelerated AprilTag
+vision coprocessor: what we built, why, and how to redo it. The detailed technical reference
+(exact versions, commit hashes, every measurement) is in [docs/TECHNICAL.md](docs/TECHNICAL.md).
 
-Original brief: [docs/HANDOFF-jetson-flash.md](docs/HANDOFF-jetson-flash.md).
-Where this README disagrees with it, this README wins (see *Changes from the handoff*).
+*Last updated September 24, 2026.*
 
-## Target
+## Overview
 
-| | |
-|---|---|
-| JetPack | **6.2.3** |
-| Jetson Linux (L4T) | **36.5.2**, Ubuntu 22.04, kernel 5.15, CUDA 12 |
-| Board config | `jetson-orin-nano-devkit-super` |
-| Storage | NVMe (`nvme0n1p1`), QSPI bootloader updated during the flash |
-| MAXN SUPER | `sudo nvpmodel -m 2` (0 = 15W, 1 = 25W default, 2 = MAXN_SUPER) |
+We turned an NVIDIA Jetson Orin Nano Super into a vision coprocessor that finds AprilTags on its GPU. It runs two cameras at about 92 frames per second each, with about 20 ms of latency. It will run on team 8515's robot at the October 2026 off-season event.
 
-Settings shared by the scripts live in [config.env](config.env).
+The robot controller is a SystemCore running 2027 alpha-6 robot code. The Jetson runs PhotonVision, the same software many FRC teams use on an Orange Pi. Ours is a special version that sends the AprilTag math to the GPU using a detector written by FRC team 971. The robot code talks to it through PhotonLib over NetworkTables, like any other PhotonVision camera.
 
-## Flashing (from an Ubuntu 22.04 x86-64 host)
+Everything we did is scripted in this repo, so another Jetson can be set up the same way. These notes explain what we did and why, including the mistakes, so you can understand the system and not just copy commands.
 
-1. **Download** the BSP and sample rootfs into `~/nvidia/r36.5.2/`:
-   ```bash
-   mkdir -p ~/nvidia/r36.5.2 && cd ~/nvidia/r36.5.2
-   B=https://developer.nvidia.com/downloads/embedded/l4t/r36_release_v5.2/releases
-   curl -fLO $B/Jetson_Linux_r36.5.2_aarch64.tbz2
-   curl -fLO $B/Tegra_Linux_Sample-Root-Filesystem_r36.5.2_aarch64.tbz2
-   ```
-2. **Prepare the BSP** (extract, host prerequisites, apply binaries, create the default
-   user). Prompts for username, hostname and password:
-   ```bash
-   scripts/host/01-prepare-bsp.sh
-   ```
-3. **Put the Jetson in Force Recovery Mode:**
-   - Leave the USB-C data cable connected from the carrier's USB-C port to the host.
-   - Unplug barrel power.
-   - Jumper **FC REC** to **GND** (pins 9 and 10) on the **12-pin button header J14**.
-     It's under the module on the carrier edge. It is *not* the 40-pin GPIO header.
-   - Plug power in, wait about 2 s, and remove the jumper.
-   - `lsusb` should now show `0955:7523 NVIDIA Corp. APX`.
-4. **Flash:**
-   ```bash
-   scripts/host/02-flash-nvme.sh
-   ```
-   This takes about 10-20 minutes and writes a log to `logs/`. It temporarily stops
-   NetworkManager from managing the Jetson's USB network interface and opens ufw
-   for `fc00:1:1::/48`, then restores both.
-5. **Get into the Jetson.** After the flash it boots from NVMe and shows up over the
-   USB-C cable as `0955:7020`. The Jetson is `192.168.55.1`; the host gets
-   `192.168.55.100` by DHCP. Install a key so later steps can run over SSH:
-   ```bash
-   ssh-keygen -t ed25519 -N "" -f ~/.ssh/jetson_ed25519   # once per host
-   ssh-copy-id -i ~/.ssh/jetson_ed25519.pub spectrum3847@192.168.55.1
-   ```
-   Copy the scripts over:
-   ```bash
-   tar czf - --exclude=logs --exclude=.git . | ssh -i ~/.ssh/jetson_ed25519 spectrum3847@192.168.55.1 'mkdir -p ~/SpectrumJetson && tar xzf - -C ~/SpectrumJetson'
-   ```
-6. **Verify, then enable MAXN SUPER** (on the Jetson):
-   ```bash
-   ~/SpectrumJetson/scripts/jetson/01-verify.sh
-   ```
-   Expected: all three PASS lines, and `nvpmodel -q` reports `MAXN_SUPER` / `2`. At
-   idle, `tegrastats` shows all 6 CPU cores at 1728 MHz. The mode persists across
-   reboots (`/var/lib/nvpmodel/status` = `pmode:0002`); `jetson_clocks` does not.
-7. **Get the Jetson online.** It has no internet over USB, and its clock is wrong
-   until NTP syncs, which breaks apt's TLS. Wi-Fi is easiest; the password is prompted
-   for, not echoed:
-   ```bash
-   sudo nmcli --ask dev wifi connect <SSID> ifname wlP1p1s0
-   ```
-8. **Install JetPack components** (CUDA/cuDNN/TensorRT) and the build environment
-   (on the Jetson):
-   ```bash
-   ~/SpectrumJetson/scripts/jetson/02-jetpack.sh
-   ```
+## How the pieces fit
 
-## Gotchas seen on the first flash (2026-09-23)
+A camera frame goes over USB into PhotonVision on the Jetson. PhotonVision finds tags with the CUDA detector on the GPU, then sends results to the robot over NetworkTables.
 
-- **Recovery-mode header:** the 12-pin J14 is tucked under the module. The 40-pin
-  header is the wrong one.
-- **Password leak:** NVIDIA's `l4t_create_default_user.sh` prints the password in
-  plain text. `01-prepare-bsp.sh` now masks it. Change the password with `passwd`
-  after first boot if it was ever shown.
-- **"Waiting for target to boot-up..."** repeats for about 30 s while the flashing
-  initrd boots. That's normal. The flash is only done at `Flash is successful`,
-  once the QSPI write after "Successfully flashed the external device" finishes.
-  Don't unplug the board at the external-device message.
-- **Harmless flash warnings:** "backup GPT table is corrupt", missing
-  `/dev/mmcblk0boot0` (there's no eMMC), "Skip writing ... no image is specified".
-- The whole flash took about 7 minutes on a 16-core host.
-- **The shop network (`spectrum3847` Wi-Fi) blocks `frcmaven.wpi.edu`.** Fortinet
-  FortiGuard DNS filtering resolves it to a block page (`2620:101:9000:53::55`, cert
-  `CN = Fortiguard SDNS Blocked Page`), so Java reports a PKIX/SSL error. Gradle builds
-  that need WPILib artifacts (the PhotonVision fork, GradleRIO robot code) must run on
-  another network, or the domain needs allowlisting. GitHub and
-  maven.photonvision.org are not blocked.
+```mermaid
+flowchart LR
+  CAM["2x Thriftiest Cam<br/>USB 2.0, MJPEG 1280x800"] --> PV["PhotonVision 2026 fork<br/>(4143 CUDA version)"]
+  PV --> DET["971 CUDA AprilTag<br/>detector on the GPU"]
+  DET --> PV
+  PV -->|NetworkTables| SC["SystemCore<br/>2027 alpha-6 robot code"]
+  SC -->|time sync| PV
+```
 
-## Vision stack: 2026 CUDA fork on the Jetson, 2027 robot code
+| Piece | What we use |
+| --- | --- |
+| Computer | Jetson Orin Nano Super devkit (8 GB), booting from a 256 GB NVMe SSD, no SD card |
+| Operating system | JetPack 6.2.3 (Jetson Linux 36.5.2, Ubuntu 22.04) with CUDA 12.6 |
+| Power mode | MAXN SUPER (the fastest mode, which gives the board its "Super" name) |
+| Cameras | 2x Thrifty Bot Thriftiest Cam: OV9281, mono, global shutter, 1280x800, USB 2.0 |
+| Vision software | FRC-Team-4143's PhotonVision fork (2026 version), plus our patches |
+| Tag detector | Austin Schuh's current CUDA detector (from 971 / RealtimeRoboticsGroup), built from frc971/bos |
+| Robot side | Stock PhotonLib v2027.0.0-alpha-2 in `2026-FM-SystemCore`, team 8515 |
 
-**Target event:** October 2026 off-season, playing as **team 8515**. Robot code is
-[`Spectrum3847/2026-FM-SystemCore`](https://github.com/Spectrum3847/2026-FM-SystemCore)
-(WPILib 2027.0.0-alpha-6 on a **SystemCore**, vendordep `photonlib v2027.0.0-alpha-2`).
-The field is the **2026 Rebuilt AndyMark** layout, on the Jetson and in robot code.
+**Why a 2026 PhotonVision works with 2027 robot code:** the CUDA version of PhotonVision only exists for 2026. We checked the source to confirm the two versions speak the same language:
 
-**Decision:** the Jetson runs the **unmodified 2026** `FRC-Team-4143/photonvision` fork
-(`d8c9e8e`, WPILib 2026.2.1) with 971's CUDA detector. The robot uses **stock**
-photonlib alpha-2. This works because everything on the wire is identical between the
-fork's base and the alpha-6 era (checked in source on 2026-09-23, not yet on hardware):
+- the messages have the same format (PhotonLib compares a hash of the message layout, and it matches exactly),
+- the NetworkTables protocol is the same,
+- time sync is the same.
 
-- **Serde hashes match** (`PhotonPipelineResult` = `4b2ff16a964b5e2bf04be0c1454d91c4`,
-  and all sub-messages). PhotonLib only throws on a hash mismatch; a different
-  version string just logs.
-- **NT4:** the same subprotocol, port 5810 and encoding. 2026 and 2027 clients both
-  try `10.TE.AM.2` first, so SystemCore is `10.85.15.2`.
-- **Time sync:** the same UDP 5810 packet layout and microsecond timebase.
+The one rule: **don't upgrade the robot's PhotonLib past alpha-6.** Newer versions changed the message format, and the robot code would crash when it reads from this Jetson.
 
-> **Do not upgrade the robot's photonlib past the alpha-6 era.** PhotonVision `main`
-> after alpha-7 (`a6167b0`, 2026-09-17) renamed the timestamp fields, which changed the
-> hashes, and the robot would throw against this Jetson.
+## Step 1: Flash JetPack onto the SSD
 
-Porting CUDA to 2027 PhotonVision was rejected. 2027 allwpilib needs JDK 25, C++23
-and GCC 13 (Ubuntu 24.04), while JetPack 6 has GCC 11.
+Flashing writes NVIDIA's operating system onto the Jetson's NVMe SSD and updates the bootloader stored on the board. It's done from an Ubuntu 22.04 laptop over a USB-C cable. The whole flash took about 7 minutes.
 
-| Piece | Version | Built on | Script |
-|---|---|---|---|
-| allwpilib | `v2026.2.1` (not `main`: `wpi/jni_util.h` moved) | Jetson, `-j4` (more OOMs on wpimath); **17 min** in MAXN SUPER | `scripts/jetson/04-build-allwpilib.sh` |
-| GpuDetectorJNI | `FRC-Team-4143` `ef9fc1e`, CUDA arch 87 → `/usr/lib/lib971apriltag.so` | Jetson | `scripts/jetson/05-build-gpudetector.sh` |
-| PhotonVision fork jar | `d8c9e8e`, Java 17 target | Laptop (Node 22, pnpm 10, Temurin 17, as in CI) | `scripts/host/03-build-photonvision-fork.sh` |
-| Java runtime | **17** for the fork (the PV 2027 installer made 25 the default) | systemd drop-in `photonvision.service.d/java17.conf` | `scripts/jetson/06-install-fork-jar.sh <jar>` |
+**Why JetPack 6.2.3 and not 7:** JetPack 7 now supports this board, but it moves to Ubuntu 24.04 and CUDA 13. The CUDA detector and PhotonVision fork were built for JetPack 6. 6.2.3 was the newest 6.x release, with bug fixes over the 6.2 in our original plan.
 
-`scripts/jetson/03-photonvision.sh` installs upstream `v2027.0.0-alpha-2` (CPU only).
-That's a placeholder, and it provides the systemd service; the fork jar replaces its
-jar.
+1. **Download** the two NVIDIA files, the "BSP" (flashing tools) and the "sample root filesystem" (Ubuntu itself), about 2.6 GB.
+2. **Prepare** them on the laptop: `scripts/host/01-prepare-bsp.sh`. It unpacks everything and installs NVIDIA's flashing prerequisites. It also creates the Jetson's user account (`spectrum3847`, hostname `photonvision-3847`), so the first boot doesn't need a monitor and keyboard.
+3. **Put the Jetson in recovery mode:**
+   - Unplug power.
+   - Jumper the **FC REC** and **GND** pins (pins 9 and 10) on the small 12-pin button header under the module. It's *not* the big 40-pin header.
+   - Plug power back in, then remove the jumper.
+   - Check with `lsusb`: the Jetson should show up as `0955:7523 NVIDIA Corp. APX`.
+4. **Flash:** `scripts/host/02-flash-nvme.sh`. The script temporarily stops Ubuntu's network manager from grabbing the Jetson's USB network connection, and temporarily opens the firewall for it. Both are common causes of failed flashes, and both are put back afterward.
 
-Known detector rough edges: per-detection `std::cout` in the hot path, and a maximum
-of 10 detector handles per process, never recycled. The native lib casts a `jlong` to
-`cv::Mat*` compiled against JetPack's OpenCV 4.8 headers while PhotonVision runs its
-bundled OpenCV 4.10. That's fine while `cv::Mat`'s layout is unchanged, but fragile.
+**Reading the flash log:** "Waiting for target to boot-up" repeating for about 30 s is normal, and so are warnings like "backup GPT table is corrupt" and missing `mmcblk0boot0`. The flash is only finished at **"Flash is successful"**. "Successfully flashed the external device" comes a couple of minutes earlier, and the bootloader is still being written at that point, so **don't unplug the board then.**
 
-## First CUDA results (2026-09-23)
+## Step 2: First boot and verification
 
-One Thriftiest Cam, 1280×800 MJPEG, AprilTagCuda pipeline. Timing comes from
-`gpudetector-timing-stats.patch` (`971 stats …` lines in `journalctl -u photonvision`).
+After flashing, the Jetson boots from the SSD and shows up on the laptop as a USB network device. The Jetson is `192.168.55.1`, and the laptop gets `192.168.55.100`.
 
-| Stage | Cost | Limit |
-|---|---|---|
-| Camera, 1280×800 MJPEG (measured with `v4l2-ctl --stream-mmap`, PV stopped) | n/a | ~120 fps |
-| **Exposure.** The UI's "µs" is really **100 µs units** (V4L2 `exposure_time_absolute`); 295 = 29.5 ms | n/a | ~34 fps at 295; ~50 fps at 100; ~61–63 fps at ≤83 |
-| PhotonVision capture (MJPEG decode → BGR → gray, streams) | ~16 ms/frame | **~63 fps (current bottleneck)** |
-| 971 CUDA detector | **1.8–3.5 ms/frame** | 300+ fps |
+1. **Set up SSH keys** so scripts can log in without a password: `ssh-copy-id -i ~/.ssh/jetson_ed25519.pub spectrum3847@192.168.55.1`.
+2. **Verify and enable MAXN SUPER:** `scripts/jetson/01-verify.sh` checks three things. The root filesystem must be on the NVMe (`/dev/nvme0n1p1`), the software version must be R36.5.2, and the MAXN SUPER power mode must exist. It then switches to that mode (`nvpmodel -m 2`). Afterward, all 6 CPU cores run at 1728 MHz, and the setting survives reboots.
+3. **Get it online.** Over USB it has no internet, and its clock is wrong until it syncs, which makes package downloads fail. Wi-Fi is easiest: `sudo nmcli --ask dev wifi connect <SSID>`.
+4. **Install CUDA** with `scripts/jetson/02-jetpack.sh`, which runs `apt install nvidia-jetpack`. Flashing only installs the base OS, so CUDA 12.6, cuDNN and TensorRT come from this step.
 
-- **Exposure under shop lights:** mains lighting flickers at 120 Hz (8.33 ms). Under
-  about 70 (7 ms), detections looked unstable in the UI, yet the raw detector found the
-  tag in **100% of frames** at every exposure from 30 to 295. The flicker comes from
-  PhotonVision's decision-margin filter (default 35), not from detection. Use **~83**
-  in the shop, and lower the decision margin if needed. Retune on the event field.
-- **The camera has no UVC gain control**, only exposure and brightness.
-- Other teams on Chief Delphi report the same ~32–36 fps with an idle GPU (thread
-  483803). 4143 reported 2×1280×800 at 55 fps each.
+**Tip:** anything that needs `sudo` on the Jetson runs in a terminal where you type the password yourself. Nobody should put the password in a script or a chat.
 
-- **3D mode needs a calibration at the active resolution** (ChArUco, in the Calibration
-  tab). The intrinsics also feed the 971 detector via `setparams`.
-- **Stray CUDA error** (a known CCCL 2.5 behavior, [NVIDIA/cccl#1791](https://github.com/NVIDIA/cccl/issues/1791)).
-  After switching pipeline type and resolution while running,
-  every frame logged `Check failed: cub::DeviceSelect::If(...) (invalid device
-  ordinal)`. CUB checks `cudaPeekAtLastError()`, so a *stale* error from an unchecked
-  call (e.g. the unchecked `cub::DeviceReduce::ReduceByKey`) makes the peak-filter
-  select bail out and use stale data, while detections still appear.
-  [`patches/gpudetector-cuda-peek.patch`](patches/gpudetector-cuda-peek.patch) clears
-  pending errors after each stage and logs the first one per stage as
-  `CUDA_PEEK after <stage>`. After a clean restart the error hasn't come back, so
-  the root cause is still unconfirmed. If it reappears, the log names the stage.
-- Streams render in Firefox; the in-app browser pane doesn't show them.
-- The camera is on the devkit's single onboard USB 2.0 hub (all 4 USB-A ports), so
-  two cameras will share 480 Mbps.
+## Step 3: Build and install the vision software
 
-## Detector source: where the current 971 code lives (research, 2026-09-23)
+The vision stack has four parts. Two are built on the Jetson, one on the laptop, and one is installed from PhotonVision's installer.
 
-- `frc971/971-Robot-Code` is **archived**. Austin Schuh's live code is in
-  **RealtimeRoboticsGroup/aos `frc/orin/`** (HEAD `8d8a7315e`), used by 4646/1868.
-  971's own CMake/nvcc build of it for CUDA 12.6 / sm_87 is
-  **frc971/bos `third_party/971apriltag`**, and frc971/cos adds CUDA 13 shims.
-- The 4143 copy matches upstream from about 2024-08-11. It is missing, among others,
-  **`3e570d5a` (a memory leak on every quad decode)**, `86f0ac3f` (32-bit types),
-  `8e7d6743` (async memcpy) and the `76d8f216` tuning.
-- **4143 JNI bugs:** detector slots are never reused, so after 10 creates it uses
-  `detectors[-1]` (UB), which pipeline switches and resolution changes can trigger;
-  `delete` is used on an `apriltag_detector_t`; the tag family leaks; `CHECK_CUDA`
-  only prints.
-- `mashed26/GpuDetectorJNI` has a better JNI layer (handle map, proper destroy,
-  CCCL 3), but a different Java API, so it isn't a drop-in replacement.
+| # | Part | Built where | Script | Notes |
+| --- | --- | --- | --- | --- |
+| 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
+| 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
+| 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork plus our patches. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 
-## Detector builds: which lib971apriltag.so is which
+**Where the detector code comes from.** FRC 971 (Spartan Robotics) wrote the CUDA AprilTag detector. Austin Schuh, its author, now maintains it in the **RealtimeRoboticsGroup/aos** repo and works with team 1868. We started with FRC-Team-4143's copy (`GpuDetectorJNI`), which dates from about August 2024. We switched to **frc971/bos**, which has Austin's current code with a CMake build that works on our exact CUDA version. In a side-by-side test, the new detector found tags exactly as well as the old one, and **30–40% faster** (1.7 ms per frame instead of 2.4–3.0 ms).
 
-Both expose the same Java API, so the PhotonVision fork jar works with either.
-Swap by installing one to `/usr/lib/lib971apriltag.so` and restarting `photonvision`.
+**Why build on the laptop sometimes?** The fork's jar is Java plus a web UI, with no native code, so it builds the same anywhere. The detector and allwpilib are native ARM and CUDA code, so they have to be built on the Jetson itself (or cross-compiled, which is more work).
 
-| Build | Source | Script | Status |
-|---|---|---|---|
-| **4143 + patches** (fallback) | FRC-Team-4143/GpuDetectorJNI `ef9fc1e` (≈971 code of 2024-08) + `patches/gpudetector-0{1,2,3}` | `05-build-gpudetector.sh` (installs) | Running; leak, handle and stale-error fixes applied |
-| **bos / Austin's current** (**installed**, robot config) | frc971/bos `62e93b4` `third_party/971apriltag` = RealtimeRoboticsGroup/aos `frc/orin` detector as of `8736ba62` (2026-03-30) + 971's `absl::Status` returns + `patches/bos-01`; JNI in `detector/` | `07-build-bos-detector.sh` then `08-select-detector.sh bos --mwbd 20` | A/B tested and fault tested (below) |
+**Safe deploys.** `06-install-fork-jar.sh` refuses to install a jar that isn't a valid zip, and it keeps the previous working jar as `photonvision.jar.prev`. We added that after a truncated jar took PhotonVision down (see the bugs section).
 
-aos is the upstream source of truth. The only detector change in aos since bos
-imported it (2026-04-03) is `c1c3b4607` (M_PI → std::numbers::pi, cosmetic).
+**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, and USB autosuspend off for cameras. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
 
-### A/B results (2026-09-23, one camera, 1280×800 MJPEG, tag held still)
+## Bugs we found and fixed
 
-`tests/detector-ab/run.sh` (stats averaged over 6 s per row):
+None of this code was written for our exact setup, so we found and fixed several real bugs. Each fix is a small patch file in `patches/`, applied automatically by the build scripts. They're good examples of how real systems fail.
 
-| Build | min_white_black_diff | Exposure | FPS | Detect | Tags/frame | Decision margin |
-|---|---|---|---|---|---|---|
-| 4143 + patches | 5 | 30 | 62.8 | 2.40 ms | 1.00 | n/a |
-| 4143 + patches | 5 | 83 | 61.1 | 3.01 ms | 1.00 | n/a |
-| bos | 5 | 30 | 62.8 | 2.39 ms | 1.00 | 43.9 |
-| bos | 5 | 83 | 61.1 | 3.03 ms | 1.00 | 118.5 |
-| **bos** | **20** | 30 | 62.8 | **1.71 ms** | 1.00 | 43.8 |
-| **bos** | **20** | 83 | 61.2 | **1.79 ms** | 1.00 | 118.5 |
+| Bug | What went wrong | Fix |
+| --- | --- | --- |
+| Memory leak | The detector leaked two small matrices every time it decoded a tag. Over a long event it could run the Jetson out of memory. | Applied Austin's upstream fix (`3e570d5a`). |
+| Detector slots | The C++ code had 10 detector slots and never reused them. The 11th pipeline change got handle `-1` and then read past the start of an array, which is undefined behavior. | Reuse slots, check every handle, free detectors properly (`gpudetector-03`). A stress test creates and destroys 300 detectors. |
+| Stale CUDA error | CUDA's error flag stays set until someone reads it. Newer CUDA libraries (CUB) fail on *any* leftover error, so one unchecked call broke a later, unrelated call on every frame. | Clear leftover errors before each frame, and check the calls that weren't checked. |
+| One GPU error crashed everything | Austin's code aborts the whole program on any CUDA error, which takes PhotonVision down with it. | A CUDA error now skips one frame. Only a truly broken GPU (errors for 1 s straight) restarts PhotonVision (`bos-01`). |
+| 62-second restart | Aborting triggered Ubuntu's crash reporter, which spent 28 s writing a 156 MB crash file before the restart could begin. | Exit cleanly instead, and turn off JVM core dumps. Worst-case vision outage went from about 62 s to about 8 s. |
+| Blank AprilCudaTag tab | The fork's settings tab was written for an older version of the web framework (Vue 2) and couldn't render in Vue 3. | Ported it to Vue 3, showing only settings that actually do something (`photonvision-01`). |
+| Missing Device Control card | PhotonVision used a brand-new browser feature (`Intl.DurationFormat`) to format the uptime. Firefox 130 doesn't have it, so the whole card, including the Restart button, disappeared. | Check for the feature and fall back (`photonvision-03`). Also: keep your browser updated. |
+| Truncated jar | A deploy copied a 228 KB piece of a 76 MB jar. PhotonVision couldn't start, and systemd gave up after 5 tries. | The install script now refuses invalid jars and keeps the previous working one. |
+| Lens model cut short | Calibration produces 8 lens-distortion numbers, but the fork only passed the first 5 to the CUDA detector. The detector uses them to straighten tag edges when it refines corners, so corners near the image edges came out slightly wrong. | A new `setparams8` call passes all 8 (`photonvision-04` + `detector/`). The log now shows "(8 dist coeffs)" for each camera. |
 
-- **Selected for the robot: bos, `min_white_black_diff` 20**
-  (`08-select-detector.sh bos --mwbd 20`). The detector is 30–40% faster, with
-  identical detection and margins. FPS is capture-bound either way.
-- **Decision margin tracks exposure:** about 44 at 3 ms vs about 118 at 8.3 ms. With
-  PhotonVision's default cutoff of 35, short exposures under shop lights sit close to
-  the cutoff, which is why tags flickered. Pick exposure and cutoff together.
+**Lesson:** check results by *measuring*, not by assuming. The truncated-jar bug happened partly because we trusted a log line from the *old* process. Now every check looks at the running process's own ID.
 
-### Two cameras, Low Latency Mode (2026-09-23)
+## Performance: what actually limits the frame rate
 
-- **Low Latency Mode off** (PhotonVision's non-blocking capture) with one camera:
-  61 → **~100 fps** at the same ~18 ms latency, but Java CPU 113% → 191%. With it
-  on, the capture loop waited for each frame and missed every other one.
-- **Two Thriftiest Cams**, both 1280×800 MJPEG, exposure 83, AprilTagCuda, bos
-  mwbd 20, Low Latency off: **~92 fps each, ~20 ms latency**, 1.00 tags/frame,
-  margins ~122, 0 errors. Java uses ~2.8 of 6 cores (one core ~98% on MJPEG decode),
-  GPU 18%, 55 °C, 10.3 W. The shared USB 2.0 hub handles both at full resolution.
-- **The cameras are indistinguishable to software:** same name (`Thrifty:`) and serial
-  (`01.00.00`). PhotonVision tells them apart by USB port: `Thrifty:_` is on port 2.1
-  (`/dev/video0`), `Thrifty:_ (1)` on port 2.3 (`/dev/video2`). **Keep each camera in
-  its port**, or calibrations and robot-to-camera transforms swap.
+We went from 33 fps to about 92 fps per camera. Most of that came from settings, not code. The GPU was never the bottleneck: the detector takes under 2 ms per frame, fast enough for 500+ fps. The real limits were the camera exposure and how PhotonVision reads frames.
 
-### Calibration board (2026-09-23)
+| Change | FPS (1 camera) | Latency | Why it mattered |
+| --- | --- | --- | --- |
+| Starting point (exposure 295) | 33 | 44 ms | Exposure was 29.5 ms per frame, which caps the frame rate at 34 fps |
+| Exposure 83 (8.3 ms) | 61 | 20 ms | The camera can now deliver 120 fps. PhotonVision became the limit |
+| Decode MJPEG straight to grayscale | 62 | 18 ms | Same fps, but Java CPU dropped from 155% to 111% of a core |
+| Low Latency Mode **off** | ~100 | 18 ms | PhotonVision stopped waiting for each frame and missing every other one |
+| Two cameras, all of the above | ~92 each | ~20 ms | Uses about 2.8 of 6 CPU cores and 18% of the GPU |
 
-The team's board is a ChArUco, DICT_5X5, 30 mm squares, 22 mm markers. It's labeled
-"9x12", but in PhotonVision it must be entered as **Board Width 12, Board Height 9**.
-9×12 recovers 0 corners and makes mrcal fail with "Negative corner in reprojection
-error calc" or null intrinsics. Use Tag Family `Dict_5X5_1000`, Pattern Spacing
-**1.181 in**, Marker Size **0.866 in** (this PV version takes inches), and Old OpenCV
-Pattern **off** (9 rows is odd, so both layouts are identical). Verified with
-`tests/charuco-board-check/check_board.py` on a live frame: 78/88 corners, 51/54 markers.
+**Exposure units are a trap.** PhotonVision labels the exposure slider in microseconds, but this camera counts in **100 µs units**, so 295 means 29.5 ms, not 0.3 ms. We only found this by reading the camera's control directly with `v4l2-ctl`.
 
-Calibration uses its own camera settings. It switched to auto exposure at 20, which
-gave a near-black image. Set Auto Exposure off and Exposure ~150 in the calibration card.
+**Lights flicker.** Mains lighting flickers 120 times per second (every 8.3 ms). At exposures shorter than that, each frame catches a different point in the flicker, and tags looked unstable. The detector still found the tag in 100% of frames at every exposure we tested. What changed was the **decision margin** (how confidently the tag decoded): about 44 at 3 ms, about 118 at 8.3 ms. PhotonVision drops tags below its cutoff of 35, which is why short exposures blinked. **Use about 83 in the shop, and retune exposure and the decision-margin cutoff on the real field.**
 
-### Lens distortion: all 8 coefficients (2026-09-24)
+**Measure before optimizing.** We added a once-per-second stats line to the detector (calls per second, milliseconds per frame, tags per frame, decision margin). It showed right away that the GPU was idle and the camera pipeline was the problem, which saved us from optimizing the wrong thing.
 
-PhotonVision's calibration (mrcal) produces the 8-coefficient OpenCV rational model
-(`k1 k2 p1 p2 k3 k4 k5 k6`). The 4143 fork passed only the first 5 to the CUDA
-detector, which uses the model to undistort tag edges during corner refinement and then
-re-distort the corners. `photonvision-04-dist-coeffs-8.patch` adds `setparams8`
-(implemented in `detector/GpuDetectorJNI.cc`), and the log now shows
-`setparams handle N (8 dist coeffs)`. It falls back to 5 if the 4143 library is installed.
+**More cameras.** Each camera at ~92 fps costs about 1.4 CPU cores. For 3–4 cameras, turn **Low Latency Mode on**: each camera then runs at ~60 fps for about 1.1 cores, so 4 cameras fit in about 4.5 of 6 cores. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
 
-Bench calibrations (`tests/calibration-check/check_calibration.py`): camera on port 2.1:
-43 snapshots, 97% of corners kept, mean 0.87 px, fx 737.8, cx/cy 650.5/362.4. Camera on
-port 2.3: 41 snapshots, 96% kept, mean 0.97 px, fx 737.0, cx/cy 597.9/371.6. Handheld
-calibrations wouldn't go below ~0.8 px. The outlier rate is the useful quality signal:
-42% when the board hung off the frame, 3–4% when it stayed inside and touched the edges.
+## Cameras and calibration
 
-### CUDA error handling (bos build)
+Both cameras use the same PhotonVision settings. Each one needs its own calibration at the resolution it will run at.
 
-- `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.
-  The JNI skips the frame and rebuilds the detector on the next one.
-- If frames fail continuously for 1 s, the JNI calls `_exit(1)` and systemd restarts
-  PhotonVision. It uses `_exit`, not `abort()`: SIGABRT went through the JVM crash
-  handler and Apport, which took 28 s and wrote a 156 MB `/var/crash` report.
-- The service runs Java with `-XX:-CreateCoredumpOnCrash` (06-install-fork-jar.sh),
-  so real native crashes also restart quickly.
-- Measured with fault injection (`echo N > /tmp/spectrum-971-fault-every`):
-  - **1 error per 100 frames:** no restart, 99% of frames still detected, ~59 fps.
-  - **Every frame failing:** exits after 1.7 s, detecting again 6.2 s later. That is
-    about 8 s total, vs about 62 s before the fixes.
+**Camera settings** (Dashboard, per camera):
 
-Still open: `use_neon` (a CPU NEON threshold absl flag) is untested and off.
+- Type: **AprilTagCuda**
+- Resolution: **1280x800 at 120 FPS, MJPEG**. Don't use YUYV, which only manages 5 fps at this resolution.
+- Auto Exposure off, Exposure **83**, Brightness 100
+- Low Latency Mode **off** (or on, for 3–4 cameras)
+- Stream Resolution: small, to save CPU (it only affects the video you watch in the browser)
+- AprilTag field layout: **2026 Rebuilt AndyMark**. The robot code must use the same layout.
 
-## Changes from the handoff
+**Label the USB ports.** Both cameras report the same name and serial number, so PhotonVision can only tell them apart by which port they're plugged into. `Thrifty:_` is on USB port 2.1, and `Thrifty:_ (1)` is on port 2.3. Swap them, and each camera's calibration and robot position swap too. All four USB-A ports share one USB 2.0 hub, but two MJPEG cameras fit easily.
 
-- **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,
-  with bug fixes. JetPack 7.2.x now supports Orin, but it moves the Jetson to
-  Ubuntu 24.04 / CUDA 13, which the fork and detector were not built for.
-- The flash command adds `--erase-all`, per the 36.5.2 Quick Start.
-- allwpilib is pinned to `v2026.2.1` instead of `main`.
-- CUDA isn't part of a BSP-only flash; install `nvidia-jetpack` after first boot.
-- The 2026 fork runs against 2027 alpha-6 robot code (see above).
+**Calibration board settings** (ChArUco, 5x5 markers, 30 mm squares, 22 mm markers):
 
-## Open questions
+| Field | Value |
+| --- | --- |
+| Resolution | 1280x800 |
+| Board Type | ChArUco |
+| Tag Family | Dict_5X5_1000 |
+| Pattern Spacing (in) | 1.181 (30 mm; this version uses inches) |
+| Marker Size (in) | 0.866 (22 mm) |
+| Board Width (squares) | **12** |
+| Board Height (squares) | **9** |
+| Old OpenCV Pattern | off |
 
-1. Robot network: static IP for the Jetson on `10.85.15.x` (e.g. `.11`), or DHCP?
-2. Answered: PhotonVision runs as a boot service (`photonvision.service`).
-3. Answered: the fork is 2026-only, and it's used as-is (see above).
+The board is labeled "9x12", but **PhotonVision needs width 12, height 9**. With 9x12, every calibration failed with "Negative corner in reprojection error calc". We found the right setting with `tests/charuco-board-check/check_board.py`: it tried all four combinations on a live frame, and only 12x9 found corners (78 of 88).
+
+**Calibration tips:**
+
+- After clicking Start, set **Auto Exposure off and Exposure about 150**. Calibration uses its own settings, and its default was nearly black.
+- Take 25–50 snapshots. Cover every corner of the image, tilt the board up to about 45°, vary the distance, and hold still for each shot.
+- Aim for a mean reprojection error under about 0.5 px (under 1 px is fine for FRC).
+- If a calibration fails and gets stuck, restart PhotonVision (Settings → Restart Software) to clear the bad snapshots.
+
+**Bench calibration results** (checked with `tests/calibration-check/check_calibration.py`, which reads the saved calibration and reports error, outliers and coverage):
+
+| Camera | Snapshots | Corners kept | Mean error | fx | cx, cy |
+| --- | --- | --- | --- | --- | --- |
+| Thrifty:_ (port 2.1) | 43 | 97% | 0.87 px | 737.8 | 650.5, 362.4 |
+| Thrifty:_ (1) (port 2.3) | 41 | 96% | 0.97 px | 737.0 | 597.9, 371.6 |
+
+We couldn't get the error below 0.5 px handheld, and that's okay. With so few outliers, the data is clean, and the remaining ~0.8–0.9 px is noise from MJPEG compression. The focal length came out at about 737 px in all three of camera 1's calibrations. **Outliers are the better warning sign.** Our second try had 42% outliers because many snapshots had the board mostly outside the frame. For edge coverage, keep most of the board in the image and just touch the edge.
+
+## Troubleshooting quick reference
+
+| Symptom | Likely cause | What to do |
+| --- | --- | --- |
+| `lsusb` shows no NVIDIA device | Not in recovery mode, or a charge-only USB-C cable | Redo the FC REC–GND jumper with power off. Try a USB-C cable you know carries data. |
+| Flash hangs at "Waiting for target to boot-up" for minutes | NetworkManager or the firewall is interfering | Use `02-flash-nvme.sh`, which handles both. |
+| Camera doesn't show up (`lsusb`, no `/dev/video*`) | Loose cable, or plugged into the USB-C port | Use a USB-A port, and reseat or swap the cable. |
+| Low FPS (~34) | Exposure too long (the units are 100 µs) | Exposure 83 or lower. Anything up to ~150 still gets full fps. |
+| Tags flicker in and out | Decision margin near the cutoff under flickering light | Exposure ~83 in the shop, or lower the cutoff to ~20–25. Retune on the field. |
+| Image nearly black during calibration | Calibration uses its own exposure settings | In the calibration card: Auto Exposure off, Exposure ~150. |
+| Calibration fails ("Negative corner", null intrinsics) | Board width/height swapped | Width 12, height 9. Check with `check_board.py`. Restart PhotonVision to clear bad snapshots. |
+| Settings page missing Device Control / Restart | Old browser (no `Intl.DurationFormat`) | Update the browser. Fixed in our patch too. |
+| A camera's stream won't show | The browser's connection limit (each open stream holds one) | Close extra PhotonVision tabs, then Ctrl+Shift+R. |
+| PhotonVision won't start ("corrupt jarfile") | A bad jar was installed | Reinstall a good jar with `06-install-fork-jar.sh`, or copy back `photonvision.jar.prev`. |
+| Robot code throws about a PhotonLib version or message mismatch | Robot PhotonLib upgraded past alpha-6 | Keep `photonlib v2027.0.0-alpha-2`. |
+| Gradle build fails with a PKIX/SSL error | The shop network's filter blocked `frcmaven.wpi.edu` | Use another network, or get it allowlisted. |
+
+**Checking on it:** run `scripts/jetson/health-check.sh` for a readiness report. `journalctl -u photonvision -f` shows PhotonVision's live log on the Jetson. The `971 stats` lines show frames per second, detection time and decision margin for each camera.
+
+## Where everything lives, and what's left
+
+The detailed technical reference, with exact versions, commits and measurements, is [docs/TECHNICAL.md](docs/TECHNICAL.md). This README is the overview.
+
+| Folder | What's in it |
+| --- | --- |
+| `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03) |
+| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), plus `health-check.sh` |
+| `patches/` | Our fixes to other people's code, applied by the build scripts |
+| `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector |
+| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check |
+| `docs/` | The technical reference and the original handoff document that started the project |
+
+**Still to do before the October event:**
+
+- [x] Calibrate both cameras at 1280x800 (done on the bench; redo on the robot)
+- [x] Deploy the jar with the Device Control and 8-coefficient fixes
+- [x] Robot tuning: no auto-updates, headless boot, clocks locked, USB autosuspend off
+- [ ] Reboot test: confirm the tuning survives a reboot and measure boot time
+- [ ] Name the cameras (e.g. front/back) and label their USB ports
+- [ ] Robot network: give the Jetson a static IP on `10.85.15.x` and test it with the SystemCore (NetworkTables, time sync, PhotonLib reading results)
+- [ ] Turn off Wi-Fi and Bluetooth for competition
+- [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
+- [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
+- [ ] Retune exposure and decision margin on the event field
+- [ ] Take a full backup image of the SSD and export PhotonVision's settings
+
+**Next season:** faster CSI (ribbon-cable) cameras would skip the USB and MJPEG decoding and could reach 120+ fps. That's the setup Austin's AOS system is built around. For October, this USB setup is the right one.
