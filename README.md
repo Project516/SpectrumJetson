@@ -253,6 +253,21 @@ Pattern **off** (9 rows is odd, so both layouts are identical). Verified with
 Calibration uses its own camera settings. It switched to auto exposure at 20, which
 gave a near-black image. Set Auto Exposure off and Exposure ~150 in the calibration card.
 
+### Lens distortion: all 8 coefficients (2026-09-24)
+
+PhotonVision's calibration (mrcal) produces the 8-coefficient OpenCV rational model
+(`k1 k2 p1 p2 k3 k4 k5 k6`). The 4143 fork passed only the first 5 to the CUDA
+detector, which uses the model to undistort tag edges during corner refinement and then
+re-distort the corners. `photonvision-04-dist-coeffs-8.patch` adds `setparams8`
+(implemented in `detector/GpuDetectorJNI.cc`), and the log now shows
+`setparams handle N (8 dist coeffs)`. It falls back to 5 if the 4143 library is installed.
+
+Bench calibrations (`tests/calibration-check/check_calibration.py`): camera on port 2.1:
+43 snapshots, 97% of corners kept, mean 0.87 px, fx 737.8, cx/cy 650.5/362.4. Camera on
+port 2.3: 41 snapshots, 96% kept, mean 0.97 px, fx 737.0, cx/cy 597.9/371.6. Handheld
+calibrations wouldn't go below ~0.8 px. The outlier rate is the useful quality signal:
+42% when the board hung off the frame, 3–4% when it stayed inside and touched the edges.
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.
