@@ -226,6 +226,20 @@ imported it (2026-04-03) is `c1c3b4607` (M_PI → std::numbers::pi, cosmetic).
   PhotonVision's default cutoff of 35, short exposures under shop lights sit close to
   the cutoff, which is why tags flickered. Pick exposure and cutoff together.
 
+### Two cameras, Low Latency Mode (2026-09-23)
+
+- **Low Latency Mode off** (PhotonVision's non-blocking capture) with one camera:
+  61 → **~100 fps** at the same ~18 ms latency, but Java CPU 113% → 191%. With it
+  on, the capture loop waited for each frame and missed every other one.
+- **Two Thriftiest Cams**, both 1280×800 MJPEG, exposure 83, AprilTagCuda, bos
+  mwbd 20, Low Latency off: **~92 fps each, ~20 ms latency**, 1.00 tags/frame,
+  margins ~122, 0 errors. Java uses ~2.8 of 6 cores (one core ~98% on MJPEG decode),
+  GPU 18%, 55 °C, 10.3 W. The shared USB 2.0 hub handles both at full resolution.
+- **The cameras are indistinguishable to software:** same name (`Thrifty:`) and serial
+  (`01.00.00`). PhotonVision tells them apart by USB port: `Thrifty:_` is on port 2.1
+  (`/dev/video0`), `Thrifty:_ (1)` on port 2.3 (`/dev/video2`). **Keep each camera in
+  its port**, or calibrations and robot-to-camera transforms swap.
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.
