@@ -55,6 +55,10 @@ for p in "$REPO_ROOT"/patches/photonvision-*.patch; do
   echo "==> Applying $(basename "$p")"
   git apply "$p"
 done
+# The 3D field models for the Field Calibration page (photonvision-30), from assets/field-models
+# (built by tools/fieldmodel from FIRST's field CAD): served by PhotonVision at fieldmodels/.
+mkdir -p photon-client/public/fieldmodels
+cp "$REPO_ROOT"/assets/field-models/*.glb photon-client/public/fieldmodels/
 # Upstream tags give the jar a sane version string (e.g. v2026.1.1-27-gd8c9e8e1).
 git fetch -q --tags https://github.com/PhotonVision/photonvision.git || true
 

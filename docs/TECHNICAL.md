@@ -794,9 +794,16 @@ on the Jetson. The user guide is in the README; how the solver works is in
   - `GET /api/fieldcal/file?session=&name=`: report.md, results.json, corrected-layout.json,
     mounts.json.
 - **3D view** (`FieldCal3D.vue`, three.js already in the UI):
-  - **Elements:** simplified 2026 elements from `lib/FieldElements.ts`, sized from the game
-    manual. Each is placed by the tags mounted on it, so the AndyMark and welded layouts both work,
-    and after a calibration each element sits where its tags really are:
+  - **Field:** *FIRST*'s official field CAD by default, converted by `tools/fieldmodel` into
+    `assets/field-models/2026-rebuilt.glb` (2.1 MB, meshopt). It's loaded with `GLTFLoader` +
+    `MeshoptDecoder` from `fieldmodels/`, which the jar build copies in.
+    - `lib/FieldModel.ts` moves each element node (`kind@tags#...`) to its tags in the layout in
+      use, and the perimeter's four sides (`@x0`/`@xL`/`@y0`/`@yW`) to the layout's field size.
+    - Placed with WPILib's welded layout, every element lands where the build put it (0.001 mm).
+    - With AndyMark's layout, the elements move 1.6–3.6 cm and the far walls 2.3 and 2.6 cm.
+  - **Fallback:** if the model doesn't load, simplified elements from `lib/FieldElements.ts`,
+    sized from the game manual. Each is placed by the tags mounted on it, so the AndyMark and
+    welded layouts both work, and after a calibration each element sits where its tags really are:
     - hubs: tags 18–21, 24–27 and 2–5, 8–11;
     - trenches: tags 17/28, 22/23, 1/12 and 6/7, against the guardrail;
     - bumps: between each hub and its trenches;

@@ -14,10 +14,10 @@ index deb43d6b..5af91ef1 100644
        </v-list-item>
 diff --git a/photon-client/src/components/fieldcal/FieldCal3D.vue b/photon-client/src/components/fieldcal/FieldCal3D.vue
 new file mode 100644
-index 00000000..543108b5
+index 00000000..30304375
 --- /dev/null
 +++ b/photon-client/src/components/fieldcal/FieldCal3D.vue
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,352 @@
 +<script setup lang="ts">
 +// SpectrumJetson (photonvision-30): the field in 3D for the field-calibration page, with simplified
 +// field elements placed by their tags (lib/FieldElements.ts). Tags are coloured like the 2D map;
@@ -28,7 +28,8 @@ index 00000000..543108b5
 +import { useTheme } from "vuetify";
 +import type { AprilTagFieldLayout } from "@/types/PhotonTrackingTypes";
 +import type { MapCamera, MapOffset, MapPoint } from "@/types/FieldCalTypes";
-+import { buildField, detectGame, FIELD_GAMES } from "@/lib/FieldElements";
++import { buildField, detectGame, FIELD_GAMES, fieldModelUrl } from "@/lib/FieldElements";
++import { anchorFieldModel, loadFieldModel } from "@/lib/FieldModel";
 +
 +const T = await import("three");
 +const { OrbitControls } = await import("three/examples/jsm/controls/OrbitControls");
@@ -50,6 +51,8 @@ index 00000000..543108b5
 +let renderer: WebGLRenderer | undefined;
 +let controls: InstanceType<typeof OrbitControls> | undefined;
 +let fieldGroup: Group | undefined;
++let modelGroup: Group | undefined; // shares the cached model's geometry: removed, never disposed
++const modelNote = ref("");
 +let tagGroup: Group | undefined;
 +let liveGroup: Group | undefined;
 +let frame = 0;
@@ -104,11 +107,36 @@ index 00000000..543108b5
 +  });
 +};
 +
-+const drawField = () => {
++let fieldToken = 0;
++const drawField = async () => {
 +  if (!scene) return;
++  const token = ++fieldToken;
 +  disposeGroup(fieldGroup);
-+  fieldGroup = buildField(T, props.layout, game.value);
++  if (modelGroup) scene.remove(modelGroup);
++  modelGroup = undefined;
++  const url = fieldModelUrl(game.value);
++  // The walls and carpet at once; the CAD model replaces them when it has loaded.
++  fieldGroup = buildField(T, props.layout, url ? "none" : game.value);
 +  scene.add(fieldGroup);
++  modelNote.value = "";
++  if (!url) return;
++  modelNote.value = "Loading FIRST's field CAD…";
++  const model = await loadFieldModel(T, url);
++  if (token !== fieldToken || !scene) return; // redrawn meanwhile
++  if (!model) {
++    modelNote.value = "The field CAD didn't load: showing simple shapes.";
++    disposeGroup(fieldGroup);
++    fieldGroup = buildField(T, props.layout, "2026");
++    scene.add(fieldGroup);
++  } else {
++    anchorFieldModel(T, model, props.layout);
++    disposeGroup(fieldGroup);
++    fieldGroup = undefined;
++    modelGroup = model;
++    scene.add(model);
++    modelNote.value = "";
++  }
++  renderNow();
 +};
 +
 +const drawTags = () => {
@@ -227,7 +255,8 @@ index 00000000..543108b5
 +  controls.mouseButtons = { LEFT: T.MOUSE.ROTATE, MIDDLE: T.MOUSE.PAN, RIGHT: T.MOUSE.ROTATE };
 +  controls.zoomToCursor = true;
 +  controls.screenSpacePanning = true;
-+  scene.add(new T.AmbientLight(0xffffff, 1.6));
++  scene.add(new T.HemisphereLight(0xffffff, 0x444444, 1.2));
++  scene.add(new T.AmbientLight(0xffffff, 0.8));
 +  const sun = new T.DirectionalLight(0xffffff, 1.4);
 +  sun.position.set(5, -3, 10);
 +  scene.add(sun);
@@ -260,6 +289,7 @@ index 00000000..543108b5
 +  cancelAnimationFrame(frame);
 +  resize?.disconnect();
 +  disposeGroup(fieldGroup);
++  if (modelGroup) scene?.remove(modelGroup);
 +  disposeGroup(tagGroup);
 +  disposeGroup(liveGroup);
 +  tagTexture.forEach((t) => t.dispose());
@@ -320,8 +350,13 @@ index 00000000..543108b5
 +    </div>
 +    <div ref="container" class="fieldcal-3d" />
 +    <div class="text-caption">
-+      Like Onshape: right-drag to turn, middle-drag or Ctrl + right-drag to move, scroll to zoom. Field elements are
-+      simplified.
++      Like Onshape: right-drag to turn, middle-drag or Ctrl + right-drag to move, scroll to zoom.
++      {{
++        modelNote ||
++        (game === "2026cad"
++          ? "The field is FIRST's official CAD, each element placed by its tags."
++          : "Field elements are simplified.")
++      }}
 +    </div>
 +  </div>
 +</template>
@@ -554,10 +589,10 @@ index 00000000..b70eea25
 +</style>
 diff --git a/photon-client/src/lib/FieldElements.ts b/photon-client/src/lib/FieldElements.ts
 new file mode 100644
-index 00000000..83970d3d
+index 00000000..733d924d
 --- /dev/null
 +++ b/photon-client/src/lib/FieldElements.ts
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,223 @@
 +// SpectrumJetson (photonvision-30): simplified 3D field elements, like Limelight's field view.
 +// Each element is placed by the tags mounted on it, not by fixed coordinates: the same code draws
 +// the AndyMark and welded fields, and after a field calibration the elements sit where their tags
@@ -570,15 +605,20 @@ index 00000000..83970d3d
 +
 +export type FieldGame = { id: string; name: string };
 +export const FIELD_GAMES: FieldGame[] = [
-+  { id: "2026", name: "2026 REBUILT" },
++  { id: "2026cad", name: "2026 REBUILT: FIRST's field CAD" },
++  { id: "2026", name: "2026 REBUILT: simple shapes" },
 +  { id: "none", name: "Tags and walls only" }
 +];
 +
 +/** Which game a layout is for, from its size and tags. */
 +export const detectGame = (layout: AprilTagFieldLayout): string =>
 +  layout.tags.length === 32 && Math.abs(layout.field.length - 16.54) < 0.1 && Math.abs(layout.field.width - 8.05) < 0.1
-+    ? "2026"
++    ? "2026cad"
 +    : "none";
++
++/** The CAD model for a game, if there is one (served from PhotonVision's web root). */
++export const fieldModelUrl = (game: string): string | null =>
++  game === "2026cad" ? "fieldmodels/2026-rebuilt.glb" : null;
 +
 +const IN = 0.0254;
 +const BLUE = 0x1e63d6;
@@ -775,6 +815,77 @@ index 00000000..83970d3d
 +    box(0.03, cw, ch, x0 + dir * cd, c.y, ch / 2, 0, m);
 +  }
 +  return g;
++}
+diff --git a/photon-client/src/lib/FieldModel.ts b/photon-client/src/lib/FieldModel.ts
+new file mode 100644
+index 00000000..1cbfb922
+--- /dev/null
++++ b/photon-client/src/lib/FieldModel.ts
+@@ -0,0 +1,65 @@
++// SpectrumJetson (photonvision-30): the real field CAD in the 3D view. The model is built from
++// FIRST's official field STEP by tools/fieldmodel in the SpectrumJetson repo and served from
++// fieldmodels/. Each element's node is named "kind@tag,tag,...#..." and holds only that element's
++// placement: here it's moved to where those tags are in the layout in use, so the model fits the
++// AndyMark and welded layouts, and a calibrated layout moves each element to where it really is.
++// The perimeter's four sides follow the layout's field size; the carpet ("carpet@") stays put.
++import type * as ThreeNS from "three";
++import type { AprilTagFieldLayout } from "@/types/PhotonTrackingTypes";
++import { yawOf } from "@/lib/FieldElements";
++
++type Three = typeof ThreeNS;
++
++const cache = new Map<string, Promise<ThreeNS.Group | null>>();
++
++/** The model for a game, or null if it can't be loaded (the caller falls back to simple shapes). */
++export function loadFieldModel(T: Three, url: string): Promise<ThreeNS.Group | null> {
++  let p = cache.get(url);
++  if (!p) {
++    p = (async () => {
++      try {
++        const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader");
++        const { MeshoptDecoder } = await import("three/examples/jsm/libs/meshopt_decoder.module");
++        const loader = new GLTFLoader();
++        loader.setMeshoptDecoder(MeshoptDecoder);
++        const gltf = await loader.loadAsync(url);
++        return gltf.scene as unknown as ThreeNS.Group;
++      } catch (e) {
++        console.warn("Field model " + url + " not loaded; using simple shapes", e);
++        return null;
++      }
++    })();
++    cache.set(url, p);
++  }
++  return p.then((g) => (g ? (g.clone(true) as ThreeNS.Group) : null));
++}
++
++/**
++ * Moves each element of the model to where its tags are in the layout, and each side of the
++ * perimeter to the layout's field edges (@x0, @xL, @y0, @yW), so it fits AndyMark and welded fields.
++ */
++export function anchorFieldModel(T: Three, model: ThreeNS.Object3D, layout: AprilTagFieldLayout) {
++  const tags = new Map(layout.tags.map((t) => [t.ID, t]));
++  const L = layout.field.length,
++    W = layout.field.width;
++  const edges: Record<string, [number, number]> = { x0: [0, 0], xL: [L, 0], y0: [0, 0], yW: [0, W] };
++  model.traverse((o) => {
++    const m = /^(\w+)@([\w,]*)#/.exec(o.name);
++    if (!m || !m[2]) return;
++    let x: number, y: number, yaw: number;
++    if (edges[m[2]]) {
++      [x, y] = edges[m[2]];
++      yaw = 0;
++    } else {
++      const ts = m[2].split(",").map((i) => tags.get(Number(i)));
++      if (ts.some((t) => !t)) return; // a tag the layout doesn't have: leave the element as drawn
++      x = ts.reduce((a, t) => a + t!.pose.translation.x, 0) / ts.length;
++      y = ts.reduce((a, t) => a + t!.pose.translation.y, 0) / ts.length;
++      yaw = yawOf(ts[0]!.pose.rotation.quaternion);
++    }
++    o.position.set(x, y, 0);
++    o.quaternion.setFromAxisAngle(new T.Vector3(0, 0, 1), yaw);
++    o.scale.set(1, 1, 1);
++    o.updateMatrix();
++  });
 +}
 diff --git a/photon-client/src/router/index.ts b/photon-client/src/router/index.ts
 index 1535b16e..88e5ef10 100644

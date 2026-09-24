@@ -1,0 +1,207 @@
+{
+  "source": "FE-2026-rev-rebuilt-playing-field.step",
+  "fieldLength": 16.541,
+  "fieldWidth": 8.069,
+  "cadToField": [
+    [
+      -1.0,
+      0.0,
+      0.0,
+      8.2705194
+    ],
+    [
+      0.0,
+      -1.0,
+      0.0,
+      4.0346376
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "tagCheckMaxCm": 0.33,
+  "elements": {
+    "FE-2026-01: Playing Field Carpet": {
+      "kind": "carpet",
+      "anchor": [],
+      "triangles": 24
+    },
+    "GE-26000: Outpost <1>": {
+      "kind": "outpost",
+      "anchor": [
+        13,
+        14
+      ],
+      "triangles": 243620
+    },
+    "GE-26000: Outpost <2>": {
+      "kind": "outpost",
+      "anchor": [
+        29,
+        30
+      ],
+      "triangles": 243620
+    },
+    "GE-26100: Bump <1>": {
+      "kind": "bump",
+      "anchor": [
+        2,
+        3,
+        4,
+        5,
+        8,
+        9,
+        10,
+        11
+      ],
+      "triangles": 283136
+    },
+    "GE-26100: Bump <2>": {
+      "kind": "bump",
+      "anchor": [
+        2,
+        3,
+        4,
+        5,
+        8,
+        9,
+        10,
+        11
+      ],
+      "triangles": 283136
+    },
+    "GE-26100: Bump <3>": {
+      "kind": "bump",
+      "anchor": [
+        18,
+        19,
+        20,
+        21,
+        24,
+        25,
+        26,
+        27
+      ],
+      "triangles": 283136
+    },
+    "GE-26100: Bump <4>": {
+      "kind": "bump",
+      "anchor": [
+        18,
+        19,
+        20,
+        21,
+        24,
+        25,
+        26,
+        27
+      ],
+      "triangles": 283136
+    },
+    "GE-26200: Trench <1> high": {
+      "kind": "trench",
+      "anchor": [
+        1,
+        12
+      ],
+      "triangles": 410082
+    },
+    "GE-26200: Trench <1> low": {
+      "kind": "trench",
+      "anchor": [
+        6,
+        7
+      ],
+      "triangles": 357117
+    },
+    "GE-26200: Trench <2> high": {
+      "kind": "trench",
+      "anchor": [
+        22,
+        23
+      ],
+      "triangles": 410082
+    },
+    "GE-26200: Trench <2> low": {
+      "kind": "trench",
+      "anchor": [
+        17,
+        28
+      ],
+      "triangles": 357117
+    },
+    "GE-26300: Hub <1>": {
+      "kind": "hub",
+      "anchor": [
+        2,
+        3,
+        4,
+        5,
+        8,
+        9,
+        10,
+        11
+      ],
+      "triangles": 1752482
+    },
+    "GE-26300: Hub <2>": {
+      "kind": "hub",
+      "anchor": [
+        18,
+        19,
+        20,
+        21,
+        24,
+        25,
+        26,
+        27
+      ],
+      "triangles": 1752482
+    },
+    "GE-26500: Tower <1>": {
+      "kind": "tower",
+      "anchor": [
+        15,
+        16
+      ],
+      "triangles": 246792
+    },
+    "GE-26500: Tower <2>": {
+      "kind": "tower",
+      "anchor": [
+        31,
+        32
+      ],
+      "triangles": 246792
+    },
+    "perimeter x0": {
+      "kind": "perimeter",
+      "anchor": "x0",
+      "triangles": 752922
+    },
+    "perimeter xL": {
+      "kind": "perimeter",
+      "anchor": "xL",
+      "triangles": 752922
+    },
+    "perimeter y0": {
+      "kind": "perimeter",
+      "anchor": "y0",
+      "triangles": 320408
+    },
+    "perimeter yW": {
+      "kind": "perimeter",
+      "anchor": "yW",
+      "triangles": 320408
+    }
+  }
+}

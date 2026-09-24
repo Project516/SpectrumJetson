@@ -188,4 +188,6 @@ Jetson (971 detector) solves of the same recording agree to 0.34 cm on every tag
 - `fieldcal/`: `camera.py` (lens model), `tags.py` (CPU detector, tag geometry), `gpu971.py` (the
   971 replay on the Jetson), `rewind.py` (both recording formats), `segments.py` (still stretches), `solve.py` (initialisation, bundle
   adjustment, alignment, anchors), `report.py`, `synth.py` (synthetic truth and rendering).
-- `layouts/2026-rebuilt-andymark.json`: the layout from our PhotonVision (32 tags, 16.518 × 8.043 m).
+- `layouts/2026-rebuilt-andymark.json`: the layout from our PhotonVision (32 tags, 16.518 × 8.043 m),
+  identical to WPILib's official AndyMark layout.
+- `layouts/2026-rebuilt-welded.json`: WPILib's official welded layout (16.541 × 8.069 m).

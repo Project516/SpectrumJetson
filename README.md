@@ -284,7 +284,7 @@ Everything else, including the robot-code example and how to line video up with 
 A page in PhotonVision's web UI (**Field Calibration** in the sidebar, `photonvision-30`). With the robot on and disabled, pushed by hand:
 
 1. **Tune camera settings** (optional, about a minute). Park the robot where every camera sees tags, near and far. The Jetson steps each camera through exposure, gain, brightness, contrast, gamma and sharpness under the event's lights. It recommends the shortest exposure that still finds every tag (less motion blur), and changes the others only if they clearly help. **Apply** saves them to each camera's pipeline in use.
-2. **Record the spots.** Push the robot to 10–20 spots and hold it still at each until the page says the spot counts (about 2 s, and it beeps). A field map shows which tags need more views, where each camera is, and a suggested next spot. It can also be shown in 3D, with the 2026 field elements placed by their tags. The mouse works like Onshape's: right-drag turns, middle-drag or Ctrl + right-drag moves, the wheel zooms.
+2. **Record the spots.** Push the robot to 10–20 spots and hold it still at each until the page says the spot counts (about 2 s, and it beeps). A field map shows which tags need more views, where each camera is, and a suggested next spot. It can also be shown in 3D, using *FIRST*'s own field CAD. Each element is placed by its tags, so it matches the AndyMark or welded layout in use, and after a calibration it shows where things really are. The mouse works like Onshape's: right-drag turns, middle-drag or Ctrl + right-drag moves, the wheel zooms.
 3. **Solve.** The Jetson replays the recording through the same 971 GPU detector it uses in matches, then solves every tag's real pose and every camera's mount. It takes about a minute.
 4. **Results:**
    - **Tags:** each tag marked as drawn or moved, with its offset.
@@ -368,6 +368,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoders, CPU and hardware, the TensorRT object detector, and `fieldcal_detect`, which replays Rewind recordings through the detector) |
 | `tools/fieldcal/` | Field calibration: tag positions and camera mounts from a recording of the robot pushed to still spots ([README](tools/fieldcal/README.md)) |
+| `tools/fieldmodel/`, `assets/field-models/` | The 3D field model for the Field Calibration page, converted from *FIRST*'s field CAD ([README](tools/fieldmodel/README.md)) |
 | `kernel/` | Our patch to Linux's USB camera driver (bandwidth cap), built by `11-uvcvideo-payload-cap.sh` |
 | `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test, flicker check, CPU profiler, performance snapshot, telemetry and mount-estimate check |
 | `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, the upstream PhotonVision port, the game-piece models, and the original handoff document that started the project |
@@ -408,7 +409,7 @@ The detailed technical reference, with exact versions, commits and measurements,
   - [x] A Field Calibration page in PhotonVision (`photonvision-30`): tune camera settings, guided recording, solve, results, apply/undo the layout. Tested on the bench through the API (a synthetic recording solved, apply and undo round-trip exact); the page itself not yet looked at
   - [ ] Robot code publishes each camera's `robotToCamera` at `/photonvision/<camera>/robotToCamera`
   - [x] A 3D view of the field (Onshape mouse controls) with simplified 2026 elements placed by their tags
-  - [ ] The real field CAD in the 3D view (FIRST's STEP, converted), each element following its tags
+  - [x] The real field CAD in the 3D view (`tools/fieldmodel`, 2.1 MB): FIRST's STEP converted, each element placed by its tags, the perimeter by the field's size, so it fits the AndyMark and welded layouts
   - [ ] Shop test on our half field, including the settings tuning with real tags
   - [ ] Recalibrate the lenses with board views right into the corners: our calibrations can't model the outer 1–4% of the image
 - [x] The camera controls PhotonVision's UI didn't show (contrast, gamma, sharpness, backlight compensation) are on the Input tab (`photonvision-28`), at the camera's defaults unless set
@@ -447,6 +448,10 @@ This setup stands on other people's work. We link to or patch their code rather 
 - **FUEL YOLO26n by [Project516](https://huggingface.co/project516/rebuilt-fuel-model)** (AGPL-3.0), downloaded for comparison.
 
 We don't redistribute either; see [docs/GAME-PIECE-MODELS.md](docs/GAME-PIECE-MODELS.md).
+
+**Field model:**
+- **Source:** `assets/field-models/2026-rebuilt.glb`, the 3D field on the Field Calibration page, is converted from *FIRST*'s official 2026 field CAD (`FE-2026-rev-rebuilt-playing-field.step`, from the [Playing Field page](https://www.firstinspires.org/resources/library/frc/playing-field)) by `tools/fieldmodel`. It's simplified, and the FUEL and fasteners are left out.
+- **Terms:** © *FIRST*. *FIRST* publishes the CAD for teams but states no license for it. [AdvantageScope](https://github.com/Mechanical-Advantage/AdvantageScopeAssets) redistributes field models converted from the same CAD in the same way. If *FIRST* asks, we'll remove it and have the build convert it locally instead.
 
 **Ideas and research we learned from** (no code copied):
 
