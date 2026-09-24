@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Patched USB camera driver (uvcvideo) that caps how much USB 2.0 bandwidth a camera reserves,
+# so 4 Thriftiest Cams fit on the Jetson's four USB-A ports. Run ON THE JETSON.
+#
+# Why: a UVC camera reserves isochronous bandwidth for what it *asks* for, not what it sends.
+# The Thriftiest Cam (1bcf:28c5) asks for the largest alternate setting in every mode
+# (3 x 1020 bytes per 125 us microframe, ~196 Mbps) while sending 4-7 MB/s. USB 2.0 caps
+# reservations at ~80% of 480 Mbps per root port, and all four USB-A ports share one root port,
+# so only two cameras fit there. Capping the request at 1280 bytes makes the driver pick
+# alternate setting 7 (2 x 640 bytes, 10.2 MB/s, ~85 KB per frame at 120 fps): four fit.
+#
+# The patch (kernel/uvcvideo-payload-cap.patch) adds one module parameter,
+#   payload_cap=vid:pid:bytes[,vid:pid:bytes...]
+# and changes nothing for cameras not listed. Built from the exact stock source of the running
+# kernel, verified by matching the installed driver's srcversion before patching.
+#
+# Usage:
+#   11-uvcvideo-payload-cap.sh              build only (no sudo)
+#   11-uvcvideo-payload-cap.sh --install    build, install, reload the driver (restarts PhotonVision)
+#   11-uvcvideo-payload-cap.sh --undo       remove it: back to the stock driver
+# Env: CAP (default "1bcf:28c5:1280"; "1bcf:28c5:1984" = alt 9, 3 cameras per root port).
+set -euo pipefail
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+KVER=$(uname -r)
+BASE=v${KVER%%-*}   # 5.15.199-tegra -> v5.15.199
+CAP=${CAP:-1bcf:28c5:1280}
+W=$HOME/build/uvcvideo-$KVER
+DEST=/lib/modules/$KVER/updates/uvcvideo.ko
+CONF=/etc/modprobe.d/90-spectrum-uvcvideo.conf
+FILES="Kconfig Makefile uvc_ctrl.c uvc_debugfs.c uvc_driver.c uvc_entity.c uvc_isight.c uvc_metadata.c uvc_queue.c uvc_status.c uvc_v4l2.c uvc_video.c uvcvideo.h"
+
+reload() {
+  echo "==> Reloading the camera driver (PhotonVision stops for a few seconds)"
+  sudo systemctl stop photonvision
+  sudo modprobe -r uvcvideo
+  sudo modprobe uvcvideo
+  sleep 2
+  sudo systemctl start photonvision
+  echo "    now loaded: $(modinfo -F filename uvcvideo), payload_cap=$(cat /sys/module/uvcvideo/parameters/payload_cap 2>/dev/null || echo "(stock driver)")"
+}
+
+if [[ ${1:-} == --undo ]]; then
+  sudo rm -f "$DEST" "$CONF"
+  sudo depmod -a
+  reload
+  exit 0
+fi
+
+# 1. Stock source for this kernel, from the stable kernel's GitHub mirror (git.kernel.org
+#    refuses scripted downloads). Same tags/commits as kernel.org.
+mkdir -p "$W/stock"
+for f in $FILES; do
+  [[ -s $W/stock/$f ]] && continue
+  python3 - "$BASE" "$f" "$W/stock/$f" <<'PY'
+import sys, urllib.request
+tag, f, out = sys.argv[1:4]
+url = f"https://raw.githubusercontent.com/gregkh/linux/{tag}/drivers/media/usb/uvc/{f}"
+open(out, "wb").write(urllib.request.urlopen(url, timeout=30).read())
+PY
+done
+
+# 2. The stock build must be byte-identical in source to the installed driver.
+make -s -C "/lib/modules/$KVER/build" M="$W/stock" CONFIG_USB_VIDEO_CLASS=m modules
+stock_src=$(modinfo -F srcversion "$W/stock/uvcvideo.ko")
+# The installed driver: the stock one, even if ours is loaded from updates/.
+inst=$(find "/lib/modules/$KVER/kernel" -name 'uvcvideo.ko*' | head -1)
+inst_src=$(modinfo -F srcversion "$inst")
+if [[ $stock_src != "$inst_src" ]]; then
+  echo "Stock $BASE source doesn't match the installed driver ($stock_src vs $inst_src)." >&2
+  echo "NVIDIA may have patched uvcvideo in this L4T release; not continuing." >&2
+  exit 1
+fi
+echo "==> Stock source matches the installed driver (srcversion $stock_src)"
+
+# 3. Patch and build.
+rm -rf "$W/patched" && cp -r "$W/stock" "$W/patched"
+(cd "$W/patched" && make -s -C "/lib/modules/$KVER/build" M="$PWD" clean >/dev/null 2>&1 || true)
+patch -s -d "$W/patched" -p5 < "$REPO_ROOT/kernel/uvcvideo-payload-cap.patch"
+make -s -C "/lib/modules/$KVER/build" M="$W/patched" CONFIG_USB_VIDEO_CLASS=m modules
+modinfo "$W/patched/uvcvideo.ko" | grep -q "^parm:.*payload_cap" \
+  || { echo "Patched driver has no payload_cap parameter?" >&2; exit 1; }
+echo "==> Built $W/patched/uvcvideo.ko (vermagic $(modinfo -F vermagic "$W/patched/uvcvideo.ko"))"
+
+[[ ${1:-} == --install ]] || { echo "Build only. Install with: $0 --install"; exit 0; }
+
+# 4. Install next to the stock driver (updates/ wins), with the cap as a module option.
+sudo install -D -m 644 "$W/patched/uvcvideo.ko" "$DEST"
+printf '# SpectrumJetson: cap USB bandwidth reservations (scripts/jetson/11-uvcvideo-payload-cap.sh)\noptions uvcvideo payload_cap=%s\n' "$CAP" \
+  | sudo tee "$CONF" >/dev/null
+sudo depmod -a
+reload

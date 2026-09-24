@@ -134,7 +134,9 @@ We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. Th
 
 **Measure before optimizing.** We added a once-per-second stats line to the detector (calls per second, milliseconds per frame, tags per frame, decision margin). It showed right away that the GPU was idle and the camera pipeline was the problem, which saved us from optimizing the wrong thing.
 
-**More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), so 4 cameras should fit. The limit to watch is **USB bandwidth**: all four USB-A ports share one USB 2.0 hub, and each camera reserves bandwidth for its maximum, so a third or fourth camera there may fail. Plan 2 cameras on USB-A and 2 on the USB-C port, and test it. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
+**More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), so 4 cameras should fit. The limit was **USB bandwidth**. With the stock driver each camera reserves ~196 Mbps whatever mode it runs, and a USB 2.0 root port holds two. All four USB-A ports share one root port, so only 2 cameras fit there.
+
+We fixed that with a patched camera driver (`scripts/jetson/11-uvcvideo-payload-cap.sh`). It caps the Thriftiest Cam's reservation at 82 Mbps (UVC alternate setting 7), still about 1.4x the largest frame we've measured at 120 fps. Now **4 cameras fit on the USB-A ports**, and a hub in the USB-C port adds a second root port for more. Tested with 2 cameras: 122 fps each, every frame complete. The cost: a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so the robot's latency compensation should add ~3 ms (see `docs/VISION-RESEARCH.md`). Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
 
 What other teams' vision systems do (EagleEye, Code Orange's MLTag, 4533's Whacknet, 971's bos and cos), the full profiling story, and what's worth doing next: [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
 
@@ -162,7 +164,9 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 | TopLeft | top row, left | 2.1 |
 | TopRight | top row, right | 2.3 |
 | BottomLeft | bottom row, left | 2.2 |
-| BottomRight | bottom row, right | 2.4 (expected; the other three are confirmed) |
+| BottomRight | bottom row, right | 2.4 (expected) |
+
+All four USB-A ports share one USB 2.0 root port. Four cameras fit there only with our capped camera driver installed (`scripts/jetson/11-uvcvideo-payload-cap.sh --install`; the health check shows which driver is loaded). With the stock driver, only two fit.
 
 A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there. All four USB-A ports share one USB 2.0 hub; two MJPEG cameras fit easily, and 3–4 fit at ~60 fps each.
 
@@ -235,9 +239,10 @@ The detailed technical reference, with exact versions, commits and measurements,
 | Folder | What's in it |
 | --- | --- |
 | `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), back up and restore the SSD (04, 05), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
-| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), plus `health-check.sh` |
+| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), plus `health-check.sh` |
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
-| `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector |
+| `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoder and TensorRT object detector) |
+| `kernel/` | Our patch to Linux's USB camera driver (bandwidth cap), built by `11-uvcvideo-payload-cap.sh` |
 | `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test |
 | `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, and the original handoff document that started the project |
 
@@ -260,7 +265,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
 - [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
 - [x] Decode speedup: both cameras at 122 fps, 13 ms latency, 1.3 of 6 CPU cores
-- [ ] Test 3–4 cameras: 2 on USB-A, 2 on USB-C (USB bandwidth), then re-measure with `tests/perf-snapshot.sh`
+- [x] USB bandwidth: capped camera driver so 4 cameras fit on USB-A (alt 7, tested with 2: 122 fps, no bad frames)
+- [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
 - [ ] Take a full backup image of the SSD, including PhotonVision's settings (`scripts/host/04-backup-ssd.sh`), and clone a spare SSD from it (`05-restore-ssd.sh`)
 

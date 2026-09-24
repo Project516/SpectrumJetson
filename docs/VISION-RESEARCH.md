@@ -138,7 +138,38 @@ PhotonVision 2027.
 
 ### Jetson-specific findings
 
-- **4 cameras on the USB-A ports will likely fail.** All four ports share one USB 2.0 hub, and a
+- **Measured (2026-09-24): each Thriftiest Cam reserves ~196 Mbps, in every mode.**
+  - It always picks UVC alternate setting 11 (3 × 1,020 bytes per 125 µs microframe = 24.5 MB/s),
+    even at 640x400, and its MJPEG modes only offer 120 fps.
+  - It actually uses 4–7 MB/s.
+  - USB 2.0 caps isochronous reservations at about 80% of a root port, so **each root port holds 2
+    of these cameras.**
+  - The USB-C port with a hub is a separate root port (xHCI Bus 01 root port 1; the USB-A ports'
+    built-in hub is root port 2). A camera there streamed 121 fps at 1280x800 while TopLeft kept
+    detecting at 122 fps.
+  - So: **2 AprilTag cameras on USB-A + 2 on USB-C = 4, and that's the USB 2.0 budget.** A 5th
+    camera (game pieces) needs to be USB 3, which uses the separate SuperSpeed bus (Bus 02), or has
+    to reserve very little bandwidth (test it next to two cameras).
+  - USB-C is also the laptop cable, but SSH over Wi-Fi works; only flashing and backups need USB-C.
+- **4 cameras on the USB-A ports would fail with the stock driver** (the numbers above).
+- **Fixed with a capped driver** (`kernel/uvcvideo-payload-cap.patch`,
+  `scripts/jetson/11-uvcvideo-payload-cap.sh`).
+  - Linux's `uvcvideo` reserves whatever the camera requests (`dwMaxPayloadTransferSize`). It only
+    recomputes that for uncompressed formats (`UVC_QUIRK_FIX_BANDWIDTH`), never for MJPEG.
+  - The patch adds a `payload_cap=vid:pid:bytes` module parameter. We use `1bcf:28c5:1280`, which
+    picks alternate setting 7: 2 x 640 bytes per microframe = 10.24 MB/s = ~85 KB per frame at
+    120 fps. Four cameras reserve 5,120 bytes per microframe, within USB 2.0's ~6,000.
+  - Built from stock v5.15.199 source; the unmodified build's `srcversion` matches NVIDIA's
+    installed driver exactly (51AFB22511907605800B082). It's installed in
+    `/lib/modules/<kernel>/updates/` with the option in `/etc/modprobe.d/`. `--undo` restores stock.
+  - **Tested with 2 cameras:** both on alt 7, 122 fps each. A 10 s recording had every frame
+    complete, no gaps over 45 ms, and no invalid-JPEG warnings. Frames were 48–50 KB median,
+    **62 KB max** (73% of what alt 7 carries at 120 fps). A busier scene makes bigger frames; if
+    frames approach 85 KB, use `CAP=1bcf:28c5:1984` (alt 9, 3 per port) or put cameras on USB-C.
+  - **Trade-off:** a frame takes longer to cross USB, ~4.9 ms for 50 KB at alt 7 against ~2.0 ms
+    at alt 11. PhotonVision timestamps frames on arrival, so its latency readout doesn't show it,
+    but the frame timestamp now lags mid-exposure by ~7 ms (2.5 ms half-exposure + ~4.9 ms
+    transfer, was ~4.5 ms). Robot-side latency compensation should subtract that. All four ports share one USB 2.0 hub, and a
   UVC camera *reserves* isochronous bandwidth for its maximum, not what it uses. So a third or
   fourth camera is likely to fail with "No space left on device".
   - The devkit's USB-C port is a separate root port

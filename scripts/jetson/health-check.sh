@@ -96,6 +96,12 @@ for intf in /sys/bus/usb/drivers/uvcvideo/*:1.0; do
   else warn "$label has autosuspend on (run 09-robot-tuning.sh)"; fi
 done
 if [[ $cams -lt $EXPECT ]]; then fail "$cams camera(s) found, expected $EXPECT"; fi
+# USB 2.0 bandwidth: stock uvcvideo lets a Thriftiest Cam reserve ~196 Mbps, so only 2 fit on the
+# USB-A ports; our capped driver (11-uvcvideo-payload-cap.sh) fits 4.
+cap=$(cat /sys/module/uvcvideo/parameters/payload_cap 2>/dev/null || true)
+if [[ -n $cap && $cap != "(null)" ]]; then pass "camera driver: bandwidth cap $cap (4 cameras fit on the USB-A ports)"
+elif [[ $cams -gt 2 ]]; then warn "stock camera driver: only 2 cameras fit on the USB-A ports (run 11-uvcvideo-payload-cap.sh --install)"
+else pass "stock camera driver (fine for 2 cameras; 3-4 on USB-A need 11-uvcvideo-payload-cap.sh)"; fi
 
 echo "== Robot connection"
 last_nt=$(grep -E "NT connected to|Could not connect to the robot|disconnected" <<<"$LOG" | tail -1)
