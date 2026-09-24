@@ -31,11 +31,13 @@ fi
 sudo install -m 644 "$JAR" "$DEST"
 
 # Drop-in override instead of editing the installer's unit. -n = PV does not manage networking.
+# -XX:-CreateCoredumpOnCrash: a native crash otherwise dumps core through Apport, which took
+# ~28 s (and 156 MB) before systemd could restart PhotonVision.
 sudo mkdir -p /etc/systemd/system/photonvision.service.d
 sudo tee /etc/systemd/system/photonvision.service.d/java17.conf >/dev/null <<EOF
 [Service]
 ExecStart=
-ExecStart=$JAVA17 -Xmx512m -jar $DEST -n
+ExecStart=$JAVA17 -Xmx512m -XX:-CreateCoredumpOnCrash -jar $DEST -n
 EOF
 
 sudo systemctl daemon-reload

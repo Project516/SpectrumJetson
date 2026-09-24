@@ -200,22 +200,47 @@ Swap by installing one to `/usr/lib/lib971apriltag.so` and restarting `photonvis
 
 | Build | Source | Script | Status |
 |---|---|---|---|
-| **4143 + patches** (installed now) | FRC-Team-4143/GpuDetectorJNI `ef9fc1e` (≈971 code of 2024-08) + `patches/gpudetector-0{1,2,3}` | `05-build-gpudetector.sh` (installs) | Running; leak, handle and stale-error fixes applied |
-| **bos / Austin's current** (target for the robot) | frc971/bos `62e93b4` `third_party/971apriltag` = RealtimeRoboticsGroup/aos `frc/orin` detector as of `8736ba62` (2026-03-30) + 971's `absl::Status` returns; JNI in `detector/` | `07-build-bos-detector.sh` (build only) | Builds; passes the handle test; **not yet A/B tested live** |
+| **4143 + patches** (fallback) | FRC-Team-4143/GpuDetectorJNI `ef9fc1e` (≈971 code of 2024-08) + `patches/gpudetector-0{1,2,3}` | `05-build-gpudetector.sh` (installs) | Running; leak, handle and stale-error fixes applied |
+| **bos / Austin's current** (**installed**, robot config) | frc971/bos `62e93b4` `third_party/971apriltag` = RealtimeRoboticsGroup/aos `frc/orin` detector as of `8736ba62` (2026-03-30) + 971's `absl::Status` returns + `patches/bos-01`; JNI in `detector/` | `07-build-bos-detector.sh` then `08-select-detector.sh bos --mwbd 20` | A/B tested and fault tested (below) |
 
 aos is the upstream source of truth. The only detector change in aos since bos
 imported it (2026-04-03) is `c1c3b4607` (M_PI → std::numbers::pi, cosmetic).
 
-Open decisions for the bos build before the robot:
-- **Fatal CUDA checks.** Its `CHECK_CUDA` is `LOG(FATAL)`, so any CUDA error aborts
-  the JVM (systemd restarts PhotonVision in about 5–10 s). The JNI clears stale
-  errors before each frame and refuses bad inputs, but a real mid-frame CUDA
-  error would still crash PhotonVision. The alternative is patching `cuda.h` to
-  log and skip the frame.
-- **`min_white_black_diff`.** 4143 uses 5, bos 4, and aos's own tuning (`76d8f216`)
-  uses 20 ("about 2x"). The detector is already 2–3 ms, so we only change it if
-  detection quality improves. Set it with `SPECTRUM_971_MIN_WHITE_BLACK_DIFF`.
-- **`use_neon`** (a CPU NEON threshold) is available as an absl flag and is off.
+### A/B results (2026-09-23, one camera, 1280×800 MJPEG, tag held still)
+
+`tests/detector-ab/run.sh` (stats averaged over 6 s per row):
+
+| Build | min_white_black_diff | Exposure | FPS | Detect | Tags/frame | Decision margin |
+|---|---|---|---|---|---|---|
+| 4143 + patches | 5 | 30 | 62.8 | 2.40 ms | 1.00 | n/a |
+| 4143 + patches | 5 | 83 | 61.1 | 3.01 ms | 1.00 | n/a |
+| bos | 5 | 30 | 62.8 | 2.39 ms | 1.00 | 43.9 |
+| bos | 5 | 83 | 61.1 | 3.03 ms | 1.00 | 118.5 |
+| **bos** | **20** | 30 | 62.8 | **1.71 ms** | 1.00 | 43.8 |
+| **bos** | **20** | 83 | 61.2 | **1.79 ms** | 1.00 | 118.5 |
+
+- **Selected for the robot: bos, `min_white_black_diff` 20**
+  (`08-select-detector.sh bos --mwbd 20`). The detector is 30–40% faster, with
+  identical detection and margins. FPS is capture-bound either way.
+- **Decision margin tracks exposure:** about 44 at 3 ms vs about 118 at 8.3 ms. With
+  PhotonVision's default cutoff of 35, short exposures under shop lights sit close to
+  the cutoff, which is why tags flickered. Pick exposure and cutoff together.
+
+### CUDA error handling (bos build)
+
+- `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.
+  The JNI skips the frame and rebuilds the detector on the next one.
+- If frames fail continuously for 1 s, the JNI calls `_exit(1)` and systemd restarts
+  PhotonVision. It uses `_exit`, not `abort()`: SIGABRT went through the JVM crash
+  handler and Apport, which took 28 s and wrote a 156 MB `/var/crash` report.
+- The service runs Java with `-XX:-CreateCoredumpOnCrash` (06-install-fork-jar.sh),
+  so real native crashes also restart quickly.
+- Measured with fault injection (`echo N > /tmp/spectrum-971-fault-every`):
+  - **1 error per 100 frames:** no restart, 99% of frames still detected, ~59 fps.
+  - **Every frame failing:** exits after 1.7 s, detecting again 6.2 s later. That is
+    about 8 s total, vs about 62 s before the fixes.
+
+Still open: `use_neon` (a CPU NEON threshold absl flag) is untested and off.
 
 ## Changes from the handoff
 

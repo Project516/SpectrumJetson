@@ -17,7 +17,7 @@
 //   - Detect() failures (absl::Status) are logged and return no detections
 //   - CUDA errors throw (patches/bos-01-nonfatal-cuda.patch) instead of aborting the JVM:
 //     the frame is skipped and the detector rebuilt on the next frame; only after
-//     kMaxConsecutiveFailures failed frames in a row do we abort so systemd restarts
+//     failing continuously for kMaxFailingTime do we exit so systemd restarts
 //     PhotonVision (a broken CUDA context cannot be recovered in-process)
 //   - no per-detection std::cout; a once-per-second stats line instead
 
@@ -100,12 +100,16 @@ struct DetectorSlot {
   bool in_use = false;
   bool needs_rebuild = false;
   int consecutive_failures = 0;
+  std::chrono::steady_clock::time_point first_failure{};
   std::mutex mu;
   Stats stats;
 };
 
-// ~1 s at 60 fps. Past this the CUDA context is assumed broken.
-constexpr int kMaxConsecutiveFailures = 60;
+// Failing continuously this long (and at least kMinFailures frames) means the CUDA
+// context is assumed broken. Time-based because each failed frame also rebuilds the
+// detector, so frame count alone stretched this to ~5 s.
+constexpr std::chrono::milliseconds kMaxFailingTime{1000};
+constexpr int kMinFailures = 3;
 
 constexpr int kMaxDetectors = 10;
 DetectorSlot slots[kMaxDetectors];
@@ -147,14 +151,20 @@ bool Rebuild(DetectorSlot &s, size_t width, size_t height) {
 // Called with s.mu held after a failed frame or rebuild.
 void RecordFailure(DetectorSlot &s, jlong handle, const char *what) {
   s.needs_rebuild = true;
+  auto now = std::chrono::steady_clock::now();
+  if (s.consecutive_failures == 0) s.first_failure = now;
   if (++s.consecutive_failures <= 5 || s.consecutive_failures % 30 == 0) {
     std::cout << "971 detector h" << handle << " failure " << s.consecutive_failures << ": "
               << what << std::endl;
   }
-  if (s.consecutive_failures >= kMaxConsecutiveFailures) {
+  if (s.consecutive_failures >= kMinFailures && now - s.first_failure >= kMaxFailingTime) {
     std::cout << "971 detector h" << handle << ": " << s.consecutive_failures
-              << " consecutive failures; aborting so systemd restarts PhotonVision" << std::endl;
-    std::abort();
+              << " consecutive failures over 1 s; exiting so systemd restarts PhotonVision"
+              << std::endl;
+    // _exit, not abort(): SIGABRT runs the JVM crash handler and Apport, which took ~28 s
+    // (and a 156 MB /var/crash report) before the process died. Exit code 1 still makes
+    // systemd's Restart=on-failure restart it.
+    std::_Exit(1);
   }
 }
 

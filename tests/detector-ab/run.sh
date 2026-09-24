@@ -3,6 +3,7 @@
 # don't take PhotonVision down. Run ON THE JETSON with one camera on an AprilTagCuda
 # pipeline and a tag held still in view. Asks for sudo once; takes ~4 minutes.
 #
+# Usage: run.sh [all|faults]   (faults = skip the A/B)
 # Leaves the bos detector with min_white_black_diff 20 selected.
 set -uo pipefail
 
@@ -65,10 +66,16 @@ run_config() {
   done
 }
 
-echo "== A/B (hold the tag still) =="
-run_config "4143 mwbd5" 4143
-run_config "bos  mwbd5" bos --mwbd 5
-run_config "bos  mwbd20" bos --mwbd 20
+MODE=${1:-all}   # all | faults
+if [[ $MODE == all ]]; then
+  echo "== A/B (hold the tag still) =="
+  run_config "4143 mwbd5" 4143
+  run_config "bos  mwbd5" bos --mwbd 5
+  run_config "bos  mwbd20" bos --mwbd 20
+else
+  "$SEL" bos --mwbd 20 >/dev/null
+  wait_for_stats 2
+fi
 
 echo
 echo "== Fault test 1: a CUDA error every 100 frames (should skip frames, keep running) =="
@@ -82,7 +89,7 @@ echo "PID before $pid0, after $pid1 ($([ "$pid0" = "$pid1" ] && echo 'no restart
 echo "failures logged: $fails; stats while faulting: $(WINDOW=10 summarize)"
 
 echo
-echo "== Fault test 2: every frame fails (should abort once, systemd restarts) =="
+echo "== Fault test 2: every frame fails (should exit once, systemd restarts) =="
 wait_for_stats 2
 pid0=$(mainpid)
 t0=$(date +%s.%N)
@@ -90,7 +97,7 @@ echo 1 > $FAULT
 # Remove the flag as soon as the abort is logged so the restarted process runs clean.
 deadline=$(( $(date +%s) + 30 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  if journalctl _PID="$pid0" --no-pager -o cat 2>/dev/null | grep -q "aborting so systemd restarts"; then break; fi
+  if journalctl _PID="$pid0" --no-pager -o cat 2>/dev/null | grep -q "exiting so systemd restarts"; then break; fi
   sleep 0.2
 done
 t_abort=$(date +%s.%N)
@@ -104,7 +111,7 @@ done
 t_back=$(date +%s.%N)
 echo "PID $pid0 -> $(mainpid)"
 awk -v a="$t0" -v b="$t_abort" -v c="$t_back" 'BEGIN {
-  printf "time to abort after faults began: %.1f s; abort to detecting again: %.1f s\n", b-a, c-b }'
+  printf "time to exit after faults began: %.1f s; exit to detecting again: %.1f s\n", b-a, c-b }'
 
 echo
 v4l2-ctl -d /dev/video0 --set-ctrl=exposure_time_absolute=83
