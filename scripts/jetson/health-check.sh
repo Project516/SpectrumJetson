@@ -122,6 +122,9 @@ avail=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
 [[ $avail -ge 1500 ]] && pass "memory available ${avail} MB" || warn "memory available only ${avail} MB"
 disk=$(df -P / | awk 'NR == 2 {print int($5)}')
 [[ $disk -lt 85 ]] && pass "disk ${disk}% used" || warn "disk ${disk}% used"
+year=$(date -u +%Y)
+if [[ $year -ge 2026 ]]; then pass "clock: $(date -u '+%Y-%m-%d %H:%M UTC')"
+else warn "clock says $year: not set yet (no internet, and robot code hasn't published /photonvision/clock/unixMs)"; fi
 # Filesystem errors ext4 has recorded (world-readable counter; a power cut alone shouldn't cause any).
 fsdev=$(basename "$(findmnt -no SOURCE /)")
 fserr=$(cat "/sys/fs/ext4/$fsdev/errors_count" 2>/dev/null || echo "?")

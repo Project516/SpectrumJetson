@@ -342,6 +342,19 @@ The robot is switched off, never shut down, so every power-off is a power cut.
 - **Clock.** No RTC battery on the devkit: after a cut the clock restarts at **1970** until NTP (Wi-Fi) corrects it. That confuses `journalctl -b -1` (use `_BOOT_ID=`), and Rewind names made before NTP carry a 1970 date; their leading number is what orders them.
 - **Result (2026-09-24, power pulled 21.4 s into a bench recording):** 0 ext4 errors; the kernel logged `1 orphan inode deleted` / `recovery complete` (the journal replayed, normal after a cut). The old boot's log survived up to 3 s before the cut, including PhotonVision's lines. PhotonVision came back healthy (90 / 105 fps, both calibrations with 8 coefficients). The recording kept 20.0 s of 21.4 s: **1.4 s lost**, every saved frame a complete JPEG. `session.json` has no end, as expected.
 
+### Jetson clock from the robot (2026-09-24)
+
+`patches/photonvision-08-robot-clock.patch` (`RobotClockSync`, 1 Hz).
+
+- **Where the time comes from.** Robot code publishes `/photonvision/clock/unixMs` (integer, `System.currentTimeMillis()`) once the Driver Station has set the robot's clock. The Jetson has no RTC battery and no internet at events, so this is its only source.
+- **When it sets the clock.** When the value is 2026–2100, less than 5 s old (NT local receive timestamp) and more than 1 s off. At most once per 30 s, with `date -u -s @…` (PhotonVision runs as root).
+- **Internet time wins.** Skipped if `/run/systemd/timesync/synchronized` exists, i.e. timesyncd got NTP time this boot (shop Wi-Fi). The first bench test showed why: timesyncd noticed the jump and put NTP time back within a second, so a wrong robot clock and NTP would fight every 30 s. At events there's no NTP, so the robot's clock is used.
+- **Bench test (fake robot 120 s fast, before the NTP rule):** `Clock set from the robot: was 04:57:20, now 04:59:20 (+120.0 s)`, with that log line itself stamped 04:59:20, so the clock really moved. timesyncd then restored NTP time.
+- **Next boot.** It then touches `/var/lib/systemd/timesync/clock`; timesyncd moves the clock up to that file's modification time at boot, so after a power cut the Jetson starts near the last robot time, not 1970.
+- **Not for vision.** Frame timestamps, the PhotonVision↔robot time sync and Rewind frame times use `nt::Now` (monotonic), which setting the date doesn't move. It fixes Rewind names, the system log, and file dates.
+- **Robot half:** [2026-FM-SystemCore#10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10), section 6.
+- **Test:** `tests/robot-clock/run.sh` (a fake robot NT server on the Jetson).
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.

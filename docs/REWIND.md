@@ -159,9 +159,10 @@ every frame is a complete JPEG and warns if not.
 - **A camera plugged in mid-recording** joins the current recording from its first frame.
 - **Power cuts** (switching the robot off) lose at most ~2 s at the end of a recording: the files are
   forced to the SSD every 2 s. Tested by pulling the plug: 1.4 s lost, every saved frame complete.
-- **Dates in recording names can be wrong** (even 1970): the Jetson has no clock battery, so after
-  a power cut its clock is wrong until it reaches the internet. The number at the start of each name
-  is always in order.
+- **Dates in recording names come from the robot.** The Jetson has no clock battery, so after a
+  power cut its clock restarts at 1970. Once robot code publishes `/photonvision/clock/unixMs`
+  (see [TECHNICAL.md](TECHNICAL.md)), the Jetson sets its clock from the robot's. Until then the
+  date in a name can be wrong; the number at the start of each name is always in order.
 - **WPILib bug found on the way:** WPILib's Java `RawFrame.getSize()` goes stale when cscore reuses
   its buffer, so every frame was cut to the first frame's size. The recorder gives cscore its own 4
   MB buffer and finds each frame's real length from the JPEG's end marker.

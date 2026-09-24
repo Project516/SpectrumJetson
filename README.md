@@ -243,7 +243,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Wi-Fi / Bluetooth switches in PhotonVision (Bluetooth off; Wi-Fi off before events)
 - [x] Static IP 10.85.15.15 on Ethernet (set in PhotonVision: Settings > Networking)
 - [x] Rewind: record every camera to the SSD when robot code asks (bench-tested, no fps cost)
-- [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results, Rewind's robot-clock timestamps)
+- [x] Jetson sets its date from the robot's clock when it has no internet (`photonvision-08`; robot code publishes `/photonvision/clock/unixMs`, issue #10)
+- [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results, Rewind's robot-clock timestamps, the Jetson's date from the robot)
 - [ ] Turn off Wi-Fi and Bluetooth for competition
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
 - [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
