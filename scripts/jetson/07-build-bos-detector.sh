@@ -29,6 +29,11 @@ git fetch -q origin
 git checkout -q -f "$BOS_SHA"
 # Only abseil is needed (the pinned commit bos uses); skip json and bos-logs.
 git submodule update --init --depth 1 third_party/abseil-cpp
+for p in "$REPO_ROOT"/patches/bos-*.patch; do
+  [[ -e $p ]] || continue
+  echo "==> Applying $(basename "$p")"
+  git apply "$p"
+done
 
 cmake -S "$REPO_ROOT/detector" -B "$OUT" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBOS_DIR="$SRC"
 cmake --build "$OUT" --parallel 4 --target 971apriltag_jni

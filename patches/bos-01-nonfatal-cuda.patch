@@ -1,0 +1,118 @@
+diff --git a/third_party/971apriltag/cuda.h b/third_party/971apriltag/cuda.h
+index d0cb9d8..bce3c1b 100644
+--- a/third_party/971apriltag/cuda.h
++++ b/third_party/971apriltag/cuda.h
+@@ -10,13 +10,64 @@
+ #include "cuda_runtime.h"
+ #include "device_launch_parameters.h"
+ 
++#include <exception>
++#include <sstream>
++#include <stdexcept>
++#include <string>
++
++namespace frc::apriltag {
++
++// SpectrumJetson: a failed CUDA call throws CudaError instead of LOG(FATAL), so
++// the JNI caller can skip the frame (or rebuild the detector) rather than
++// aborting the whole JVM. Destructors use LOG_IF_CUDA_ERROR (a throw there
++// would std::terminate).
++class CudaError : public std::runtime_error {
++ public:
++  CudaError(const std::string &what, cudaError_t error)
++      : std::runtime_error(what), error_(error) {}
++  cudaError_t error() const { return error_; }
++
++ private:
++  cudaError_t error_;
++};
++
++// Collects the streamed message; throws when the full-expression ends.
++class CudaErrorThrower {
++ public:
++  CudaErrorThrower(const char *expr, cudaError_t error, const char *file, int line)
++      : error_(error) {
++    os_ << file << ":" << line << " Check failed: " << expr << " ("
++        << cudaGetErrorString(error) << ") ";
++  }
++  ~CudaErrorThrower() noexcept(false) {
++    if (std::uncaught_exceptions() == 0) throw CudaError(os_.str(), error_);
++  }
++  template <typename T>
++  CudaErrorThrower &operator<<(const T &value) {
++    os_ << value;
++    return *this;
++  }
++
++ private:
++  std::ostringstream os_;
++  cudaError_t error_;
++};
++
++}  // namespace frc::apriltag
++
+ // CHECKs that a cuda method returned success.
+ // TODO(austin): This will not handle if and else statements quite right, fix if
+ // we care.
+-#define CHECK_CUDA(condition)                                             \
+-  if (auto c = condition)                                                 \
+-  LOG(FATAL) << "Check failed: " #condition " (" << cudaGetErrorString(c) \
+-             << ") "
++#define CHECK_CUDA(condition)                              \
++  if (cudaError_t spectrum_cuda_error_ = (condition))      \
++  ::frc::apriltag::CudaErrorThrower(#condition, spectrum_cuda_error_, __FILE__, \
++                                    __LINE__)
++
++// Non-throwing variant for destructors.
++#define LOG_IF_CUDA_ERROR(condition)                                \
++  if (cudaError_t spectrum_cuda_error_ = (condition))               \
++  LOG(ERROR) << "CUDA call failed: " #condition " ("                 \
++             << cudaGetErrorString(spectrum_cuda_error_) << ") "
+ 
+ namespace frc::apriltag {
+ 
+@@ -33,7 +84,7 @@ class CudaStream {
+   CudaStream(const CudaStream&&) noexcept = delete;
+   CudaStream& operator=(const CudaStream&&) noexcept = delete;
+ 
+-  virtual ~CudaStream() { CHECK_CUDA(cudaStreamDestroy(stream_)); }
++  virtual ~CudaStream() { LOG_IF_CUDA_ERROR(cudaStreamDestroy(stream_)); }
+ 
+   // Returns the stream.
+   cudaStream_t get() { return stream_; }
+@@ -56,7 +107,7 @@ class CudaEvent {
+   CudaEvent(const CudaEvent&&) noexcept = delete;
+   CudaEvent& operator=(const CudaEvent&&) noexcept = delete;
+ 
+-  virtual ~CudaEvent() { CHECK_CUDA(cudaEventDestroy(event_)); }
++  virtual ~CudaEvent() { LOG_IF_CUDA_ERROR(cudaEventDestroy(event_)); }
+ 
+   // Returns the event.
+   cudaEvent_t get() { return event_; }
+@@ -98,7 +149,7 @@ class HostMemory {
+   HostMemory(const HostMemory&&) noexcept = delete;
+   HostMemory& operator=(const HostMemory&&) noexcept = delete;
+ 
+-  virtual ~HostMemory() { CHECK_CUDA(cudaFreeHost(span_.data())); }
++  virtual ~HostMemory() { LOG_IF_CUDA_ERROR(cudaFreeHost(span_.data())); }
+ 
+   // Returns a pointer to the memory.
+   T* get() { return span_.data(); }
+@@ -138,7 +189,7 @@ class GpuMemory {
+   GpuMemory(const GpuMemory&&) noexcept = delete;
+   GpuMemory& operator=(const GpuMemory&&) noexcept = delete;
+ 
+-  virtual ~GpuMemory() { CHECK_CUDA(cudaFree(memory_)); }
++  virtual ~GpuMemory() { LOG_IF_CUDA_ERROR(cudaFree(memory_)); }
+ 
+   // Returns the device pointer to the memory.
+   T* get() { return memory_; }
+@@ -246,7 +297,7 @@ class UnifiedMemory {
+   UnifiedMemory(const UnifiedMemory&&) noexcept = delete;
+   UnifiedMemory& operator=(const UnifiedMemory&&) noexcept = delete;
+ 
+-  virtual ~UnifiedMemory() { CHECK_CUDA(cudaFree(span_.data())); }
++  virtual ~UnifiedMemory() { LOG_IF_CUDA_ERROR(cudaFree(span_.data())); }
+ 
+   // Returns a pointer to the memory.
+   T* get() { return span_.data(); }

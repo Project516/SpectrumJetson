@@ -15,15 +15,22 @@
 //   - a per-slot mutex stops destroy/setparams racing processimage
 //   - stale CUDA errors are cleared before each detect (NVIDIA/cccl#1791)
 //   - Detect() failures (absl::Status) are logged and return no detections
+//   - CUDA errors throw (patches/bos-01-nonfatal-cuda.patch) instead of aborting the JVM:
+//     the frame is skipped and the detector rebuilt on the next frame; only after
+//     kMaxConsecutiveFailures failed frames in a row do we abort so systemd restarts
+//     PhotonVision (a broken CUDA context cannot be recovered in-process)
 //   - no per-detection std::cout; a once-per-second stats line instead
 
 #include <jni.h>
 #include <wpi/jni_util.h>
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <mutex>
+#include <string>
 
 #include <cuda_runtime.h>
 #include "absl/status/status.h"
@@ -46,6 +53,24 @@ const wpi::java::JClassInit classes[] = {
 int MinWhiteBlackDiff() {
   if (const char *v = std::getenv("SPECTRUM_971_MIN_WHITE_BLACK_DIFF")) return std::atoi(v);
   return 5;
+}
+
+// Test hook: if /tmp/spectrum-971-fault-every contains N > 0, every Nth frame hits a
+// real CUDA error (cudaSetDevice on a bad ordinal right before Detect, the
+// NVIDIA/cccl#1791 case). N=1 fails every frame, exercising abort-and-restart.
+// Re-read every 30 frames so a test can remove it before the restarted process runs.
+constexpr const char *kFaultFile = "/tmp/spectrum-971-fault-every";
+int FaultEvery() {
+  static int n = 0;
+  static int calls = 0;
+  if (calls++ % 30 == 0) {
+    n = 0;
+    if (FILE *f = std::fopen(kFaultFile, "r")) {
+      if (std::fscanf(f, "%d", &n) != 1) n = 0;
+      std::fclose(f);
+    }
+  }
+  return n;
 }
 
 frc::apriltag::CameraMatrix DefaultCameraMatrix() {
@@ -73,9 +98,14 @@ struct DetectorSlot {
   frc::apriltag::CameraMatrix camera_matrix = DefaultCameraMatrix();
   frc::apriltag::DistCoeffs dist_coeffs = DefaultDistCoeffs();
   bool in_use = false;
+  bool needs_rebuild = false;
+  int consecutive_failures = 0;
   std::mutex mu;
   Stats stats;
 };
+
+// ~1 s at 60 fps. Past this the CUDA context is assumed broken.
+constexpr int kMaxConsecutiveFailures = 60;
 
 constexpr int kMaxDetectors = 10;
 DetectorSlot slots[kMaxDetectors];
@@ -99,10 +129,33 @@ apriltag_detector_t *MakeTagDetector(apriltag_family_t *family) {
 }
 
 // Rebuilds the GPU detector for a new size or calibration. Caller holds s.mu.
-void Rebuild(DetectorSlot &s, size_t width, size_t height) {
+bool Rebuild(DetectorSlot &s, size_t width, size_t height) {
   delete s.gpu;
-  s.gpu = new frc::apriltag::GpuDetector(width, height, s.td, s.camera_matrix, s.dist_coeffs,
-                                         vision::ImageFormat::MONO8);
+  s.gpu = nullptr;
+  try {
+    s.gpu = new frc::apriltag::GpuDetector(width, height, s.td, s.camera_matrix,
+                                           s.dist_coeffs, vision::ImageFormat::MONO8);
+    s.needs_rebuild = false;
+    return true;
+  } catch (const std::exception &e) {
+    std::cout << "971 detector build " << width << "x" << height << " failed: " << e.what()
+              << std::endl;
+    return false;
+  }
+}
+
+// Called with s.mu held after a failed frame or rebuild.
+void RecordFailure(DetectorSlot &s, jlong handle, const char *what) {
+  s.needs_rebuild = true;
+  if (++s.consecutive_failures <= 5 || s.consecutive_failures % 30 == 0) {
+    std::cout << "971 detector h" << handle << " failure " << s.consecutive_failures << ": "
+              << what << std::endl;
+  }
+  if (s.consecutive_failures >= kMaxConsecutiveFailures) {
+    std::cout << "971 detector h" << handle << ": " << s.consecutive_failures
+              << " consecutive failures; aborting so systemd restarts PhotonVision" << std::endl;
+    std::abort();
+  }
 }
 
 jobject MakeJObject(JNIEnv *env, const apriltag_detection_t *detect) {
@@ -220,7 +273,9 @@ JNIEXPORT jlong JNICALL Java_org_photonvision_jni_GpuDetectorJNI_createGpuDetect
   s.dist_coeffs = DefaultDistCoeffs();
   s.family = tag36h11_create();
   s.td = MakeTagDetector(s.family);
-  Rebuild(s, width, height);
+  s.consecutive_failures = 0;
+  // If the GPU build fails, keep the slot: processimage retries the build each frame.
+  if (!Rebuild(s, width, height)) s.needs_rebuild = true;
   s.stats = Stats{};
   s.in_use = true;
   std::cout << "creategpudetector " << width << "x" << height << " handle " << h << std::endl;
@@ -255,7 +310,6 @@ JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setparams(
     return;
   }
   std::lock_guard<std::mutex> lock(s->mu);
-  if (!s->gpu) return;
   s->camera_matrix = frc::apriltag::CameraMatrix{fx, cx, fy, cy};
   s->dist_coeffs = DefaultDistCoeffs();
   s->dist_coeffs.k1 = k1;
@@ -266,7 +320,8 @@ JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setparams(
   std::cout << "setparams handle " << handle << ": fx " << fx << " cx " << cx << " fy " << fy
             << " cy " << cy << " k1 " << k1 << " k2 " << k2 << " p1 " << p1 << " p2 " << p2
             << " k3 " << k3 << std::endl;
-  Rebuild(*s, s->gpu->width(), s->gpu->height());
+  // Takes effect on the next frame (processimage rebuilds at the frame's size).
+  s->needs_rebuild = true;
 }
 
 JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processimage(
@@ -300,7 +355,6 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
     return nullptr;
   }
   std::lock_guard<std::mutex> lock(s->mu);
-  if (!s->gpu) return nullptr;
 
   // Clear any CUDA error left by an earlier unchecked call; CUB (CCCL >= 2.5) otherwise
   // fails later calls with it, and this detector's CHECK_CUDA would abort the process.
@@ -313,27 +367,44 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
     }
   }
 
-  if (static_cast<size_t>(img.cols) != s->gpu->width() ||
+  if (!s->gpu || s->needs_rebuild || static_cast<size_t>(img.cols) != s->gpu->width() ||
       static_cast<size_t>(img.rows) != s->gpu->height()) {
-    std::cout << "processimage: size changed to " << img.cols << "x" << img.rows
-              << ", rebuilding detector" << std::endl;
-    Rebuild(*s, img.cols, img.rows);
+    if (s->gpu && !s->needs_rebuild) {
+      std::cout << "processimage: size changed to " << img.cols << "x" << img.rows
+                << ", rebuilding detector" << std::endl;
+    }
+    if (!Rebuild(*s, img.cols, img.rows)) {
+      RecordFailure(*s, handle, "detector rebuild failed");
+      return MakeJObjectArray(env, nullptr);
+    }
   }
 
   auto t0 = std::chrono::steady_clock::now();
-  absl::Status status = s->gpu->Detect(img.ptr<uint8_t>(), nullptr);
+  const zarray_t *detections = nullptr;
+  bool failed = false;
+  if (int every = FaultEvery(); every > 0) {
+    static long frame = 0;
+    if (++frame % every == 0) cudaSetDevice(9999);  // leaves "invalid device ordinal"
+  }
+  try {
+    absl::Status status = s->gpu->Detect(img.ptr<uint8_t>(), nullptr);
+    if (status.ok()) {
+      detections = s->gpu->Detections();
+      s->consecutive_failures = 0;
+    } else {
+      failed = true;
+      RecordFailure(*s, handle, std::string(status.message()).c_str());
+    }
+  } catch (const std::exception &e) {
+    failed = true;
+    cudaGetLastError();  // clear a non-sticky error so the rebuild can succeed
+    RecordFailure(*s, handle, e.what());
+  }
   auto t1 = std::chrono::steady_clock::now();
 
-  const zarray_t *detections = nullptr;
-  if (status.ok()) {
-    detections = s->gpu->Detections();
-  } else {
-    static int logged = 0;
-    if (logged++ < 5) std::cout << "processimage: Detect failed: " << status << std::endl;
-  }
   jobjectArray result = MakeJObjectArray(env, detections);
   auto t2 = std::chrono::steady_clock::now();
-  RecordStats(s->stats, handle, img, detections, !status.ok(), t0, t1, t2);
+  RecordStats(s->stats, handle, img, detections, failed, t0, t1, t2);
   return result;
 }
 
