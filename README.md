@@ -149,8 +149,8 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 | --- | --- | --- |
 | TopLeft | top row, left | 2.1 |
 | TopRight | top row, right | 2.3 |
-| BottomLeft | bottom row, left | 2.2 (expected, not yet confirmed) |
-| BottomRight | bottom row, right | 2.4 (expected, not yet confirmed) |
+| BottomLeft | bottom row, left | 2.2 |
+| BottomRight | bottom row, right | 2.4 (expected; the other three are confirmed) |
 
 A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there. All four USB-A ports share one USB 2.0 hub; two MJPEG cameras fit easily, and 3–4 fit at ~60 fps each.
 
@@ -225,7 +225,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Reboot test: tuning survives a reboot; boot 57 s → 16.5 s, first detection ~20 s after power-on
 - [x] Name the cameras after their ports (TopLeft, TopRight; BottomLeft/BottomRight when added)
 - [x] Wi-Fi / Bluetooth switches in PhotonVision (Bluetooth off; Wi-Fi off before events)
-- [ ] Robot network: give the Jetson a static IP on `10.85.15.x` and test it with the SystemCore (NetworkTables, time sync, PhotonLib reading results)
+- [x] Static IP 10.85.15.15 on Ethernet (set in PhotonVision: Settings > Networking)
+- [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results)
 - [ ] Turn off Wi-Fi and Bluetooth for competition
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
 - [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
