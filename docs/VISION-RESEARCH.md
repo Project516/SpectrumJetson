@@ -172,12 +172,51 @@ PhotonVision 2027.
     at alt 11, so results reach the robot ~2 ms later. Timestamps aren't affected: the driver
     stamps a frame when its *first* USB packet arrives, and `photonvision-13` moves that back to
     mid-exposure.
-- **Hardware JPEG decode (NVJPG) exists on the Orin Nano.** The forums report clock and
-  chroma-format bugs and a symbol clash with OpenCV. AOS has it working: on an Orin Nano (JetPack
-  6.2, 1280x800), **2.3 ms a frame with 0.22 ms of CPU**, against 2.8 ms all on the CPU for
-  turbojpeg ([commit ec9719d002](https://github.com/RealtimeRoboticsGroup/aos/commit/ec9719d002)).
-  With 4 cameras that would free about a core. There's only one decoder engine, so 4 x 120 fps
-  may not fit (unverified). Next season.
+- **Hardware JPEG decode (NVJPG) works on our Orin Nano, but only one way of calling it gives
+  the right frames.** Tested 2026-09-24 on L4T R36.5.2 with 156 recorded 1280x800 frames, each
+  output checked pixel for pixel against libjpeg-turbo.
+  - **There are two engines, not one.** Two decoders side by side don't slow each other, and 4 at
+    once reach ~950 fps in total (4 x 120 fps needs 480). NVIDIA's datasheet doesn't list NVJPG
+    at all; its clock tables do (499.2 MHz). There's no hardware encoder.
+  - **AOS's method returns frozen frames here.** AOS reports **2.3 ms a frame with 0.22 ms of
+    CPU** on JetPack 6.2 ([commit ec9719d002](https://github.com/RealtimeRoboticsGroup/aos/commit/ec9719d002)).
+    Their method (libnvjpeg writes the rows into our buffer, one decoder reused) gave us frame 0
+    for all 156 frames, while libnvjpeg still reported a hardware decode. It may depend on the
+    L4T version. A new decoder per frame gives correct frames but takes 22 ms.
+  - **What works:** decode into libnvjpeg's own buffer (2.3 ms), then CUDA copies the gray plane
+    out, attaching the buffer again every frame: **2.9 ms and 0.95 ms of CPU a frame**, against
+    2.9 ms and 2.9 ms for libjpeg-turbo. Attached only once, 117 of 156 frames were stale. A CPU
+    copy is also correct but slow, because the buffer is uncached: 3.6 ms and 1.7 ms of CPU.
+  - **Pitfalls:** NVIDIA's `NvJPEGDecoder` class calls `exit()` on a bad JPEG, which would kill
+    the JVM. After a decode error the decoder must be re-created, or every later frame fails.
+    libnvjpeg exports the same function names as libjpeg-turbo, so our detector library can't
+    link both. The forums also report clock and chroma-format bugs.
+  - **The detector can read the decoder's buffer directly.** bos's `Detect(host, device)` takes a
+    GPU pointer; our JNI passes `nullptr` today. On 2,856 recorded frames (358 with tags) the
+    detections were identical to today's. The whole chain takes ~4.8 ms and 3.0 ms of CPU a
+    frame, against ~5.0 ms and 5.1 ms, and there's no copy to the GPU.
+  - **PhotonVision still wants a full-size image for the stream.** It shrinks every frame to
+    213x133 for the dashboard, with no fps cap, even when no one is watching (~0.3 ms a frame).
+    The direct path would give the stream its own small image instead.
+  - With 4 cameras it would free about a core. Next season, as an opt-in with libjpeg-turbo as
+    the fallback. The colour game-piece camera gains most: cscore's colour decode is 8.9 ms.
+- **Tag range: the GPU detector looks for tags on a half-size image.** It finds tag outlines at
+  640x400, then refines the corners and reads the ID at full size, so found tags keep full
+  accuracy. The half size is hard-wired (`CHECK_EQ(quad_decimate, 2)`). Tested 2026-09-24: 40
+  recorded frames of tag 3, shrunk to 40–8 px and re-compressed with the camera's JPEG tables,
+  decision margin ≥ 15.
+  - **Today:** 85% of frames at 20 px (~6 m face-on), 52% at 18 px, 2% at 14 px.
+  - **Searching at full size:** 100% down to 14 px, 98% at 12 px (~10 m), 70% at 10 px. That's
+    about 1.7x the range. Shrunk tags are sharper than real far-away ones, so real distances are
+    shorter for both. Tested by doubling the image (nearest-neighbour), so the detector's halving
+    gives back the original. The CPU AprilTag library agreed.
+  - **Cost** (cameras as threads in one process at 120 fps, on top of PhotonVision's own two):
+    2 cameras take 58% GPU and 4.4 ms a detection, against 38% and 1.6 ms today. 4 cameras
+    couldn't keep up (72 fps). That's an upper bound: a real full-size mode needs detector
+    changes, and would be cheaper.
+  - **Not now.** It fits 2 cameras, not 4, and less with YOLO. First check what distance the robot
+    code trusts: a 12 px tag gives a noisy single-tag pose. Cheaper options: full size only on the
+    cameras facing downfield, or only in a band around the horizon, where far tags appear.
 - **CSI cameras:** the devkit has 2 connectors; Arducam's OV9281 does 80 fps at 1280x800 (slower
   than our USB 120 fps). No JPEG step, and hardware timestamps. A next-season option.
 - **Lower-jitter options (971's approach):** pin USB interrupts to one core, run the capture
@@ -236,7 +275,7 @@ localizer).
 | **Health telemetry:** temperatures, fan, power rails every 5 s; good/failed JPEG decodes per camera; free disk | `frc/orin/hardware_monitor.cc`, `turbojpeg_decoder_status.fbs` | Med / med | A failed-decode count would catch frames the bandwidth cap cuts short. |
 | **Camera-mount calibration from data:** spin the robot between two ChArUco diamond targets | `calibrate_multi_cameras_lib.cc`, [971's procedure](https://github.com/frc971/971-Robot-Code/blob/master/y2024/vision/README.md) | Med / high | Measured robot-to-camera transforms beat CAD numbers. |
 | **Field tag map from logs** (Ceres solve) | `target_mapper.cc` | Low / med | WPILib's [WPIcal](https://docs.wpilib.org/en/stable/docs/software/wpilib-tools/wpical/index.html) measures tag positions from video, so Rewind footage could feed it. |
-| Hardware JPEG decode | see above | Low / med | Frees a core for more cameras. |
+| Hardware JPEG decode | see above | Low / med | Frees about a core with 4 cameras. Only one way of calling it gives the right frames. |
 | Live focus score while turning the lens | bos `src/calibration/focus_calibrate.cc` | Med / low | Cheap, and a sharper image helps every tag. |
 | USB interrupt pinning, real-time priorities | | Low / low | Less jitter, but risky a month out. |
 | Exposure set by alliance side | `field_side_exposure_adjuster.cc` | Low / low | It's effectively off in their config. |
@@ -379,6 +418,8 @@ easy, and it's worth benchmarking.
 - A replay tool for Rewind recordings.
 - Camera-mount calibration and field mapping from data.
 - Hardware JPEG decode.
+- Full-size tag search for range, if the robot code will use far tags (see Jetson-specific
+  findings).
 - A joint or heading-constrained solve (Whacknet, bos).
 - IRQ affinity and real-time priorities.
 - CSI, USB 3 or triggered cameras.
