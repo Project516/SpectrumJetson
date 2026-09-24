@@ -1,0 +1,367 @@
+diff --git a/photon-client/src/components/cameras/CameraCalibrationCard.vue b/photon-client/src/components/cameras/CameraCalibrationCard.vue
+index 97e3c138..d991ced1 100644
+--- a/photon-client/src/components/cameras/CameraCalibrationCard.vue
++++ b/photon-client/src/components/cameras/CameraCalibrationCard.vue
+@@ -1,5 +1,5 @@
+ <script setup lang="ts">
+-import { computed, ref, watchEffect } from "vue";
++import { computed, ref, watchEffect, onBeforeUnmount } from "vue";
+ import { useCameraSettingsStore } from "@/stores/settings/CameraSettingsStore";
+ import { CalibrationBoardTypes, CalibrationTagFamilies, type VideoFormat } from "@/types/SettingTypes";
+ import MonoLogo from "@/assets/images/logoMono.png";
+@@ -93,13 +93,35 @@ watchEffect(() => {
+   );
+   uniqueVideoResolutionString.value = names[currentIndex] ?? names[0] ?? "";
+ });
+-const squareSizeIn = ref(1);
+-const markerSizeIn = ref(0.75);
+-const patternWidth = ref(8);
+-const patternHeight = ref(8);
++// SpectrumJetson (photonvision-23): the team's board is the default: ChArUco, 5x5 markers, 30 mm
++// squares, 22 mm markers. It's labelled "9x12", but PhotonVision needs width 12, height 9.
++const MM_PER_INCH = 25.4;
++const squareSizeIn = ref(30 / MM_PER_INCH);
++const markerSizeIn = ref(22 / MM_PER_INCH);
++const patternWidth = ref(12);
++const patternHeight = ref(9);
+ const boardType = ref<CalibrationBoardTypes>(CalibrationBoardTypes.Charuco);
+ const useOldPattern = ref(false);
+-const tagFamily = ref<CalibrationTagFamilies>(CalibrationTagFamilies.Dict_4X4_1000);
++const tagFamily = ref<CalibrationTagFamilies>(CalibrationTagFamilies.Dict_5X5_1000);
++
++// Board sizes can be entered in mm (upstream #2479); the backend still gets inches.
++const dimensionUnit = ref<"in" | "mm">("mm");
++const convertInchesToDisplay = (valueInInches: number) =>
++  dimensionUnit.value === "mm" ? valueInInches * MM_PER_INCH : valueInInches;
++const convertDisplayToInches = (displayValue: number) =>
++  dimensionUnit.value === "mm" ? displayValue / MM_PER_INCH : displayValue;
++const squareSize = computed({
++  get: () => Math.round(convertInchesToDisplay(squareSizeIn.value) * 1000) / 1000,
++  set(value) {
++    squareSizeIn.value = convertDisplayToInches(value);
++  }
++});
++const markerSize = computed({
++  get: () => Math.round(convertInchesToDisplay(markerSizeIn.value) * 1000) / 1000,
++  set(value) {
++    markerSizeIn.value = convertDisplayToInches(value);
++  }
++});
+ const requestedVideoFormatIndex = ref(0);
+ 
+ // Emperical testing - with stack size limit of 1MB, we can handle at -least- 700k points
+@@ -195,15 +217,43 @@ const startCalibration = () => {
+   calibCanceled.value = false;
+   requestedVideoFormatIndex.value = useStateStore().calibrationData.videoFormatIndex;
+ };
++// SpectrumJetson (photonvision-23, idea from upstream #2149): automatic snapshots, separate from the
++// manual Take Snapshot button so a specific shot can still be taken by hand. The backend keeps a
++// snapshot only when it finds the board.
++const AUTO_SNAPSHOT_MS = 1000;
++const autoSnapshotTimer = ref<number | null>(null);
++const stopAutoSnapshots = () => {
++  if (autoSnapshotTimer.value !== null) {
++    window.clearInterval(autoSnapshotTimer.value);
++    autoSnapshotTimer.value = null;
++  }
++};
++const toggleAutoSnapshots = () => {
++  if (autoSnapshotTimer.value !== null) {
++    stopAutoSnapshots();
++    return;
++  }
++  const camera = useStateStore().currentCameraUniqueName;
++  autoSnapshotTimer.value = window.setInterval(() => {
++    if (!isCalibrating.value) {
++      stopAutoSnapshots();
++      return;
++    }
++    useCameraSettingsStore().takeCalibrationSnapshot(camera);
++  }, AUTO_SNAPSHOT_MS);
++};
++onBeforeUnmount(stopAutoSnapshots);
++
+ const showCalibEndDialog = ref(false);
+ const calibCanceled = ref(false);
+ const calibSuccess = ref<boolean | undefined>(undefined);
+ const calibEndpointFail = ref(false);
+ const endCalibration = () => {
++  stopAutoSnapshots();
+   calibSuccess.value = undefined;
+   calibEndpointFail.value = false;
+ 
+-  if (!useStateStore().calibrationData.hasEnoughImages) {
++  if (!hasEnoughImages.value) {
+     calibCanceled.value = true;
+   }
+ 
+@@ -231,6 +281,10 @@ const endCalibration = () => {
+ 
+ const drawAllSnapshots = ref(true);
+ 
++const bypassVal = ref(false);
++const minCount = computed(() => (bypassVal.value ? 10 : 100));
++const hasEnoughImages = computed(() => useStateStore().calibrationData.imageCount >= minCount.value);
++
+ const showCalDialog = ref(false);
+ const selectedVideoFormat = ref<VideoFormat | undefined>(undefined);
+ const setSelectedVideoFormat = (format: VideoFormat) => {
+@@ -344,19 +398,30 @@ const setSelectedVideoFormat = (format: VideoFormat) => {
+               :items="['Dict_4X4_1000', 'Dict_5X5_1000', 'Dict_6X6_1000', 'Dict_7X7_1000']"
+               :disabled="isCalibrating"
+             />
++            <pv-select
++              v-model="dimensionUnit"
++              label="Dimension Unit"
++              tooltip="Units used for pattern spacing and marker size"
++              :select-cols="8"
++              :items="[
++                { value: 'mm', name: 'Millimeters' },
++                { value: 'in', name: 'Inches' }
++              ]"
++              :disabled="isCalibrating"
++            />
+             <pv-number-input
+-              v-model="squareSizeIn"
+-              label="Pattern Spacing (in)"
+-              tooltip="Spacing between pattern features in inches"
++              v-model="squareSize"
++              :label="`Pattern Spacing (${dimensionUnit})`"
++              :tooltip="`Spacing between pattern features in ${dimensionUnit === 'mm' ? 'millimeters' : 'inches'}`"
+               :disabled="isCalibrating"
+               :rules="[(v) => v > 0 || 'Size must be positive']"
+               :label-cols="4"
+             />
+             <pv-number-input
+               v-if="boardType === CalibrationBoardTypes.Charuco"
+-              v-model="markerSizeIn"
+-              label="Marker Size (in)"
+-              tooltip="Size of the tag markers in inches must be smaller than pattern spacing"
++              v-model="markerSize"
++              :label="`Marker Size (${dimensionUnit})`"
++              :tooltip="`Size of the tag markers in ${dimensionUnit === 'mm' ? 'millimeters' : 'inches'}; must be smaller than pattern spacing`"
+               :disabled="isCalibrating"
+               :rules="[(v) => v > 0 || 'Size must be positive']"
+               :label-cols="4"
+@@ -483,11 +548,22 @@ const setSelectedVideoFormat = (format: VideoFormat) => {
+           <v-chip
+             :variant="theme.global.current.value.dark ? 'tonal' : 'elevated'"
+             label
+-            :color="useStateStore().calibrationData.hasEnoughImages ? 'buttonPassive' : 'light-grey'"
++            :color="hasEnoughImages ? 'buttonPassive' : 'light-grey'"
+           >
+             Snapshots: {{ useStateStore().calibrationData.imageCount }} of at least
+-            {{ useStateStore().calibrationData.minimumImageCount }}
++            {{ minCount }}
+           </v-chip>
++          <v-spacer />
++          <pv-switch
++            v-model="bypassVal"
++            color="error"
++            hide-details
++            class="ml-4"
++            label="Bypass minimum"
++            :label-cols="6"
++            :switch-cols="6"
++            tooltip="Bypass the minimum recommended amount of snapshots for a calibration. Should only be used for dev work or temporary tests not competitions. Still requires 10 images to calibrate."
++          />
+         </div>
+         <div>
+           <v-btn
+@@ -532,15 +608,32 @@ const setSelectedVideoFormat = (format: VideoFormat) => {
+               size="small"
+               block
+               :variant="theme.global.current.value.dark ? 'outlined' : 'elevated'"
+-              :color="useStateStore().calibrationData.hasEnoughImages ? 'buttonActive' : 'error'"
++              :color="hasEnoughImages ? 'buttonActive' : 'error'"
+               :disabled="!isCalibrating || !settingsValid"
+               @click="endCalibration"
+             >
+               <v-icon start class="calib-btn-icon" size="large">
+-                {{ useStateStore().calibrationData.hasEnoughImages ? "mdi-flag-checkered" : "mdi-flag-off-outline" }}
++                {{ hasEnoughImages ? "mdi-flag-checkered" : "mdi-flag-off-outline" }}
++              </v-icon>
++              <span class="calib-btn-label">{{ hasEnoughImages ? "Finish Calibration" : "Cancel Calibration" }}</span>
++            </v-btn>
++          </v-col>
++        </div>
++        <div v-if="isCalibrating" class="d-flex pt-3">
++          <v-col cols="12" class="pa-0">
++            <v-btn
++              size="small"
++              block
++              :color="autoSnapshotTimer !== null ? 'error' : 'buttonActive'"
++              :variant="theme.global.current.value.dark ? 'outlined' : 'elevated'"
++              :disabled="!settingsValid || tooManyPoints"
++              @click="toggleAutoSnapshots"
++            >
++              <v-icon start class="calib-btn-icon" size="large">
++                {{ autoSnapshotTimer !== null ? "mdi-stop" : "mdi-autorenew" }}
+               </v-icon>
+               <span class="calib-btn-label">{{
+-                useStateStore().calibrationData.hasEnoughImages ? "Finish Calibration" : "Cancel Calibration"
++                autoSnapshotTimer !== null ? "Stop Auto Snapshots" : "Auto Snapshots (1 per second)"
+               }}</span>
+             </v-btn>
+           </v-col>
+diff --git a/photon-client/src/stores/StateStore.ts b/photon-client/src/stores/StateStore.ts
+index f9650a93..bc4fa0a3 100644
+--- a/photon-client/src/stores/StateStore.ts
++++ b/photon-client/src/stores/StateStore.ts
+@@ -39,8 +39,6 @@ interface StateStore {
+   calibrationData: {
+     imageCount: number;
+     videoFormatIndex: number;
+-    minimumImageCount: number;
+-    hasEnoughImages: boolean;
+   };
+ 
+   snackbarData: {
+@@ -88,9 +86,7 @@ export const useStateStore = defineStore("state", {
+ 
+       calibrationData: {
+         imageCount: 0,
+-        videoFormatIndex: 0,
+-        minimumImageCount: 12,
+-        hasEnoughImages: false
++        videoFormatIndex: 0
+       },
+ 
+       snackbarData: {
+@@ -161,9 +157,7 @@ export const useStateStore = defineStore("state", {
+     updateCalibrationStateValuesFromWebsocket(data: WebsocketCalibrationData) {
+       this.calibrationData = {
+         imageCount: data.count,
+-        videoFormatIndex: data.videoModeIndex,
+-        minimumImageCount: data.minCount,
+-        hasEnoughImages: data.hasEnough
++        videoFormatIndex: data.videoModeIndex
+       };
+     },
+     updateDiscoveredCameras(data: VsmState) {
+diff --git a/photon-client/src/stores/settings/CameraSettingsStore.ts b/photon-client/src/stores/settings/CameraSettingsStore.ts
+index 49826a40..53d1d483 100644
+--- a/photon-client/src/stores/settings/CameraSettingsStore.ts
++++ b/photon-client/src/stores/settings/CameraSettingsStore.ts
+@@ -385,8 +385,6 @@ export const useCameraSettingsStore = defineStore("cameraSettings", {
+       const payload = {
+         startPnpCalibration: {
+           count: stateCalibData.imageCount,
+-          minCount: stateCalibData.minimumImageCount,
+-          hasEnough: stateCalibData.hasEnoughImages,
+           videoModeIndex: stateCalibData.videoFormatIndex,
+           ...calibrationInitData
+         },
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipeline/Calibrate3dPipeline.java b/photon-core/src/main/java/org/photonvision/vision/pipeline/Calibrate3dPipeline.java
+index c1b03a2a..410bf6a3 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipeline/Calibrate3dPipeline.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipeline/Calibrate3dPipeline.java
+@@ -63,21 +63,14 @@ public class Calibrate3dPipeline
+     /// Output of the calibration, getter method is set for this.
+     private CVPipeResult<CameraCalibrationCoefficients> calibrationOutput;
+ 
+-    private final int minSnapshots;
+-
+     private boolean calibrating = false;
+ 
+     private static final FrameThresholdType PROCESSING_TYPE = FrameThresholdType.NONE;
+ 
+     public Calibrate3dPipeline() {
+-        this(12);
+-    }
+-
+-    public Calibrate3dPipeline(int minSnapshots) {
+         super(PROCESSING_TYPE);
+         this.settings = new Calibration3dPipelineSettings();
+         this.foundCornersList = new ArrayList<>();
+-        this.minSnapshots = minSnapshots;
+     }
+ 
+     @Override
+@@ -164,21 +157,7 @@ public class Calibrate3dPipeline
+         return foundCornersList.stream().map(it -> it.imagePoints.toList()).toList();
+     }
+ 
+-    public boolean hasEnough() {
+-        return foundCornersList.size() >= minSnapshots;
+-    }
+-
+     public CameraCalibrationCoefficients tryCalibration(Path imageSavePath) {
+-        if (!hasEnough()) {
+-            logger.info(
+-                    "Not enough snapshots! Only got "
+-                            + foundCornersList.size()
+-                            + " of "
+-                            + minSnapshots
+-                            + " -- returning null..");
+-            return null;
+-        }
+-
+         this.calibrating = true;
+ 
+         /*
+@@ -216,8 +195,6 @@ public class Calibrate3dPipeline
+                         new UICalibrationData(
+                                 foundCornersList.size(),
+                                 settings.cameraVideoModeIndex,
+-                                minSnapshots,
+-                                hasEnough(),
+                                 Units.metersToInches(settings.gridSize),
+                                 Units.metersToInches(settings.markerSize),
+                                 settings.boardWidth,
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipeline/UICalibrationData.java b/photon-core/src/main/java/org/photonvision/vision/pipeline/UICalibrationData.java
+index 3bd021e5..59842ba3 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipeline/UICalibrationData.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipeline/UICalibrationData.java
+@@ -22,8 +22,6 @@ import org.opencv.objdetect.Objdetect;
+ public class UICalibrationData {
+     public int videoModeIndex;
+     public int count;
+-    public int minCount;
+-    public boolean hasEnough;
+     public double squareSizeIn;
+     public int patternWidth;
+     public int patternHeight;
+@@ -37,8 +35,6 @@ public class UICalibrationData {
+     public UICalibrationData(
+             int count,
+             int videoModeIndex,
+-            int minCount,
+-            boolean hasEnough,
+             double squareSizeIn,
+             double markerSizeIn,
+             int patternWidth,
+@@ -47,9 +43,7 @@ public class UICalibrationData {
+             boolean useOldPattern,
+             TagFamily tagFamily) {
+         this.count = count;
+-        this.minCount = minCount;
+         this.videoModeIndex = videoModeIndex;
+-        this.hasEnough = hasEnough;
+         this.squareSizeIn = squareSizeIn;
+         this.markerSizeIn = markerSizeIn;
+         this.patternWidth = patternWidth;
+@@ -90,10 +84,6 @@ public class UICalibrationData {
+                 + videoModeIndex
+                 + ", count="
+                 + count
+-                + ", minCount="
+-                + minCount
+-                + ", hasEnough="
+-                + hasEnough
+                 + ", squareSizeIn="
+                 + squareSizeIn
+                 + ", markerSizeIn="
+diff --git a/photon-core/src/test/java/org/photonvision/vision/pipeline/Calibrate3dPipeTest.java b/photon-core/src/test/java/org/photonvision/vision/pipeline/Calibrate3dPipeTest.java
+index ccb5e0c0..3ad4a6d2 100644
+--- a/photon-core/src/test/java/org/photonvision/vision/pipeline/Calibrate3dPipeTest.java
++++ b/photon-core/src/test/java/org/photonvision/vision/pipeline/Calibrate3dPipeTest.java
+@@ -216,7 +216,7 @@ public class Calibrate3dPipeTest {
+ 
+         assertTrue(directoryListing.length >= 12);
+ 
+-        Calibrate3dPipeline calibration3dPipeline = new Calibrate3dPipeline(10);
++        Calibrate3dPipeline calibration3dPipeline = new Calibrate3dPipeline();
+         calibration3dPipeline.getSettings().boardType = boardType;
+         calibration3dPipeline.getSettings().markerSize = markerSize;
+         calibration3dPipeline.getSettings().tagFamily = tagFamily;

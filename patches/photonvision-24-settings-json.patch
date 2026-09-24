@@ -1,0 +1,428 @@
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonSettingsPublisher.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonSettingsPublisher.java
+new file mode 100644
+index 00000000..7746b505
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonSettingsPublisher.java
+@@ -0,0 +1,138 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.hardware.metrics;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import com.fasterxml.jackson.databind.node.ObjectNode;
++import edu.wpi.first.cscore.CameraServerJNI;
++import edu.wpi.first.networktables.PubSubOption;
++import edu.wpi.first.networktables.StringPublisher;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.security.MessageDigest;
++import java.util.HexFormat;
++import java.util.TreeMap;
++import org.photonvision.PhotonVersion;
++import org.photonvision.common.configuration.ConfigManager;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.common.util.TimedTaskManager;
++import org.photonvision.vision.target.ExcludedTags;
++
++/**
++ * SpectrumJetson (photonvision-24): the Jetson-wide settings on NetworkTables as one JSON string,
++ * /photonvision/jetson/settingsJson, rebuilt every 5 s, for the robot log. It's sent only when it
++ * changes. Holds:
++ *
++ * <ul>
++ *   <li>the PhotonVision build;
++ *   <li>every SPECTRUM_* setting in PhotonVision's environment (detector threshold, JPEG decoder,
++ *       CUDA wait, game-piece fps cap, stream fps, camera delay), plus the /tmp runtime overrides
++ *       for the JPEG decoder and CUDA wait;
++ *   <li>the tags left out of multi-tag;
++ *   <li>the field layout: tag count, size and a fingerprint, so logs show which layout was loaded;
++ *   <li>the USB camera driver's bandwidth cap.
++ * </ul>
++ */
++public final class JetsonSettingsPublisher {
++    private static final Logger logger = new Logger(JetsonSettingsPublisher.class, LogGroup.General);
++    private static final ObjectMapper mapper = new ObjectMapper();
++    private static JetsonSettingsPublisher instance;
++    private static volatile ObjectNode latest = null;
++
++    public static synchronized void start() {
++        if (instance == null) instance = new JetsonSettingsPublisher();
++    }
++
++    /** The latest snapshot, or null before the first one (for Rewind's session.json). */
++    public static ObjectNode snapshot() {
++        return latest;
++    }
++
++    private final StringPublisher publisher;
++    private boolean loggedFailure = false;
++
++    private JetsonSettingsPublisher() {
++        publisher =
++                NetworkTablesManager.getInstance()
++                        .getNTInst()
++                        .getTable("photonvision")
++                        .getSubTable("jetson")
++                        .getStringTopic("settingsJson")
++                        .publish(PubSubOption.keepDuplicates(false));
++        TimedTaskManager.getInstance().addTask("JetsonSettings", this::publish, 2000, 5000);
++    }
++
++    private void publish() {
++        try {
++            ObjectNode root = mapper.createObjectNode();
++            root.put("photonVersion", PhotonVersion.versionString);
++            root.put("buildDate", PhotonVersion.buildDate);
++            root.put("hostname", CameraServerJNI.getHostname());
++
++            var env = root.putObject("environment");
++            new TreeMap<>(System.getenv())
++                    .forEach((k, v) -> {
++                        if (k.startsWith("SPECTRUM_")) env.put(k, v);
++                    });
++            var overrides = root.putObject("runtimeOverrides");
++            for (String f : new String[] {"/tmp/spectrum-jpeg-decoder", "/tmp/spectrum-971-cuda-sync"}) {
++                String v = read(Path.of(f));
++                if (v != null) overrides.put(f, v);
++            }
++
++            var tags = root.putArray("excludedTags");
++            new java.util.TreeSet<>(ExcludedTags.getInstance().active()).forEach(tags::add);
++
++            var layout = ConfigManager.getInstance().getConfig().getApriltagFieldLayout();
++            if (layout != null) {
++                var l = root.putObject("fieldLayout");
++                l.put("tags", layout.getTags().size());
++                l.put("lengthM", layout.getFieldLength());
++                l.put("widthM", layout.getFieldWidth());
++                l.put("fingerprint", fingerprint(mapper.writeValueAsString(layout.getTags())));
++            }
++
++            String cap = read(Path.of("/sys/module/uvcvideo/parameters/payload_cap"));
++            if (cap != null) root.put("uvcPayloadCap", cap);
++
++            latest = root;
++            publisher.set(mapper.writeValueAsString(root));
++            loggedFailure = false;
++        } catch (Exception e) {
++            if (!loggedFailure) logger.warn("Could not publish Jetson settings: " + e);
++            loggedFailure = true;
++        }
++    }
++
++    /** First 12 hex characters of a SHA-256: enough to tell layouts apart in a log. */
++    private static String fingerprint(String s) throws Exception {
++        var md = MessageDigest.getInstance("SHA-256");
++        return HexFormat.of().formatHex(md.digest(s.getBytes(StandardCharsets.UTF_8))).substring(0, 12);
++    }
++
++    private static String read(Path p) {
++        try {
++            return Files.exists(p) ? Files.readString(p).strip() : null;
++        } catch (Exception e) {
++            return null;
++        }
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
+index 5f497347..408f0d1c 100644
+--- a/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
++++ b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
+@@ -93,7 +93,17 @@ public class RewindManager {
+         public double minFreeGB = 15;
+     }
+ 
+-    public record Session(String name, Path dir, long startUs, String reason) {}
++    public record Session(
++            String name, Path dir, long startUs, String reason, Map<String, Object> startSettings) {}
++
++    /** SpectrumJetson (photonvision-24): every camera's settings and the Jetson's, right now. */
++    private static Map<String, Object> settingsSnapshot() {
++        Map<String, Object> m = new LinkedHashMap<>();
++        m.put("cameras", org.photonvision.vision.processes.CameraSettingsPublisher.snapshots());
++        var jetson = org.photonvision.common.hardware.metrics.JetsonSettingsPublisher.snapshot();
++        if (jetson != null) m.put("jetson", jetson);
++        return m;
++    }
+ 
+     private static RewindManager INSTANCE;
+ 
+@@ -268,7 +278,7 @@ public class RewindManager {
+             logger.error("Rewind: cannot create " + dir, e);
+             return;
+         }
+-        current = new Session(name, dir, now, reason);
++        current = new Session(name, dir, now, reason, settingsSnapshot());
+         stopReason = "";
+         writeSessionJson(current, null);
+         logger.info("Rewind: recording session " + name + " (" + reason + ")");
+@@ -305,6 +315,13 @@ public class RewindManager {
+             cams.add(c);
+         }
+         m.put("cameras", cams);
++        // SpectrumJetson (photonvision-24): what the cameras and the Jetson were set to, when the
++        // recording started (and at the end, if anything changed).
++        if (s.startSettings() != null) m.put("settings", s.startSettings());
++        if (endReason != null) {
++            var endSettings = settingsSnapshot();
++            if (!endSettings.equals(s.startSettings())) m.put("settingsAtEnd", endSettings);
++        }
+         if (endReason != null) {
+             m.put("endJetsonUs", NetworkTablesJNI.now());
+             m.put("endReason", endReason);
+diff --git a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
+index 57429ca5..92620c6c 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
++++ b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
+@@ -367,6 +367,30 @@ public class GenericUSBCameraSettables extends VisionSourceSettables {
+      * @param property
+      * @param value
+      */
++    // SpectrumJetson (photonvision-24): the UVC controls worth logging, including ones the UI doesn't
++    // show (contrast, gamma, sharpness, backlight compensation).
++    private static final String[] LOGGED_CONTROLS = {
++        "exposure_time_absolute", "exposure_absolute", "auto_exposure", "brightness", "contrast", "gamma",
++        "sharpness", "saturation", "gain", "white_balance_temperature", "white_balance_automatic",
++        "backlight_compensation", "power_line_frequency", "focus_automatic_continuous"
++    };
++
++    @Override
++    public java.util.Map<String, Long> getRawControls() {
++        var m = new java.util.LinkedHashMap<String, Long>();
++        for (String name : LOGGED_CONTROLS) {
++            try {
++                // cscore scales some controls to 0-100 and keeps the camera's own value as raw_*.
++                VideoProperty prop = camera.getProperty("raw_" + name);
++                if (prop.getKind() == VideoProperty.Kind.kNone) prop = camera.getProperty(name);
++                if (prop.getKind() != VideoProperty.Kind.kNone) m.put(name, (long) prop.get());
++            } catch (Exception e) {
++                // Camera unplugged or the property went away; skip it this time.
++            }
++        }
++        return m;
++    }
++
+     protected void softSet(String property, int value) {
+         VideoProperty prop = camera.getProperty(property);
+         if (prop.getKind() == VideoProperty.Kind.kNone) {
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/CameraSettingsPublisher.java b/photon-core/src/main/java/org/photonvision/vision/processes/CameraSettingsPublisher.java
+new file mode 100644
+index 00000000..4fae4249
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/CameraSettingsPublisher.java
+@@ -0,0 +1,155 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.processes;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import com.fasterxml.jackson.databind.node.ObjectNode;
++import edu.wpi.first.networktables.PubSubOption;
++import edu.wpi.first.networktables.StringPublisher;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.common.util.TimedTaskManager;
++import org.photonvision.common.util.file.JacksonUtils;
++import org.photonvision.vision.camera.CameraQuirk;
++
++/**
++ * SpectrumJetson (photonvision-24): this camera's settings on NetworkTables as one JSON string,
++ * /photonvision/<camera>/settingsJson, rebuilt every 5 s, for the robot log. NetworkTables sends it
++ * only when it changes, so it costs nothing between changes, and AdvantageKit records it at the
++ * start of every log. So each match's log says what the cameras were set to.
++ *
++ * <p>It holds:
++ *
++ * <ul>
++ *   <li>the current pipeline's full settings, as PhotonVision saves them (exposure, brightness, gain,
++ *       decision margin, 3D, multi-tag, ...);
++ *   <li>the video mode, whether the camera is enabled, and its FPS limit;
++ *   <li>which lens calibration is in use (resolution, fx/fy/cx/cy, snapshot count);
++ *   <li>the camera's quirks;
++ *   <li>the camera's controls as actually set (raw UVC values, including ones the UI doesn't show,
++ *       like contrast, gamma and sharpness).
++ * </ul>
++ *
++ * The latest snapshot of every camera also goes into each Rewind recording's session.json.
++ */
++public class CameraSettingsPublisher {
++    private static final Logger logger = new Logger(CameraSettingsPublisher.class, LogGroup.General);
++    private static final ObjectMapper mapper = new ObjectMapper();
++    private static final long PERIOD_MS = 5000;
++    private static final Map<String, JsonNode> latest = new ConcurrentHashMap<>();
++
++    /** The latest snapshot of every camera, by camera name (for Rewind's session.json). */
++    public static Map<String, JsonNode> snapshots() {
++        return new LinkedHashMap<>(latest);
++    }
++
++    private final VisionModule module;
++    private String publishedName = null;
++    private StringPublisher publisher = null;
++    private boolean loggedFailure = false;
++
++    public CameraSettingsPublisher(VisionModule module) {
++        this.module = module;
++        String id = module.getCameraConfiguration().uniqueName;
++        TimedTaskManager.getInstance().addTask("CameraSettings-" + id, this::publish, 2000, PERIOD_MS);
++    }
++
++    private void publish() {
++        try {
++            var config = module.getCameraConfiguration();
++            ObjectNode root = mapper.createObjectNode();
++            root.put("camera", config.nickname);
++            root.put("pipelineIndex", module.pipelineManager.getCurrentPipelineIndex());
++            root.put("enabled", module.getEnabled());
++            root.put("fpsLimit", module.getEffectiveFPSLimit());
++
++            var settables = module.visionSource.getSettables();
++            var mode = settables.getCurrentVideoMode();
++            if (mode != null) {
++                root.put("videoMode", mode.width + "x" + mode.height + " " + mode.pixelFormat + " " + mode.fps + " fps");
++            }
++
++            var quirks = root.putArray("quirks");
++            if (config.cameraQuirks != null) {
++                for (var q : CameraQuirk.values()) {
++                    if (config.cameraQuirks.hasQuirk(q)) quirks.add(q.name());
++                }
++            }
++
++            var props = settables.getFrameStaticProperties();
++            var cal = props != null ? props.cameraCalibration : null;
++            if (cal != null && cal.cameraIntrinsics != null && cal.cameraIntrinsics.data.length >= 9) {
++                var c = root.putObject("calibration");
++                var k = cal.cameraIntrinsics.data;
++                c.put("resolution", (int) cal.unrotatedImageSize.width + "x" + (int) cal.unrotatedImageSize.height);
++                c.put("fx", k[0]);
++                c.put("fy", k[4]);
++                c.put("cx", k[2]);
++                c.put("cy", k[5]);
++                var d = c.putArray("distCoeffs");
++                if (cal.distCoeffs != null) for (double v : cal.distCoeffs.data) d.add(v);
++                c.put("snapshots", cal.observations != null ? cal.observations.size() : 0);
++                if (cal.lensmodel != null) c.put("lensModel", cal.lensmodel.name());
++            } else {
++                root.putNull("calibration");
++            }
++
++            var controls = root.putObject("controls");
++            settables.getRawControls().forEach(controls::put);
++
++            var pipeline = module.pipelineManager.getCurrentPipelineSettings();
++            if (pipeline != null) {
++                JsonNode p = mapper.readTree(JacksonUtils.serializeToString(pipeline));
++                // PhotonVision saves settings as [className, {...}]; keep just the object.
++                if (p.isArray() && p.size() == 2 && p.get(1).isObject()) p = p.get(1);
++                root.set("pipeline", p);
++            }
++
++            latest.put(config.nickname, root);
++            ensurePublisher(config.nickname);
++            publisher.set(mapper.writeValueAsString(root));
++            loggedFailure = false;
++        } catch (Exception e) {
++            // Settings can change while being read; the next tick tries again.
++            if (!loggedFailure) logger.warn("Could not publish camera settings: " + e);
++            loggedFailure = true;
++        }
++    }
++
++    /** (Re)creates the topic when the camera is first seen or renamed. */
++    private void ensurePublisher(String name) {
++        if (name.equals(publishedName)) return;
++        if (publisher != null) {
++            publisher.close();
++            if (publishedName != null) latest.remove(publishedName);
++        }
++        publisher =
++                NetworkTablesManager.getInstance()
++                        .getNTInst()
++                        .getTable("photonvision")
++                        .getSubTable(name)
++                        .getStringTopic("settingsJson")
++                        .publish(PubSubOption.keepDuplicates(false));
++        publishedName = name;
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 2435548e..7a9db225 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -39,6 +39,7 @@ import org.photonvision.common.dataflow.websocket.UICameraConfiguration;
+ import org.photonvision.common.dataflow.websocket.UIDataPublisher;
+ import org.photonvision.common.dataflow.websocket.UIPhotonConfiguration;
+ import org.photonvision.common.hardware.HardwareManager;
++import org.photonvision.common.hardware.metrics.JetsonSettingsPublisher;
+ import org.photonvision.common.hardware.metrics.JetsonTelemetry;
+ import org.photonvision.common.logging.LogGroup;
+ import org.photonvision.common.logging.Logger;
+@@ -183,6 +184,10 @@ public class VisionModule {
+         // SpectrumJetson: the camera's mount (height, pitch, roll) from the tags it sees (photonvision-17).
+         addResultConsumer(
+                 new MountEstimatePublisher(() -> visionSource.getSettables().getConfiguration().nickname));
++        // SpectrumJetson: this camera's settings, and the Jetson's, as JSON for the robot log
++        // (photonvision-24).
++        new CameraSettingsPublisher(this);
++        JetsonSettingsPublisher.start();
+ 
+         // SpectrumJetson: a brand-new camera gets the team's tuned settings (TeamCameraDefaults)
+         // instead of stock PhotonVision's CPU AprilTag at 320x240. The camera usually hasn't
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
+index 6d1076bf..27d427a3 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
+@@ -115,6 +115,14 @@ public abstract class VisionSourceSettables {
+ 
+     public abstract HashMap<Integer, VideoMode> getAllVideoModes();
+ 
++    /**
++     * SpectrumJetson (photonvision-24): the camera's controls as actually set (raw values), for the
++     * settings snapshot in the robot log. Empty for cameras that don't have them.
++     */
++    public java.util.Map<String, Long> getRawControls() {
++        return java.util.Map.of();
++    }
++
+     public double getFOV() {
+         return configuration.FOV;
+     }

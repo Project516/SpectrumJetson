@@ -74,6 +74,19 @@ int MinWhiteBlackDiff() {
   return 5;
 }
 
+// Largest mean-squared error of a candidate quad's edge-line fit. AprilTag's default is 10.
+// Upstream PhotonVision PR #2138 lowers its CPU detector to 2.5, which stops tags cut off at the
+// image edge from being detected, with little effect on range in their tests. Set with
+// SPECTRUM_971_MAX_LINE_FIT_MSE (08-select-detector.sh --mse N); test range and edge behaviour
+// before changing it.
+float MaxLineFitMse() {
+  if (const char *v = std::getenv("SPECTRUM_971_MAX_LINE_FIT_MSE")) {
+    const float f = std::strtof(v, nullptr);
+    if (f > 0) return f;
+  }
+  return 10.0f;
+}
+
 // How the CPU thread waits for the GPU (cudaSetDeviceFlags, at library load, before any CUDA
 // context exists): "auto" (CUDA's default; with one context on 6 cores it spins), "spin",
 // "yield" or "block" (sleep). Measured on the bench (2 cameras, 121 fps each, 2026-09-24):
@@ -173,6 +186,7 @@ apriltag_detector_t *MakeTagDetector(apriltag_family_t *family) {
   td->nthreads = 6;
   td->wp = workerpool_create(td->nthreads);
   td->qtp.min_white_black_diff = MinWhiteBlackDiff();
+  td->qtp.max_line_fit_mse = MaxLineFitMse();
   td->debug = false;
   // GpuDetector CHECKs these (the AprilTag defaults): quad_decimate 2, no deglitch.
   return td;
@@ -655,7 +669,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
   std::string sync;
   const cudaError_t sync_err = cudaSetDeviceFlags(CudaScheduleFlag(&sync));
   std::cout << "971 library loaded (frc971/bos detector, min_white_black_diff "
-            << MinWhiteBlackDiff() << ", CUDA wait " << sync
+            << MinWhiteBlackDiff() << ", max_line_fit_mse " << MaxLineFitMse() << ", CUDA wait " << sync
             << (sync_err == cudaSuccess ? "" : std::string(" FAILED: ") + cudaGetErrorString(sync_err))
             << ")" << std::endl;
   return JNI_VERSION_1_6;

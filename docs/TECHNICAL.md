@@ -576,6 +576,81 @@ every topic above. Not run yet: the NT topics are published by the running build
 read back. Set PhotonVision's NT server address to 127.0.0.1 first, and set it back to 8515
 afterwards.
 
+### Bad tags, calibration, settings snapshots, copy settings, line-fit knob (2026-09-24)
+
+**`photonvision-22`: tags left out of multi-tag** (`ExcludedTags`). One list for every camera, the
+union of two sources:
+- the Settings page's AprilTag Field Layout card, saved in
+  `photonvision_config/spectrum/excluded-tags.txt` (included in settings exports);
+- robot code: `/photonvision/excludedTags` (integer array).
+
+How it behaves:
+- Both AprilTag pipelines filter the targets they pass to `MultiTargetPNPPipe`. Excluded tags are
+  still reported, with single-tag poses.
+- The combined list is published as `/photonvision/excludedTagsActive`.
+- REST: `GET/POST /api/excludedTags`, `{"saved": [7, 12]}`.
+- **Checked:** save, persist, log, clear, and a 400 for bad input.
+- **Not yet checked:** the multi-tag result with tags in view.
+
+**`photonvision-23`: calibration.**
+- **Upstream #2437:** 100 snapshots minimum.
+- **Auto Snapshots:** a separate toggle, one snapshot request a second; the backend keeps a frame
+  only when it finds the board. **Take Snapshot** still works on its own. The idea is from upstream
+  #2149, which starts calibrating and loops snapshots behind one button.
+- **Board sizes in mm** (upstream #2479; the backend still gets inches).
+- **Our board is the default:** ChArUco `Dict_5X5_1000`, 30/22 mm, width 12, height 9.
+
+**`photonvision-24`: settings snapshots for the robot log** (`CameraSettingsPublisher`,
+`JetsonSettingsPublisher`). Rebuilt every 5 s and published with `keepDuplicates(false)`, so a value
+only goes out when it changes.
+- **`/photonvision/<camera>/settingsJson`:**
+  - camera, pipeline index, enabled, FPS limit, video mode, quirks
+  - the calibration in use: resolution, fx, fy, cx, cy, distortion coefficients, snapshot count,
+    lens model
+  - `controls`, the raw UVC values: exposure, brightness, contrast, gamma, sharpness, gain, white
+    balance, backlight, power-line frequency, autofocus
+  - `pipeline`, the full pipeline settings as PhotonVision saves them
+- **`/photonvision/jetson/settingsJson`:**
+  - PhotonVision version and build date, hostname
+  - every `SPECTRUM_*` environment variable, plus the `/tmp` runtime overrides for the JPEG
+    decoder and CUDA wait
+  - the excluded tags
+  - the field layout: tag count, size, and a SHA-256 fingerprint of its tags
+  - the uvcvideo `payload_cap`
+- **Rewind:** `session.json` gets `settings` from the start of the recording, and `settingsAtEnd`
+  if they changed.
+- **Checked** in a bench recording's `session.json`:
+  - TopRight's calibration: fx 737.0, 41 snapshots, 8 coefficients
+  - its controls: contrast 32, gamma 150, sharpness 5, autofocus 0
+  - its pipeline: exposure 50
+
+**`photonvision-25`: copy settings** (`VisionModule.copySettingsFrom`,
+`POST /api/settings/copySettings`).
+- **Groups:**
+  - `camera`: exposure, auto exposure, brightness, gain, white balance, stream divisor,
+    `blockForFrames`
+  - `resolution`: only when both cameras list the same video modes
+  - `apriltag`: tag family, decimate, blur, threads, refine edges, iterations, hamming, decision
+    margin
+  - `output`: 3D, multi-tag, single-tag fallback, drawing, max targets
+  - `objectDetection`: confidence, NMS, model
+- **How:** fields are copied by reflection, and fields the other pipeline type lacks are skipped.
+  If the target pipeline is running, it's re-applied with `setPipeline`, then everything is saved
+  and broadcast.
+- **UI:** the pipeline menu's **Copy settings from…**, optionally into the same pipeline number on
+  every camera.
+- **Checked:** TopLeft → TopRight (identical settings) copied 22 fields, and the object-detection
+  fields were skipped. Copying a pipeline onto itself, or an unknown group, returns 400.
+
+**Detector `max_line_fit_mse`** (`SPECTRUM_971_MAX_LINE_FIT_MSE`, `08-select-detector.sh --mse N`).
+- **Default 10** (AprilTag's), shown in the "971 library loaded" line.
+- **What it does:** the GPU line-fit filter rejects a quad if any side's fit error is above it (bos
+  `apriltag.cc` → `line_fit_filter.cc`).
+- **Upstream #2138** lowers PhotonVision's CPU detector to 2.5, so tags cut off at the image edge
+  aren't detected, with little range loss in their tests.
+- **Not changed yet:** test it with tags in view first.
+- **Deployed build passes** `tests/jpeg-hw/run.sh`.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,

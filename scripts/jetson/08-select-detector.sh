@@ -2,10 +2,12 @@
 # Choose which lib971apriltag.so PhotonVision loads, and its runtime options.
 # Run ON THE JETSON. Both builds have the same Java API.
 #
-# Usage: 08-select-detector.sh 4143|bos [--mwbd N] [--jpeg nvjpg|turbo] [--no-restart]
+# Usage: 08-select-detector.sh 4143|bos [--mwbd N] [--jpeg nvjpg|turbo] [--mse N] [--no-restart]
 #   4143   FRC-Team-4143/GpuDetectorJNI + our patches (05-build-gpudetector.sh)
 #   bos    Austin's current detector via frc971/bos (07-build-bos-detector.sh)
 #   --mwbd N         min_white_black_diff (bos build only; default 5)
+#   --mse N          max_line_fit_mse (bos build only; default 10). Lower (e.g. 2.5, upstream
+#                    PhotonVision #2138) rejects tags cut off at the image edge; test range first.
 #   --jpeg nvjpg     decode camera JPEGs on the NVJPG hardware engine (bos build only; default
 #                    turbo = libjpeg-turbo on the CPU). Check it first with tests/jpeg-hw/run.sh.
 #                    For a quick A/B without a restart: echo turbo > /tmp/spectrum-jpeg-decoder
@@ -13,14 +15,16 @@
 # (Fault injection for testing: echo N > /tmp/spectrum-971-fault-every; rm it to stop.)
 set -euo pipefail
 
-which=${1:?usage: $0 4143|bos [--mwbd N] [--jpeg nvjpg|turbo] [--no-restart]}
+which=${1:?usage: $0 4143|bos [--mwbd N] [--jpeg nvjpg|turbo] [--mse N] [--no-restart]}
 shift
 mwbd=""
 jpeg=""
+mse=""
 restart=1
 while [[ $# -gt 0 ]]; do
   case $1 in
     --mwbd) mwbd=$2; shift 2 ;;
+    --mse) mse=$2; shift 2 ;;
     --jpeg) jpeg=$2; shift 2
             [[ $jpeg == nvjpg || $jpeg == turbo ]] || { echo "--jpeg must be nvjpg or turbo" >&2; exit 1; } ;;
     --no-restart) restart=0; shift ;;
@@ -49,6 +53,7 @@ fi
 dropin=/etc/systemd/system/photonvision.service.d/971.conf
 env_lines=""
 [[ -n $mwbd ]] && env_lines+="Environment=SPECTRUM_971_MIN_WHITE_BLACK_DIFF=$mwbd"$'\n'
+[[ -n $mse ]] && env_lines+="Environment=SPECTRUM_971_MAX_LINE_FIT_MSE=$mse"$'\n'
 [[ $jpeg == nvjpg ]] && env_lines+="Environment=SPECTRUM_JPEG_DECODER=nvjpg"$'\n'
 if [[ -n $env_lines ]]; then
   printf '[Service]\n%s' "$env_lines" | sudo tee "$dropin" >/dev/null
@@ -57,7 +62,7 @@ else
 fi
 sudo systemctl daemon-reload
 
-echo "Selected $which detector${mwbd:+, min_white_black_diff $mwbd}${jpeg:+, JPEG decoder $jpeg}"
+echo "Selected $which detector${mwbd:+, min_white_black_diff $mwbd}${mse:+, max_line_fit_mse $mse}${jpeg:+, JPEG decoder $jpeg}"
 if [[ $restart -eq 1 ]]; then
   sudo systemctl restart photonvision
 fi

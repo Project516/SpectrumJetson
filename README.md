@@ -103,7 +103,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
 | 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance), gray and colour; it uses ~180 MB of memory per camera. Leave it out to decode on the CPU. |
-| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–21. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–25. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 | 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
 | 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
 
@@ -201,6 +201,21 @@ All four USB-A ports share one USB 2.0 root port. Four cameras fit there only wi
 
 A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there.
 
+**Copying settings between cameras** (`photonvision-25`): no more photographing one camera's settings and typing them into another.
+- **Where:** in the pipeline menu (☰ next to the pipeline name), **Copy settings from…** copies from any camera and pipeline into the one you're looking at.
+- **What:** tick the groups: Camera (exposure, brightness, gain, white balance, stream resolution), AprilTag (decision margin and detector settings), 3D and multi-tag, Resolution, or Object detection.
+- **All cameras at once:** it can also copy into the same pipeline number on every other camera.
+- **Never copied:** orientation, names and each camera's exposure limits. Resolution is only copied between cameras with the same video modes.
+
+**Profiles** (practice field, event field): give every camera the same pipelines at the same numbers, e.g. 0 = Event and 1 = Practice field.
+- Robot code switches them all together (the toggle is in issue #10), and the robot log records which one was active.
+- Copy settings fills in the other cameras after tuning one.
+
+**Leaving bad tags out of multi-tag** (`photonvision-22`): if a tag is mounted wrong at an event, list it, and every camera's multi-tag solve ignores it.
+- **You list the bad tags, not the good ones.**
+- **Where:** type them on the Settings page's AprilTag Field Layout card (e.g. `7, 12`, saved on the Jetson). Robot code can add more on `/photonvision/excludedTags`.
+- Left-out tags are still reported as targets, with single-tag poses, and are dimmed in the tag table.
+
 **Measuring a camera's mount from the tags** (`photonvision-17`):
 - **Where:** with the robot level on the floor and 2+ tags in view, the Targets tab's **Camera mount estimate** shows the camera's height, pitch and roll on the robot, averaged over the last 100 samples with a ± spread.
 - **Why it works:** while the robot is level, the camera's height, pitch and roll on the field are its mount's, wherever the robot is.
@@ -225,8 +240,12 @@ The board is labeled "9x12", but **PhotonVision needs width 12, height 9**. With
 
 **Calibration tips:**
 
-- After clicking Start, set **Auto Exposure off and Exposure about 150**. Calibration uses its own settings, and its default was nearly black.
-- Take 25–50 snapshots. Cover every corner of the image, tilt the board up to about 45°, vary the distance, and hold still for each shot.
+- **The board settings start at our board:** ChArUco, 5x5 markers, 30 mm squares, 22 mm markers, width 12, height 9. Sizes are in millimetres (`photonvision-23`).
+- After clicking Start, set **Auto Exposure off and Exposure about 150**. Calibration uses its own settings, and its default was nearly black. A long exposure is fine here because the board is held still; don't copy it into the vision pipelines.
+- **Take at least 100 snapshots.** PhotonVision now requires 100 (upstream #2437); mrcal's docs show the returns diminish around there.
+  - Click **Auto Snapshots (1 per second)** and keep moving the board slowly. It keeps a snapshot only when it finds the board.
+  - **Take Snapshot** still takes one by hand, for a specific shot.
+  - Cover every corner of the image, tilt the board up to about 45°, and vary the distance.
 - Aim for a mean reprojection error under about 0.5 px (under 1 px is fine for FRC).
 - If a calibration fails and gets stuck, restart PhotonVision (Settings → Restart Software) to clear the bad snapshots.
 
@@ -306,6 +325,12 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 - `tests/jetson-telemetry/run.sh` prints them on the bench.
 - The Settings page's Device Metrics also has a **GPU Usage** chart (`photonvision-19`).
 
+**Camera settings go in the robot log too** (`photonvision-24`), so you can tell what a camera was set to in any match.
+- **Per camera:** `/photonvision/<camera>/settingsJson` holds the full current pipeline settings, the video mode, which lens calibration is in use, and the camera's controls as actually set, including ones the UI doesn't show.
+- **Jetson-wide:** `/photonvision/jetson/settingsJson` holds the PhotonVision build, the detector and decoder settings, the tags left out of multi-tag, and a fingerprint of the field layout.
+- **Cost:** both are rebuilt every 5 s but only sent when something changes, and AdvantageKit records them at the start of every log.
+- **Rewind:** each recording's `session.json` gets the same snapshot.
+
 ## Where everything lives, and what's left
 
 The detailed technical reference, with exact versions, commits and measurements, is [docs/TECHNICAL.md](docs/TECHNICAL.md). This README is the overview. What this setup lacks compared with Limelight 4, and what the robot code has to do about it (MegaTag 1/2, gyro heading), is in [docs/LIMELIGHT-COMPARISON.md](docs/LIMELIGHT-COMPARISON.md). Other teams' vision systems and our performance work are in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md). What we took from upstream PhotonVision, and what to test, is in [docs/UPSTREAM-PORT.md](docs/UPSTREAM-PORT.md).
@@ -352,6 +377,9 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
 - [ ] Field calibration mode: push the robot by hand to 10–20 spots, then solve for the event's real tag positions, every camera's mount and the best camera settings ([docs/FIELD-CALIBRATION-PLAN.md](docs/FIELD-CALIBRATION-PLAN.md)). Test in the shop first.
 - [ ] Add the camera controls PhotonVision's UI doesn't show (contrast, gamma, sharpness, backlight compensation), then measure whether they help
+- [x] Bad tags left out of multi-tag, calibration with 100 auto snapshots and our board as the default, camera settings in the robot log, copy settings between cameras (patches 22–25)
+- [ ] Test the detector's `max_line_fit_mse` at 2.5 (upstream #2138: rejects tags cut off at the image edge) against the default 10 with tags in view: range and edge behaviour. Then set it with `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg --mse 2.5`
+- [ ] Test whether the Camera Gain slider does anything on our cameras (`photonvision-21`)
 - [ ] Cheap wins from other teams' systems: Rewind starting itself on enable and named by match, auto-resetting a stuck camera (same doc). Robot-side items, like trusting tags less near the image edge, are in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10)
 - [x] Full backup image of the SSD with PhotonVision's settings (`scripts/host/04-backup-ssd.sh`: 8.7 GB, 7 min). Keep it on the team drive, never GitHub (it holds the Wi-Fi password and SSH keys)
 - [x] GitHub release [v2026.09.24](https://github.com/Spectrum3847/SpectrumJetson/releases/tag/v2026.09.24): the PhotonVision jar, TensorRT backend, camera driver and settings

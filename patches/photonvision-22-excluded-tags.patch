@@ -1,0 +1,370 @@
+diff --git a/photon-client/src/components/settings/ApriltagControlCard.vue b/photon-client/src/components/settings/ApriltagControlCard.vue
+index 41413698..b1089b6a 100644
+--- a/photon-client/src/components/settings/ApriltagControlCard.vue
++++ b/photon-client/src/components/settings/ApriltagControlCard.vue
+@@ -2,7 +2,53 @@
+ import { useSettingsStore } from "@/stores/settings/GeneralSettingsStore";
+ import type { Quaternion } from "@/types/PhotonTrackingTypes";
+ import { toDeg } from "@/lib/MathUtils";
++import { onBeforeUnmount, onMounted, ref } from "vue";
++import axios from "axios";
++import { useStateStore } from "@/stores/StateStore";
++import { useTheme } from "vuetify";
+ const { Euler, Quaternion: ThreeQuat } = await import("three");
++const theme = useTheme();
++
++// SpectrumJetson (photonvision-22): tags left out of multi-tag on every camera. List the bad ones.
++type ExcludedTags = { saved: number[]; robot: number[]; active: number[] };
++const excluded = ref<ExcludedTags | null>(null);
++const excludedText = ref("");
++const excludedBusy = ref(false);
++const excludedTextValid = (text: string) => /^[\d,\s]*$/.test(text);
++const loadExcluded = async (updateText = false) => {
++  try {
++    excluded.value = (await axios.get("/excludedTags")).data;
++    if (updateText && excluded.value) excludedText.value = excluded.value.saved.join(", ");
++  } catch {
++    excluded.value = null;
++  }
++};
++const saveExcluded = async () => {
++  excludedBusy.value = true;
++  try {
++    const saved = excludedText.value
++      .split(/[,\s]+/)
++      .filter((part) => part.length > 0)
++      .map((part) => parseInt(part, 10));
++    excluded.value = (await axios.post("/excludedTags", { saved })).data;
++    excludedText.value = excluded.value?.saved.join(", ") ?? excludedText.value;
++    useStateStore().showSnackbarMessage({ message: "Saved the tags to leave out of multi-tag", color: "success" });
++  } catch (e: any) {
++    useStateStore().showSnackbarMessage({
++      message: e?.response?.data || "Could not save the tags to leave out",
++      color: "error"
++    });
++  } finally {
++    excludedBusy.value = false;
++  }
++};
++const isExcluded = (id: number) => excluded.value?.active.includes(id) ?? false;
++let excludedTimer: ReturnType<typeof setInterval> | undefined;
++onMounted(() => {
++  loadExcluded(true);
++  excludedTimer = setInterval(() => loadExcluded(false), 2000); // the robot's list can change
++});
++onBeforeUnmount(() => clearInterval(excludedTimer));
+ 
+ const quaternionToEuler = (rot_quat: Quaternion): { x: number; y: number; z: number } => {
+   const quat = new ThreeQuat(rot_quat.X, rot_quat.Y, rot_quat.Z, rot_quat.W);
+@@ -19,6 +65,36 @@ const quaternionToEuler = (rot_quat: Quaternion): { x: number; y: number; z: num
+       <p>Field width: {{ useSettingsStore().currentFieldLayout.field.width.toFixed(2) }} meters</p>
+       <p>Field length: {{ useSettingsStore().currentFieldLayout.field.length.toFixed(2) }} meters</p>
+ 
++      <div class="pt-4 pb-4">
++        <p class="pb-2">
++          <b>Tags left out of multi-tag</b> (every camera). List the bad tags, e.g. one mounted wrong at an event.
++          They're still reported as targets.
++        </p>
++        <div class="d-flex align-center">
++          <v-text-field
++            v-model="excludedText"
++            density="compact"
++            label="Tag IDs, e.g. 7, 12"
++            hide-details="auto"
++            :rules="[(v: string) => excludedTextValid(v) || 'Numbers, commas and spaces only']"
++            :disabled="excludedBusy"
++            class="pr-3"
++          />
++          <v-btn
++            color="buttonActive"
++            :variant="theme.global.current.value.dark ? 'outlined' : 'elevated'"
++            :disabled="excludedBusy || !excludedTextValid(excludedText)"
++            @click="saveExcluded"
++          >
++            Save
++          </v-btn>
++        </div>
++        <p v-if="excluded && excluded.robot.length" class="pt-2">Robot code adds: {{ excluded.robot.join(", ") }}</p>
++        <p class="pt-2">
++          Left out now: {{ excluded ? (excluded.active.length ? excluded.active.join(", ") : "none") : "unknown" }}
++        </p>
++      </div>
++
+       <!-- Simple table height must be set here and in the CSS for the fixed-header to work -->
+       <v-table fixed-header height="100%" density="compact">
+         <template #default>
+@@ -34,8 +110,12 @@ const quaternionToEuler = (rot_quat: Quaternion): { x: number; y: number; z: num
+             </tr>
+           </thead>
+           <tbody>
+-            <tr v-for="(tag, index) in useSettingsStore().currentFieldLayout.tags" :key="index">
+-              <td>{{ tag.ID }}</td>
++            <tr
++              v-for="(tag, index) in useSettingsStore().currentFieldLayout.tags"
++              :key="index"
++              :style="isExcluded(tag.ID) ? 'opacity: 0.4' : ''"
++            >
++              <td>{{ tag.ID }}{{ isExcluded(tag.ID) ? " (left out)" : "" }}</td>
+               <td v-for="(val, idx) in Object.values(tag.pose.translation)" :key="idx">{{ val.toFixed(2) }}&nbsp;m</td>
+               <td v-for="(val, idx) in Object.values(quaternionToEuler(tag.pose.rotation.quaternion))" :key="idx + 4">
+                 {{ val.toFixed(2) }}&deg;
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagCudaPipeline.java b/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagCudaPipeline.java
+index 2dec97ec..65517550 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagCudaPipeline.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagCudaPipeline.java
+@@ -49,6 +49,7 @@ import org.photonvision.vision.pipe.impl.CalculateFPSPipe;
+ import org.photonvision.vision.pipe.impl.MultiTargetPNPPipe;
+ import org.photonvision.vision.pipe.impl.MultiTargetPNPPipe.MultiTargetPNPPipeParams;
+ import org.photonvision.vision.pipeline.result.CVPipelineResult;
++import org.photonvision.vision.target.ExcludedTags;
+ import org.photonvision.vision.target.TrackedTarget;
+ import org.photonvision.vision.target.TrackedTarget.TargetCalculationParameters;
+ 
+@@ -158,7 +159,14 @@ public class AprilTagCudaPipeline extends CVPipeline<CVPipelineResult, AprilTagC
+         // Do multi-tag pose estimation
+         Optional<MultiTargetPNPResult> multiTagResult = Optional.empty();
+         if (settings.solvePNPEnabled && settings.doMultiTarget) {
+-            var multiTagOutput = multiTagPNPPipe.run(targetList);
++            // SpectrumJetson: leave the listed bad tags out of multi-tag (photonvision-22). They're
++            // still reported, with single-tag poses.
++            var excluded = ExcludedTags.getInstance().active();
++            var multiTagTargets =
++                    excluded.isEmpty()
++                            ? targetList
++                            : targetList.stream().filter(t -> !excluded.contains(t.getFiducialId())).toList();
++            var multiTagOutput = multiTagPNPPipe.run(multiTagTargets);
+             sumPipeNanosElapsed += multiTagOutput.nanosElapsed;
+             multiTagResult = multiTagOutput.output;
+         }
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagPipeline.java b/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagPipeline.java
+index 5409859f..5b0018f0 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagPipeline.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagPipeline.java
+@@ -48,6 +48,7 @@ import org.photonvision.vision.pipe.impl.CalculateFPSPipe;
+ import org.photonvision.vision.pipe.impl.MultiTargetPNPPipe;
+ import org.photonvision.vision.pipe.impl.MultiTargetPNPPipe.MultiTargetPNPPipeParams;
+ import org.photonvision.vision.pipeline.result.CVPipelineResult;
++import org.photonvision.vision.target.ExcludedTags;
+ import org.photonvision.vision.target.TrackedTarget;
+ import org.photonvision.vision.target.TrackedTarget.TargetCalculationParameters;
+ 
+@@ -171,7 +172,14 @@ public class AprilTagPipeline extends CVPipeline<CVPipelineResult, AprilTagPipel
+         // Do multi-tag pose estimation
+         Optional<MultiTargetPNPResult> multiTagResult = Optional.empty();
+         if (settings.solvePNPEnabled && settings.doMultiTarget) {
+-            var multiTagOutput = multiTagPNPPipe.run(targetList);
++            // SpectrumJetson: leave the listed bad tags out of multi-tag (photonvision-22). They're
++            // still reported, with single-tag poses.
++            var excluded = ExcludedTags.getInstance().active();
++            var multiTagTargets =
++                    excluded.isEmpty()
++                            ? targetList
++                            : targetList.stream().filter(t -> !excluded.contains(t.getFiducialId())).toList();
++            var multiTagOutput = multiTagPNPPipe.run(multiTagTargets);
+             sumPipeNanosElapsed += multiTagOutput.nanosElapsed;
+             multiTagResult = multiTagOutput.output;
+         }
+diff --git a/photon-core/src/main/java/org/photonvision/vision/target/ExcludedTags.java b/photon-core/src/main/java/org/photonvision/vision/target/ExcludedTags.java
+new file mode 100644
+index 00000000..fa23400b
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/target/ExcludedTags.java
+@@ -0,0 +1,136 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.target;
++
++import edu.wpi.first.networktables.IntegerArrayPublisher;
++import edu.wpi.first.networktables.IntegerArraySubscriber;
++import edu.wpi.first.networktables.NetworkTable;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Collection;
++import java.util.Set;
++import java.util.TreeSet;
++import org.photonvision.common.configuration.PathManager;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.common.util.TimedTaskManager;
++
++/**
++ * SpectrumJetson (photonvision-22): AprilTags left out of the multi-tag solve, on every camera. You
++ * list the bad tags (e.g. one mounted wrong at an event), not the good ones. Two sources, combined:
++ *
++ * <ul>
++ *   <li>the Settings page, saved on the Jetson in photonvision_config/spectrum/excluded-tags.txt;
++ *   <li>robot code: /photonvision/excludedTags (integer array), e.g. set per event from a dashboard.
++ * </ul>
++ *
++ * Excluded tags are still reported as targets, with their own single-tag poses. They're only kept
++ * out of the multi-tag solve. The combined list is published as /photonvision/excludedTagsActive,
++ * for the robot log.
++ */
++public final class ExcludedTags {
++    private static final Logger logger = new Logger(ExcludedTags.class, LogGroup.General);
++    private static ExcludedTags instance;
++
++    public static synchronized ExcludedTags getInstance() {
++        if (instance == null) instance = new ExcludedTags();
++        return instance;
++    }
++
++    private final Path file;
++    private volatile Set<Integer> saved = Set.of();
++    private volatile Set<Integer> robot = Set.of();
++    private volatile Set<Integer> active = Set.of();
++    private final IntegerArraySubscriber robotSub;
++    private final IntegerArrayPublisher activePub;
++
++    private ExcludedTags() {
++        file = PathManager.getInstance().getRootFolder().resolve("spectrum").resolve("excluded-tags.txt");
++        saved = load(file);
++        NetworkTable t = NetworkTablesManager.getInstance().getNTInst().getTable("photonvision");
++        robotSub = t.getIntegerArrayTopic("excludedTags").subscribe(new long[0]);
++        activePub = t.getIntegerArrayTopic("excludedTagsActive").publish();
++        refresh();
++        TimedTaskManager.getInstance().addTask("ExcludedTags", this::refresh, 200);
++        logger.info("Tags left out of multi-tag: " + (active.isEmpty() ? "none" : active));
++    }
++
++    /** The tags to leave out of multi-tag right now: the saved list plus the robot's. */
++    public Set<Integer> active() {
++        return active;
++    }
++
++    public Set<Integer> saved() {
++        return saved;
++    }
++
++    public Set<Integer> robot() {
++        return robot;
++    }
++
++    /** Replaces the saved list (the Settings page's), and writes it to disk. */
++    public synchronized void setSaved(Collection<Integer> tags) throws IOException {
++        var next = new TreeSet<Integer>();
++        for (Integer id : tags) {
++            if (id != null && id >= 0 && id <= 1000) next.add(id);
++        }
++        Files.createDirectories(file.getParent());
++        Files.writeString(file, String.join(", ", next.stream().map(String::valueOf).toList()) + "\n");
++        saved = Set.copyOf(next);
++        logger.info("Saved tags to leave out of multi-tag: " + (next.isEmpty() ? "none" : next));
++        refresh();
++    }
++
++    private synchronized void refresh() {
++        var fromRobot = new TreeSet<Integer>();
++        for (long id : robotSub.get()) {
++            if (id >= 0 && id <= 1000) fromRobot.add((int) id);
++        }
++        var combined = new TreeSet<Integer>(saved);
++        combined.addAll(fromRobot);
++        if (!combined.equals(active)) {
++            logger.info(
++                    "Tags left out of multi-tag: "
++                            + (combined.isEmpty() ? "none" : combined)
++                            + (fromRobot.isEmpty() ? "" : " (robot code: " + fromRobot + ")"));
++        }
++        robot = Set.copyOf(fromRobot);
++        active = Set.copyOf(combined);
++        activePub.set(combined.stream().mapToLong(Integer::longValue).toArray());
++    }
++
++    private static Set<Integer> load(Path p) {
++        var tags = new TreeSet<Integer>();
++        try {
++            if (!Files.exists(p)) return Set.of();
++            for (String part : Files.readString(p).split("[,\\s]+")) {
++                if (part.isBlank()) continue;
++                try {
++                    tags.add(Integer.parseInt(part.strip()));
++                } catch (NumberFormatException e) {
++                    logger.warn("Ignoring '" + part + "' in " + p);
++                }
++            }
++        } catch (IOException e) {
++            logger.error("Could not read " + p, e);
++        }
++        return Set.copyOf(tags);
++    }
++}
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index 7740872a..24ae30f5 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -464,6 +464,44 @@ public class RequestHandler {
+ 
+     // SpectrumJetson Rewind. POST body, all optional:
+     // {"manual": true|false, "fps": 30, "quotaGB": 100, "minFreeGB": 15, "delete": "<session>"}
++    // SpectrumJetson (photonvision-22): tags left out of multi-tag on every camera.
++    private record ExcludedTagsRequest(java.util.List<Integer> saved) {}
++
++    private static java.util.Map<String, Object> excludedTagsStatus() {
++        var et = org.photonvision.vision.target.ExcludedTags.getInstance();
++        return java.util.Map.of(
++                "saved", new java.util.TreeSet<>(et.saved()),
++                "robot", new java.util.TreeSet<>(et.robot()),
++                "active", new java.util.TreeSet<>(et.active()));
++    }
++
++    /** GET /api/excludedTags: {saved, robot, active}. */
++    public static void onExcludedTagsRequest(Context ctx) {
++        try {
++            ctx.status(200);
++            ctx.result(kObjectMapper.writeValueAsString(excludedTagsStatus()));
++            ctx.contentType("application/json");
++        } catch (JsonProcessingException e) {
++            ctx.status(500);
++            ctx.result("Could not read the excluded tags");
++        }
++    }
++
++    /** POST /api/excludedTags {"saved": [7, 12]}: replaces the list saved on the Jetson. */
++    public static void onExcludedTagsSetRequest(Context ctx) {
++        try {
++            var req = kObjectMapper.readValue(ctx.body(), ExcludedTagsRequest.class);
++            org.photonvision.vision.target.ExcludedTags.getInstance()
++                    .setSaved(req.saved() == null ? java.util.List.of() : req.saved());
++            ctx.status(200);
++            ctx.result(kObjectMapper.writeValueAsString(excludedTagsStatus()));
++            ctx.contentType("application/json");
++        } catch (IOException e) {
++            ctx.status(400);
++            ctx.result("Expected {\"saved\": [tag IDs]}");
++        }
++    }
++
+     private record RewindRequest(
+             Boolean manual, Double fps, Double quotaGB, Double minFreeGB, String delete) {}
+ 
+diff --git a/photon-server/src/main/java/org/photonvision/server/Server.java b/photon-server/src/main/java/org/photonvision/server/Server.java
+index 942de12f..a6bdaeea 100644
+--- a/photon-server/src/main/java/org/photonvision/server/Server.java
++++ b/photon-server/src/main/java/org/photonvision/server/Server.java
+@@ -129,6 +129,8 @@ public class Server {
+         app.post("/api/settings/general", RequestHandler::onGeneralSettingsRequest);
+         app.get("/api/settings/radios", RequestHandler::onRadioStatusRequest);
+         app.post("/api/settings/radios", RequestHandler::onRadioSetRequest);
++        app.get("/api/excludedTags", RequestHandler::onExcludedTagsRequest); // SpectrumJetson
++        app.post("/api/excludedTags", RequestHandler::onExcludedTagsSetRequest);
+         app.get("/api/rewind", RequestHandler::onRewindStatusRequest);
+         app.post("/api/rewind", RequestHandler::onRewindSetRequest);
+         app.get("/api/rewind/download", RequestHandler::onRewindDownloadRequest);

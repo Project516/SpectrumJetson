@@ -129,6 +129,18 @@ v2026.3.4) teaches PhotonVision about our camera (USB `1bcf:28c5`):
   (`softSet`) and the slider probably does nothing.
 - Check by moving it and watching the image and the decision margin.
 
+## Patches 22–25 and other picks from upstream (2026-09-24)
+
+| Upstream | What we did |
+|---|---|
+| [#2437](https://github.com/PhotonVision/photonvision/pull/2437) 100-snapshot minimum | Applied as is (`photonvision-23`) |
+| [#2149](https://github.com/PhotonVision/photonvision/pull/2149) snapshot loop (open) | Adapted: a separate **Auto Snapshots** toggle, so **Take Snapshot** still works by hand (`photonvision-23`) |
+| [#2479](https://github.com/PhotonVision/photonvision/pull/2479) board sizes in mm | Ported (`photonvision-23`). #2480, which stores native units in the backend, isn't needed: the UI still sends inches |
+| [#2477](https://github.com/PhotonVision/photonvision/pull/2477) exclude tags from PnP (draft) | Our own design instead: one list of bad tags for every camera, from the Settings page and robot code (`photonvision-22`). The draft had a per-pipeline switch for every tag |
+| [#2138](https://github.com/PhotonVision/photonvision/pull/2138) `maxLineFitMSE` 2.5 (open) | A detector knob, still at 10 until tested (`08 --mse`) |
+| [#2263](https://github.com/PhotonVision/photonvision/pull/2263) stream port forwarder | **Skipped.** The FRC radio passes only ports 1180–1190, and our maximum of 5 cameras (10 stream ports from 1181) fits. Sending all streams through one port would also make the browser's per-host connection limit worse |
+| [#2493](https://github.com/PhotonVision/photonvision/pull/2493), [#2528](https://github.com/PhotonVision/photonvision/pull/2528) PhotonLib fixes | Robot side: workarounds in issue #10, since PhotonLib stays at alpha-2 |
+
 ## Upstream changes to test on the robot
 
 - **Gateway (#2364):** static mode now uses `x.x.x.4` as the gateway (10.85.15.4, the VH-109
