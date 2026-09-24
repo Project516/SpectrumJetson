@@ -1,0 +1,76 @@
+diff --git a/photon-client/src/components/dashboard/tabs/InputTab.vue b/photon-client/src/components/dashboard/tabs/InputTab.vue
+index 6e683308..380fac71 100644
+--- a/photon-client/src/components/dashboard/tabs/InputTab.vue
++++ b/photon-client/src/components/dashboard/tabs/InputTab.vue
+@@ -10,6 +10,20 @@ import { getResolutionString } from "@/lib/PhotonUtils";
+ import { useDisplay } from "vuetify";
+ 
+ // Due to something with libcamera or something else IDK much about, the 90° rotations need to be disabled if the libcamera drivers are being used.
++// SpectrumJetson: USB (UVC) cameras take exposure in the UVC standard's units of 100 us, so
++// the raw number / 10 is milliseconds (83 = 8.3 ms, 50 = 5 ms). Show that on the slider.
++const exposureLabel = computed(() => {
++  const s = useCameraSettingsStore();
++  if (s.currentCameraSettings.matchedCameraInfo?.PVUsbCameraInfo === undefined) return "Exposure";
++  const raw = Number(s.currentPipelineSettings.cameraExposureRaw);
++  return Number.isFinite(raw) ? `Exposure (${(raw / 10).toFixed(1)} ms)` : "Exposure";
++});
++const exposureTooltip = computed(() =>
++  useCameraSettingsStore().currentCameraSettings.matchedCameraInfo?.PVUsbCameraInfo === undefined
++    ? "Directly controls how long the camera shutter remains open. Units are dependant on the underlying driver."
++    : "How long the shutter stays open, in units of 100 µs (the USB camera standard): 50 = 5 ms, 83 = 8.3 ms. Shorter means less motion blur but a darker image; exposure also caps the frame rate (10 ms or more cannot reach 100 fps)."
++);
++
+ const cameraRotations = computed(() =>
+   ["Normal", "90° CW", "180°", "90° CCW"].map((v, i) => ({
+     name: v,
+@@ -84,8 +98,8 @@ const interactiveCols = computed(() =>
+     <pv-slider
+       v-model="useCameraSettingsStore().currentPipelineSettings.cameraExposureRaw"
+       :disabled="useCameraSettingsStore().currentCameraSettings.pipelineSettings.cameraAutoExposure"
+-      label="Exposure"
+-      tooltip="Directly controls how long the camera shutter remains open. Units are dependant on the underlying driver."
++      :label="exposureLabel"
++      :tooltip="exposureTooltip"
+       :min="useCameraSettingsStore().minExposureRaw"
+       :max="useCameraSettingsStore().maxExposureRaw"
+       :slider-cols="interactiveCols"
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
+index fac72e8b..a57554ea 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
+@@ -39,8 +39,16 @@ import org.photonvision.vision.pipeline.PipelineType;
+ public final class TeamCameraDefaults {
+     private TeamCameraDefaults() {}
+ 
+-    /** 100 us units on the Thriftiest Cam: 83 = 8.3 ms, one 120 Hz mains-flicker period. */
+-    public static final double EXPOSURE_RAW = 83;
++    /**
++     * UVC units of 100 us: 50 = 5 ms. Tuned on the bench 2026-09-24: less motion blur than 8.3 ms
++     * (83, one 120 Hz mains-flicker period), detections still solid with the decision margin
++     * cutoff at 15, and no measurable flicker under the shop lights (frame-to-frame brightness
++     * change 0.6%, tests/flicker-check). Recheck flicker under event lighting.
++     */
++    public static final double EXPOSURE_RAW = 50;
++
++    /** AprilTag decision-margin cutoff (PhotonVision's default 35), for the shorter exposure. */
++    public static final int DECISION_MARGIN = 15;
+ 
+     public static final int BRIGHTNESS = 100;
+     public static final boolean AUTO_WHITE_BALANCE = false;
+@@ -75,8 +83,14 @@ public final class TeamCameraDefaults {
+         s.cameraWhiteBalanceTemp = WHITE_BALANCE_TEMP;
+         s.blockForFrames = LOW_LATENCY_MODE;
+         s.streamingFrameDivisor = STREAM_DIVISOR;
+-        if (s instanceof AprilTagCudaPipelineSettings a) a.doMultiTarget = MULTI_TAG;
+-        if (s instanceof AprilTagPipelineSettings a) a.doMultiTarget = MULTI_TAG;
++        if (s instanceof AprilTagCudaPipelineSettings a) {
++            a.doMultiTarget = MULTI_TAG;
++            a.decisionMargin = DECISION_MARGIN;
++        }
++        if (s instanceof AprilTagPipelineSettings a) {
++            a.doMultiTarget = MULTI_TAG;
++            a.decisionMargin = DECISION_MARGIN;
++        }
+         int mode = pickVideoMode(modes);
+         if (mode >= 0) s.cameraVideoModeIndex = mode;
+     }

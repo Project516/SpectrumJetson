@@ -18,6 +18,9 @@
 #   8. Recover from hangs     - hardware watchdog 30 s (NVIDIA's default 2 min), kernel panic ->
 #                               reboot in 3 s (default: hang forever), PhotonVision restarted on
 #                               any exit (default: only on failure), with no restart limit
+#   9. OpenCV threads sleep   - OpenCV's worker pool busy-waits between jobs by default; its only
+#                               jobs here are tiny (preview-stream resize/colour), so 5 workers
+#                               spun at ~7% each for nothing. Active waiting off; pool kept.
 #
 # Usage: 09-robot-tuning.sh [--undo]
 set -euo pipefail
@@ -33,12 +36,13 @@ JOURNALD_CONF=/etc/systemd/journald.conf.d/90-spectrum-persistent.conf
 WATCHDOG_CONF=/etc/systemd/system.conf.d/zz-spectrum-watchdog.conf
 PANIC_CONF=/etc/sysctl.d/90-spectrum-panic.conf
 PV_RESTART_CONF=/etc/systemd/system/photonvision.service.d/90-spectrum-restart.conf
+PV_OPENCV_CONF=/etc/systemd/system/photonvision.service.d/90-spectrum-opencv.conf
 
 sudo -v
 
 if [[ ${1:-} == --undo ]]; then
   sudo rm -f "$APT_CONF" "$UDEV_RULE" "$SYSCTL_CONF" "$JOURNALD_CONF"
-  sudo rm -f "$WATCHDOG_CONF" "$PANIC_CONF" "$PV_RESTART_CONF"
+  sudo rm -f "$WATCHDOG_CONF" "$PANIC_CONF" "$PV_RESTART_CONF" "$PV_OPENCV_CONF"
   sudo sysctl -q kernel.panic=0
   sudo systemctl daemon-reexec
   sudo systemctl start nvfancontrol || true   # back to NVIDIA's fan control
@@ -159,7 +163,22 @@ Restart=always
 RestartSec=1
 CONF
 sudo systemctl daemon-reexec   # picks up the watchdog setting
+
+echo "==> 9. OpenCV worker threads sleep instead of spinning"
+opencv_before=$(cat "$PV_OPENCV_CONF" 2>/dev/null || true)
+sudo tee "$PV_OPENCV_CONF" >/dev/null <<'CONF'
+# SpectrumJetson: OpenCV's thread pool busy-waits for work by default (2000/10000 spin
+# iterations). Its only work in PhotonVision here is small (preview-stream resize and colour
+# conversion), so the workers spun for nothing. 0 = sleep until there is work.
+[Service]
+Environment=OPENCV_THREAD_POOL_ACTIVE_WAIT_WORKER=0
+Environment=OPENCV_THREAD_POOL_ACTIVE_WAIT_MAIN=0
+CONF
 sudo systemctl daemon-reload
+if [[ $(cat "$PV_OPENCV_CONF") != "$opencv_before" ]]; then
+  echo "    restarting PhotonVision to apply"
+  sudo systemctl restart photonvision
+fi
 
 echo
 echo "Summary:"
@@ -178,5 +197,5 @@ echo "  journal: $( [[ -d /var/log/journal ]] && echo "on the SSD (/var/log/jour
 fan=$(cat /sys/devices/platform/pwm-fan*/hwmon/hwmon*/pwm1 2>/dev/null | head -1)
 echo "  fan: pwm ${fan:-?}/255, nvfancontrol $(systemctl is-active nvfancontrol 2>&1 || true)"
 echo "  watchdog: $(systemctl show -p RuntimeWatchdogUSec --value), kernel.panic=$(sysctl -n kernel.panic)"
-echo "  photonvision: Restart=$(systemctl show photonvision -p Restart --value)"
+echo "  photonvision: Restart=$(systemctl show photonvision -p Restart --value), $(systemctl show photonvision -p Environment --value | tr ' ' '\n' | grep -c OPENCV_THREAD_POOL) OpenCV pool settings"
 echo "Reboot to apply the boot changes: sudo reboot"

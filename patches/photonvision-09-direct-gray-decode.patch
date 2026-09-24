@@ -1,0 +1,137 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index 66269480..ee8d59ee 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -23,10 +23,12 @@ import edu.wpi.first.cscore.UsbCamera;
+ import org.photonvision.rewind.RewindRecorder;
+ import edu.wpi.first.util.PixelFormat;
+ import edu.wpi.first.util.RawFrame;
++import org.opencv.core.CvType;
+ import org.opencv.core.Mat;
+ import org.photonvision.common.logging.LogGroup;
+ import org.photonvision.common.logging.Logger;
+ import org.photonvision.jni.CscoreExtras;
++import org.photonvision.jni.GpuDetectorJNI;
+ import org.photonvision.vision.frame.FrameThresholdType;
+ import org.photonvision.vision.opencv.CVMat;
+ import org.photonvision.vision.processes.VisionSourceSettables;
+@@ -91,6 +93,18 @@ public class USBFrameProvider extends CpuImageProcessor {
+             onCameraConnected();
+         }
+ 
++        // SpectrumJetson: MJPEG straight to grayscale. cscore's own gray conversion decodes every
++        // JPEG to full-colour BGR and then converts that to gray (Frame::ConvertImpl; its
++        // ConvertMJPEGToGray is never called): 8.9 ms a frame on the Jetson, ~90% of a core per
++        // camera at 100 fps, plus OpenCV worker threads for the colour conversion. Taking the
++        // camera's JPEG as it arrived and decoding only the brightness (Y) channel costs ~3 ms.
++        if (useGray && graySink != null && directGray) {
++            var mode = settables.getCurrentVideoMode();
++            if (mode != null && mode.pixelFormat == PixelFormat.kMJPEG) {
++                return grabMjpegAsGray(mode.width, mode.height, m_blockForFrames ? 0 : lastTime);
++            }
++        }
++
+         if (m_blockForFrames) {
+             // We allocate memory so we don't fill a Mat in use by another thread (memory model is easier)
+             var mat = new CVMat();
+@@ -147,6 +161,72 @@ public class USBFrameProvider extends CpuImageProcessor {
+         }
+     }
+ 
++    private boolean loggedDirectGray = false;
++
++    /** Off after repeated failures (or no decoder library): back to cscore's own conversion. */
++    private boolean directGray = true;
++
++    private int directGrayFailures = 0;
++
++    private CapturedFrame directGrayFailed(String why) {
++        if (++directGrayFailures >= 30) {
++            directGray = false;
++            logger.error(
++                    "Direct MJPEG->gray decode failed 30 times in a row ("
++                            + why
++                            + "); using cscore's conversion for this camera from now on");
++        }
++        return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
++    }
++
++    /**
++     * The newest frame after {@code afterTimeUs} (0: the next frame), as the camera's own JPEG,
++     * decoded straight to 8-bit gray by the 971 detector library (libjpeg-turbo).
++     */
++    private CapturedFrame grabMjpegAsGray(int width, int height, long afterTimeUs) {
++        CvSink sink = graySink;
++        // A fresh RawFrame each time: its data buffer is then allocated for exactly this frame,
++        // so getSize() is the JPEG's real length (a reused RawFrame keeps its first size).
++        var frame = new RawFrame();
++        try {
++            frame.setInfo(0, 0, 0, PixelFormat.kUnknown); // the camera's own image, untouched
++            // Note: this JNI call fills the native frame but not the Java RawFrame's fields
++            // (size, format stay unset), so the decode reads the native frame directly.
++            long captureTimeUs =
++                    CscoreExtras.grabRawSinkFrameTimeoutLastTime(
++                            sink.getHandle(), frame.getNativeObj(), CSCORE_DEFAULT_FRAME_TIMEOUT, afterTimeUs);
++            if (captureTimeUs == 0) {
++                logger.error("Error grabbing image: " + sink.getError());
++                return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
++            }
++            lastTime = captureTimeUs;
++            Mat gray = new Mat(height, width, CvType.CV_8UC1);
++            int rc;
++            try {
++                rc = GpuDetectorJNI.decodeMjpegGray(frame.getNativeObj(), gray.getNativeObjAddr());
++            } catch (UnsatisfiedLinkError e) {
++                gray.release();
++                directGray = false;
++                logger.warn("No MJPEG->gray decoder in the detector library; using cscore's conversion");
++                return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
++            }
++            if (rc != 0) {
++                gray.release();
++                return directGrayFailed(
++                        rc == -1 ? "frame not MJPEG" : rc == -3 ? "size mismatch" : "bad JPEG");
++            }
++            directGrayFailures = 0;
++            if (!loggedDirectGray) {
++                loggedDirectGray = true;
++                logger.info("Capture format: MJPEG decoded straight to gray (" + gray.cols() + "x" + gray.rows() + ")");
++            }
++            return new CapturedFrame(
++                    new CVMat(gray), settables.getFrameStaticProperties(), captureTimeUs * 1000);
++        } finally {
++            frame.close();
++        }
++    }
++
+     @Override
+     public String getName() {
+         return "USBFrameProvider - " + cvSink.getName();
+@@ -188,7 +268,7 @@ public class USBFrameProvider extends CpuImageProcessor {
+             if (graySink != null) graySink.setEnabled(gray);
+             cvSink.setEnabled(!gray);
+             useGray = gray;
+-            logger.info("Capture format: " + (gray ? "MJPEG->gray (kGray sink)" : "BGR"));
++            logger.info("Capture format: " + (gray ? "gray (MJPEG modes are decoded straight to gray)" : "BGR"));
+         }
+     }
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/objects/GpuDetectorJNI.java b/photon-core/src/main/java/org/photonvision/vision/objects/GpuDetectorJNI.java
+index 0edc4dce..48123d4c 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/objects/GpuDetectorJNI.java
++++ b/photon-core/src/main/java/org/photonvision/vision/objects/GpuDetectorJNI.java
+@@ -19,6 +19,14 @@ public class GpuDetectorJNI {
+ 		    double p2, double k3);
+     public static native AprilTagDetection[] processimage(long handle, long p);
+ 
++    /**
++     * SpectrumJetson: decodes a cscore RawFrame holding the camera's MJPEG image straight to
++     * 8-bit gray, into {@code cvMatPtr} (a WxH CV_8UC1 Mat allocated by the caller).
++     *
++     * @return 0 ok, -1 not an MJPEG frame, -2 bad JPEG, -3 Mat isn't WxH 8-bit mono
++     */
++    public static native int decodeMjpegGray(long rawFramePtr, long cvMatPtr);
++
+     // SpectrumJetson: all 8 coefficients of the OpenCV rational model PhotonVision's
+     // calibration produces (k1 k2 p1 p2 k3 k4 k5 k6). setparams() drops k4..k6. Only the
+     // SpectrumJetson/bos build of lib971apriltag has this; callers fall back to setparams().

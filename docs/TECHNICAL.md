@@ -373,6 +373,43 @@ The robot is switched off, never shut down, so every power-off is a power cut.
   - Both need the same host tweaks as flashing (NetworkManager, ufw) plus udisks2 stopped.
   - A restore can target a blank spare SSD. The QSPI bootloader isn't in the backup, so a replacement *module* needs `02-flash-nvme.sh` first. **Not run yet.**
 
+### Decode speedup (2026-09-24)
+
+Full write-up in [VISION-RESEARCH.md](VISION-RESEARCH.md).
+
+- **Profile.** `tests/cpu-profile.sh` (per-thread CPU plus 40 jstack samples):
+  - each camera's VisionRunner thread was running 98% of the time, 85% of samples in `CscoreExtras.grabRawSinkFrameTimeoutLastTime`;
+  - 5 native threads inherited the name (OpenCV's pthreads pool) at ~22% each.
+- **Cause.**
+  - cscore 2026.2.1 `Frame::ConvertImpl` turns MJPEG into BGR first (`ConvertMJPEGToBGR`, then `ConvertBGRToGray`) for any requested format. `ConvertMJPEGToGray` (Frame.cpp:406) is never called.
+  - Measured on recorded frames: JPEG→BGR→gray 8.9 ms against libjpeg-turbo gray-only 2.6 ms (2.2 ms with the fast IDCT; we keep the accurate one).
+- **Fix (`photonvision-09` plus `decodeMjpegGray` in `detector/GpuDetectorJNI.cc`).**
+  - PhotonVision grabs through the gray sink with `setInfo(0,0,0,kUnknown)`, so it gets the camera's MJPEG image untouched.
+  - The detector library decodes it with libjpeg-turbo (`JCS_GRAYSCALE`, `JDCT_ISLOW`, a longjmp error handler) into a CV_8UC1 Mat that Java allocated.
+  - Gotcha: `CscoreExtras.grabRawSinkFrameTimeoutLastTime` fills only the *native* `WPI_RawFrame`; the Java `RawFrame`'s format, size and data stay unset. The first attempt read those, dropped every frame, and broke detection until it was fixed.
+  - 30 failures in a row put that camera back on cscore's conversion.
+- **OpenCV pool.** `09-robot-tuning.sh` step 9 sets `OPENCV_THREAD_POOL_ACTIVE_WAIT_WORKER=0` and `..._MAIN=0` (the bundled `libopencv_core.so.4.10` reads both).
+- **Results** (2 cameras, stream closed, `tests/perf-snapshot.sh`):
+
+  | Stage | fps (TopLeft / TopRight) | CPU |
+  |---|---|---|
+  | Before | 92 / 104 | 333% |
+  | Decode fix | 121 / 121 | ~195% |
+  | + OpenCV pool | 122 / 122, 1.6 ms detect | **129%** |
+
+  UI latency went from ~23 ms to **13 ms**.
+- **CUDA wait mode** (`SPECTRUM_971_CUDA_SYNC` or `/tmp/spectrum-971-cuda-sync`), measured with the decode fix:
+
+  | Mode | CPU | Detect time |
+  |---|---|---|
+  | spin | ~192% | 1.6 / 2.1 ms |
+  | block | ~199% | 1.9 / 2.5 ms |
+  | yield | ~200% | 2.2 / 2.5 ms |
+
+  The default stays `auto` (CUDA's own, spins). Re-test with 4 cameras.
+- **Camera stuck after rapid restarts.** After 4 PhotonVision restarts in 3 minutes, TopRight sent only corrupt frames: cscore logged "invalid JPEG image received from camera" 120 times a second, and nothing reached the pipeline. One more restart fixed it. `health-check.sh` now warns about this, and when fewer detectors report than cameras are plugged in.
+- **Exposure 50 (5 ms), decision margin 15** (team-tuned), now the new-camera defaults (`photonvision-10`). `tests/flicker-check`: 0.6% average and 1% maximum frame-to-frame brightness change under the shop LEDs, so no flicker.
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.

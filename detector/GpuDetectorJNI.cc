@@ -34,7 +34,11 @@
 #include <mutex>
 #include <string>
 
+#include <csetjmp>
+
 #include <cuda_runtime.h>
+#include <jpeglib.h>
+#include <wpi/RawFrame.h>
 #include "absl/status/status.h"
 #include <opencv2/core/mat.hpp>
 
@@ -57,6 +61,29 @@ const wpi::java::JClassInit classes[] = {
 int MinWhiteBlackDiff() {
   if (const char *v = std::getenv("SPECTRUM_971_MIN_WHITE_BLACK_DIFF")) return std::atoi(v);
   return 5;
+}
+
+// How the CPU thread waits for the GPU (cudaSetDeviceFlags, at library load, before any CUDA
+// context exists): "auto" (CUDA's default; with one context on 6 cores it spins), "spin",
+// "yield" or "block" (sleep). Measured on the bench (2 cameras, 121 fps each, 2026-09-24):
+// spin ~192% CPU and 1.6/2.1 ms detect; block ~199% and 1.9/2.5 ms; yield ~200% and 2.2/2.5 ms.
+// Blocking saved no CPU and added ~0.3 ms, so the default stays CUDA's. Re-test with 4 cameras.
+// Set with SPECTRUM_971_CUDA_SYNC; /tmp/spectrum-971-cuda-sync overrides it (for A/B tests:
+// write it, restart PhotonVision).
+unsigned CudaScheduleFlag(std::string *name) {
+  std::string v = "auto";
+  if (const char *e = std::getenv("SPECTRUM_971_CUDA_SYNC")) v = e;
+  if (FILE *f = std::fopen("/tmp/spectrum-971-cuda-sync", "r")) {
+    char buf[16] = {0};
+    if (std::fgets(buf, sizeof(buf), f)) v = std::string(buf).substr(0, std::strcspn(buf, " \r\n"));
+    std::fclose(f);
+  }
+  *name = v;
+  if (v == "spin") return cudaDeviceScheduleSpin;
+  if (v == "yield") return cudaDeviceScheduleYield;
+  if (v == "block") return cudaDeviceScheduleBlockingSync;
+  *name = "auto";
+  return cudaDeviceScheduleAuto;
 }
 
 // Test hooks, read from /tmp/spectrum-971-fault-every (re-read every 30 frames so a test can
@@ -268,9 +295,70 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
       return JNI_ERR;
     }
   }
+  std::string sync;
+  const cudaError_t sync_err = cudaSetDeviceFlags(CudaScheduleFlag(&sync));
   std::cout << "971 library loaded (frc971/bos detector, min_white_black_diff "
-            << MinWhiteBlackDiff() << ")" << std::endl;
+            << MinWhiteBlackDiff() << ", CUDA wait " << sync
+            << (sync_err == cudaSuccess ? "" : std::string(" FAILED: ") + cudaGetErrorString(sync_err))
+            << ")" << std::endl;
   return JNI_VERSION_1_6;
+}
+
+// SpectrumJetson: decode a camera's MJPEG frame straight to 8-bit gray, into a Mat Java already
+// allocated (PhotonVision's OpenCV owns the memory; this only writes the pixels).
+//   int decodeMjpegGray(long rawFramePtr, long cvMatPtr)
+//     0 ok, -1 not an MJPEG frame, -2 bad/unsupported JPEG, -3 Mat isn't WxH 8-bit mono
+// Why: cscore's own gray path decodes every JPEG to full-colour BGR and then converts it
+// (Frame::ConvertImpl), ~8.9 ms a frame on the Orin Nano; this is ~2.6 ms (libjpeg-turbo,
+// grayscale output: only the Y component is inverse-DCT'd, no colour conversion).
+struct JpegError {
+  jpeg_error_mgr mgr;
+  std::jmp_buf jump;
+};
+void JpegErrorExit(j_common_ptr c) {  // libjpeg's default calls exit(): never in a JVM
+  std::longjmp(reinterpret_cast<JpegError *>(c->err)->jump, 1);
+}
+void JpegSilent(j_common_ptr, int) {}
+
+JNIEXPORT jint JNICALL Java_org_photonvision_jni_GpuDetectorJNI_decodeMjpegGray(
+    JNIEnv *, jclass, jlong raw_ptr, jlong mat_ptr) {
+  auto *frame = reinterpret_cast<WPI_RawFrame *>(raw_ptr);
+  auto *mat = reinterpret_cast<cv::Mat *>(mat_ptr);
+  if (!frame || !mat) return -2;
+  if (frame->pixelFormat != WPI_PIXFMT_MJPEG || !frame->data || frame->size < 4) return -1;
+  if (mat->type() != CV_8UC1 || !mat->isContinuous()) return -3;
+
+  jpeg_decompress_struct c;
+  JpegError err;
+  c.err = jpeg_std_error(&err.mgr);
+  err.mgr.error_exit = JpegErrorExit;
+  err.mgr.emit_message = JpegSilent;
+  if (setjmp(err.jump)) {
+    jpeg_destroy_decompress(&c);
+    return -2;
+  }
+  jpeg_create_decompress(&c);
+  jpeg_mem_src(&c, frame->data, frame->size);
+  if (jpeg_read_header(&c, TRUE) != JPEG_HEADER_OK) {
+    jpeg_destroy_decompress(&c);
+    return -2;
+  }
+  c.out_color_space = JCS_GRAYSCALE;
+  c.dct_method = JDCT_ISLOW;  // accurate: tag corners depend on clean edges
+  jpeg_start_decompress(&c);
+  if (static_cast<int>(c.output_width) != mat->cols ||
+      static_cast<int>(c.output_height) != mat->rows || c.output_components != 1) {
+    jpeg_abort_decompress(&c);
+    jpeg_destroy_decompress(&c);
+    return -3;
+  }
+  while (c.output_scanline < c.output_height) {
+    JSAMPROW row = mat->ptr<uchar>(static_cast<int>(c.output_scanline));
+    jpeg_read_scanlines(&c, &row, 1);
+  }
+  jpeg_finish_decompress(&c);
+  jpeg_destroy_decompress(&c);
+  return 0;
 }
 
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *) {

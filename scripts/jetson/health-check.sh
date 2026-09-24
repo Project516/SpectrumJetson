@@ -46,6 +46,18 @@ for h in $handles; do
   else pass "$msg"; fi
 done
 [[ -z $handles && $P != 0 ]] && fail "no detector stats in the last 3 s (no CUDA pipeline running?)"
+ndet=$(wc -w <<<"$handles")
+ncam=$(ls -d /sys/bus/usb/drivers/uvcvideo/*:1.0 2>/dev/null | wc -l)
+if [[ $P != 0 && $ndet -gt 0 && $ndet -lt $ncam ]]; then
+  warn "only $ndet of $ncam cameras are detecting (a camera stuck? restart PhotonVision, or replug it)"
+fi
+# A camera can get stuck sending corrupt JPEGs (seen once after rapid restarts): cscore drops them.
+badjpeg=$(journalctl _PID="$P" --no-pager -o cat --since "-10 s" 2>/dev/null | grep -oE "[A-Za-z]+: invalid JPEG image received" | sort | uniq -c)
+if [[ -n $badjpeg ]]; then
+  while read -r n cam _; do
+    warn "${cam%:} sent $n invalid JPEGs in 10 s (restart PhotonVision; if it persists, replug that camera)"
+  done <<<"$badjpeg"
+fi
 calib8=$(grep -c "setparams handle .*(8 dist coeffs)" <<<"$LOG")
 calib5=$(grep -c "setparams handle .*(5 dist coeffs)\|sending 5 of 8" <<<"$LOG")
 if [[ $calib8 -ge $EXPECT ]]; then pass "calibration loaded for $calib8 detector(s), 8 lens coefficients"

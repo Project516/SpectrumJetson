@@ -38,13 +38,14 @@ add_subdirectory(${BOS_DIR}/third_party/971apriltag 971apriltag EXCLUDE_FROM_ALL
 
 find_package(JNI REQUIRED)
 find_package(OpenCV REQUIRED core)
+find_package(JPEG REQUIRED)  # libjpeg-turbo (libjpeg-turbo8-dev), for decodeMjpegGray
 
 add_library(971apriltag_jni SHARED GpuDetectorJNI.cc fault_kernel.cu)
 set_target_properties(971apriltag_jni PROPERTIES OUTPUT_NAME 971apriltag)
 target_include_directories(971apriltag_jni PRIVATE ${BOS_DIR} ${JNI_INCLUDE_DIRS}
                                                    ${OpenCV_INCLUDE_DIRS})
 # bos uses ABSL_FLAG (use_neon, debug_blob_index) but its CMake does not link absl::flags.
-target_link_libraries(971apriltag_jni PRIVATE 971apriltag absl::flags wpiutil CUDA::cudart
+target_link_libraries(971apriltag_jni PRIVATE 971apriltag absl::flags wpiutil CUDA::cudart JPEG::JPEG
                                               ${JNI_LIBRARIES})
 # Fail at link time, not in the JVM, if a symbol is missing.
 target_link_options(971apriltag_jni PRIVATE -Wl,--no-undefined)

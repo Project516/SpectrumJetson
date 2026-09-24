@@ -107,29 +107,36 @@ None of this code was written for our exact setup, so we found and fixed several
 | Blank AprilCudaTag tab | The fork's settings tab was written for an older version of the web framework (Vue 2) and couldn't render in Vue 3. | Ported it to Vue 3, showing only settings that actually do something (`photonvision-01`). |
 | Missing Device Control card | PhotonVision used a brand-new browser feature (`Intl.DurationFormat`) to format the uptime. Firefox 130 doesn't have it, so the whole card, including the Restart button, disappeared. | Check for the feature and fall back (`photonvision-03`). Also: keep your browser updated. |
 | Truncated jar | A deploy copied a 228 KB piece of a 76 MB jar. PhotonVision couldn't start, and systemd gave up after 5 tries. | The install script now refuses invalid jars and keeps the previous working one. |
+| Colour decode hiding in cscore | Asking cscore for grayscale frames still decoded each JPEG to full colour first, then converted it: 8.9 ms a frame, most of a CPU core per camera. | We decode the camera's JPEG straight to gray in our detector library (`photonvision-09`): 2.6 ms. Both cameras went to 122 fps and CPU fell from 3.3 to 1.3 cores. |
 | Lens model cut short | Calibration produces 8 lens-distortion numbers, but the fork only passed the first 5 to the CUDA detector. The detector uses them to straighten tag edges when it refines corners, so corners near the image edges came out slightly wrong. | A new `setparams8` call passes all 8 (`photonvision-04` + `detector/`). The log now shows "(8 dist coeffs)" for each camera. |
 
 **Lesson:** check results by *measuring*, not by assuming. The truncated-jar bug happened partly because we trusted a log line from the *old* process. Now every check looks at the running process's own ID.
 
 ## Performance: what actually limits the frame rate
 
-We went from 33 fps to about 92 fps per camera. Most of that came from settings, not code. The GPU was never the bottleneck: the detector takes under 2 ms per frame, fast enough for 500+ fps. The real limits were the camera exposure and how PhotonVision reads frames.
+We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. The GPU was never the bottleneck: the detector takes under 2 ms per frame, fast enough for 500+ fps. The real limits were the camera exposure, how PhotonVision reads frames, and how it decodes them.
 
 | Change | FPS (1 camera) | Latency | Why it mattered |
 | --- | --- | --- | --- |
 | Starting point (exposure 295) | 33 | 44 ms | Exposure was 29.5 ms per frame, which caps the frame rate at 34 fps |
 | Exposure 83 (8.3 ms) | 61 | 20 ms | The camera can now deliver 120 fps. PhotonVision became the limit |
-| Decode MJPEG straight to grayscale | 62 | 18 ms | Same fps, but Java CPU dropped from 155% to 111% of a core |
+| Ask cscore for grayscale frames | 62 | 18 ms | Same fps, but Java CPU dropped from 155% to 111% of a core. (Only half the fix: see below.) |
 | Low Latency Mode **off** | ~100 | 18 ms | PhotonVision stopped waiting for each frame and missing every other one |
-| Two cameras, all of the above | ~92 each | ~20 ms | Uses about 2.8 of 6 CPU cores and 18% of the GPU |
+| Two cameras, all of the above | 92 and 104 | ~23 ms | Used 3.3 of 6 CPU cores |
+| **Decode the JPEG straight to gray ourselves** (`photonvision-09`) | **122 each** | **13 ms** | cscore was secretly decoding every frame to full colour, then converting (8.9 ms a frame). Our decoder does gray only (2.6 ms). |
+| OpenCV's worker threads sleep instead of spin (tuning step 9) | 122 each | 13 ms | 2 cameras now use **1.3 of 6 cores**, down from 3.3 |
 
-**Exposure units are a trap.** PhotonVision labels the exposure slider in microseconds, but this camera counts in **100 µs units**, so 295 means 29.5 ms, not 0.3 ms. We only found this by reading the camera's control directly with `v4l2-ctl`.
+**Exposure units are a trap.** USB cameras count exposure in the UVC standard's **100 µs units**, so 295 means 29.5 ms, not 0.3 ms, and stock PhotonVision doesn't say so. We only found this by reading the camera's control directly with `v4l2-ctl`. Our build now shows milliseconds on the slider, e.g. "Exposure (5.0 ms)" (`photonvision-10`).
 
-**Lights flicker.** Mains lighting flickers 120 times per second (every 8.3 ms). At exposures shorter than that, each frame catches a different point in the flicker, and tags looked unstable. The detector still found the tag in 100% of frames at every exposure we tested. What changed was the **decision margin** (how confidently the tag decoded): about 44 at 3 ms, about 118 at 8.3 ms. PhotonVision drops tags below its cutoff of 35, which is why short exposures blinked. **Use about 83 in the shop, and retune exposure and the decision-margin cutoff on the real field.**
+**Shorter exposure, lower cutoff.** Shorter exposure means less motion blur, but a darker image and a lower **decision margin** (how confidently a tag decoded): about 44 at 3 ms, about 118 at 8.3 ms. PhotonVision drops tags below its cutoff, 35 by default. We run **exposure 50 (5 ms) with the cutoff at 15**. The detector still finds real tags, and tag36h11 at Hamming distance 0 almost never gives false positives.
+
+**Lights flicker.** Mains lighting flickers 120 times per second (every 8.3 ms). At exposures that aren't a multiple of 8.3 ms, each frame can catch a different part of the flicker and pulse in brightness. In our shop at 5 ms we measured no flicker (0.6% brightness change frame to frame) with `tests/flicker-check/run.sh`. **Run it again under the event's lights; if frames pulse by several percent, go back to 83 (8.3 ms).**
 
 **Measure before optimizing.** We added a once-per-second stats line to the detector (calls per second, milliseconds per frame, tags per frame, decision margin). It showed right away that the GPU was idle and the camera pipeline was the problem, which saved us from optimizing the wrong thing.
 
-**More cameras.** Each camera at ~92 fps costs about 1.4 CPU cores. For 3–4 cameras, turn **Low Latency Mode on**: each camera then runs at ~60 fps for about 1.1 cores, so 4 cameras fit in about 4.5 of 6 cores. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
+**More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), so 4 cameras should fit. The limit to watch is **USB bandwidth**: all four USB-A ports share one USB 2.0 hub, and each camera reserves bandwidth for its maximum, so a third or fourth camera there may fail. Plan 2 cameras on USB-A and 2 on the USB-C port, and test it. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
+
+What other teams' vision systems do (EagleEye, Code Orange's MLTag, 4533's Whacknet, 971's bos and cos), the full profiling story, and what's worth doing next: [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
 
 ## Cameras and calibration
 
@@ -139,13 +146,14 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 
 - Type: **AprilTagCuda**
 - Resolution: **1280x800 at 120 FPS, MJPEG**. Don't use YUYV, which only manages 5 fps at this resolution.
-- Auto Exposure off, Exposure **83**, Brightness 100
+- Auto Exposure off, Exposure **50** (5 ms), Brightness 100
+- AprilTagCuda tab: decision margin cutoff **15**
 - Low Latency Mode **off** (or on, for 3–4 cameras)
 - Processing Mode **3D** and **multi-tag on** (Output tab), once the camera is calibrated. The robot's pose code needs both.
 - Stream Resolution: small, to save CPU (it only affects the video you watch in the browser)
 - AprilTag field layout: **2026 Rebuilt AndyMark**. The robot code must use the same layout.
 
-**New cameras start with these settings automatically.** A camera PhotonVision has never seen gets AprilTagCuda, 1280x800 MJPEG, exposure 83, brightness 100, white balance 2800 K, Low Latency off and multi-tag on (`TeamCameraDefaults` in `photonvision-06`). 3D can't work without a calibration, so it starts off and turns itself on (with multi-tag) as soon as a calibration is saved or imported for the resolution the camera uses. It never turns 3D off. Existing cameras keep their saved settings.
+**New cameras start with these settings automatically.** A camera PhotonVision has never seen gets AprilTagCuda, 1280x800 MJPEG, exposure 50, decision margin 15, brightness 100, white balance 2800 K, Low Latency off and multi-tag on (`TeamCameraDefaults` in `photonvision-06`). 3D can't work without a calibration, so it starts off and turns itself on (with multi-tag) as soon as a calibration is saved or imported for the resolution the camera uses. It never turns 3D off. Existing cameras keep their saved settings.
 
 **Cameras are named after their USB port.** Every Thriftiest Cam reports the same name and serial number, so PhotonVision tells them apart only by the port they're plugged into, and each name (and its calibration) stays with its port. The robot code uses the same names, e.g. `new PhotonCamera("TopLeft")`.
 
@@ -208,7 +216,8 @@ Everything else, including the robot-code example and how to line video up with 
 | Flash hangs at "Waiting for target to boot-up" for minutes | NetworkManager or the firewall is interfering | Use `02-flash-nvme.sh`, which handles both. |
 | Camera doesn't show up (`lsusb`, no `/dev/video*`) | Loose cable, or plugged into the USB-C port | Use a USB-A port, and reseat or swap the cable. |
 | Low FPS (~34) | Exposure too long (the units are 100 µs) | Exposure 83 or lower. Anything up to ~150 still gets full fps. |
-| Tags flicker in and out | Decision margin near the cutoff under flickering light | Exposure ~83 in the shop, or lower the cutoff to ~20–25. Retune on the field. |
+| Tags flicker in and out | Decision margin near the cutoff (dim light, or flickering light) | Run `tests/flicker-check/run.sh`. If frames pulse, use exposure 83; otherwise lower the cutoff a little. Retune on the field. |
+| One camera shows no detections, and the log fills with "invalid JPEG image received" | The camera got stuck sending corrupt frames (seen once after rapid restarts) | Restart PhotonVision; if it persists, replug that camera. The health check warns about this. |
 | Image nearly black during calibration | Calibration uses its own exposure settings | In the calibration card: Auto Exposure off, Exposure ~150. |
 | Calibration fails ("Negative corner", null intrinsics) | Board width/height swapped | Width 12, height 9. Check with `check_board.py`. Restart PhotonVision to clear bad snapshots. |
 | Settings page missing Device Control / Restart | Old browser (no `Intl.DurationFormat`) | Update the browser. Fixed in our patch too. |
@@ -221,7 +230,7 @@ Everything else, including the robot-code example and how to line video up with 
 
 ## Where everything lives, and what's left
 
-The detailed technical reference, with exact versions, commits and measurements, is [docs/TECHNICAL.md](docs/TECHNICAL.md). This README is the overview. What this setup lacks compared with Limelight 4, and what the robot code has to do about it (MegaTag 1/2, gyro heading), is in [docs/LIMELIGHT-COMPARISON.md](docs/LIMELIGHT-COMPARISON.md).
+The detailed technical reference, with exact versions, commits and measurements, is [docs/TECHNICAL.md](docs/TECHNICAL.md). This README is the overview. What this setup lacks compared with Limelight 4, and what the robot code has to do about it (MegaTag 1/2, gyro heading), is in [docs/LIMELIGHT-COMPARISON.md](docs/LIMELIGHT-COMPARISON.md). Other teams' vision systems and our performance work are in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
 
 | Folder | What's in it |
 | --- | --- |
@@ -230,7 +239,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector |
 | `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test |
-| `docs/` | The technical reference, Rewind, the Limelight 4 comparison, and the original handoff document that started the project |
+| `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, and the original handoff document that started the project |
 
 **Still to do before the October event:**
 
@@ -250,7 +259,9 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Turn off Wi-Fi and Bluetooth for competition
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
 - [ ] Check temperatures with the Jetson mounted on the robot (55 °C on the bench)
-- [ ] Retune exposure and decision margin on the event field
+- [x] Decode speedup: both cameras at 122 fps, 13 ms latency, 1.3 of 6 CPU cores
+- [ ] Test 3–4 cameras: 2 on USB-A, 2 on USB-C (USB bandwidth), then re-measure with `tests/perf-snapshot.sh`
+- [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
 - [ ] Take a full backup image of the SSD, including PhotonVision's settings (`scripts/host/04-backup-ssd.sh`), and clone a spare SSD from it (`05-restore-ssd.sh`)
 
 **Next season:** faster CSI (ribbon-cable) cameras would skip the USB and MJPEG decoding and could reach 120+ fps. That's the setup Austin's AOS system is built around. For October, this USB setup is the right one.
