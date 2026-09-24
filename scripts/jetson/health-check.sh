@@ -127,6 +127,22 @@ for intf in /sys/bus/usb/drivers/uvcvideo/*:1.0; do
   if [[ -z $name ]]; then warn "$label: not configured in PhotonVision (activate it in Camera Matching)"
   elif [[ $ctl == on ]]; then pass "$label (${speed} Mbps, autosuspend off)"
   else warn "$label has autosuspend on (run 09-robot-tuning.sh)"; fi
+  # The mode the camera is really streaming, against the one PhotonVision last set. Setting it
+  # races cscore's own restore at startup ("Failed to set video mode!" on every start); once
+  # (2026-09-24) a camera stayed at 320x240, and cscore silently upscaled it to 1280x800 for
+  # the detector, so fps and detect times looked normal while the image was a thumbnail.
+  vdev=$(ls /dev/v4l/by-path/*usb-0:"$hubport":1.0-video-index0 2>/dev/null | head -1)
+  if [[ -n $name && -n $vdev ]]; then
+    fmt=$(v4l2-ctl -d "$vdev" --get-fmt-video 2>/dev/null)
+    actual=$(awk -F'[:/ ]+' '/Width\/Height/ {print $3 "x" $4}' <<<"$fmt")
+    pixfmt=$(grep -oE "Pixel Format *: *'[A-Z0-9]+'" <<<"$fmt" | grep -oE "'[A-Z0-9]+'" | tr -d "'")
+    want=$(sed 's/\x1b\[[0-9;]*m//g' <<<"$LOG" | grep -E "VisionSourceSettables - $name\] .*Setting video mode to" | tail -1 |
+           sed -nE 's/.*Width: ([0-9]+) Height: ([0-9]+) Pixel Format: k([A-Za-z0-9]+).*/\1x\2 \3/p')
+    if [[ -z $actual ]]; then warn "$name: couldn't read its video format (v4l2-ctl; is the user in the video group?)"
+    elif [[ -n $want && ${want% *} != "$actual" ]]; then
+      fail "$name is streaming ${actual} ${pixfmt}, but PhotonVision set ${want% *}: the detector gets an upscaled image (restart PhotonVision)"
+    else pass "$name streaming ${actual} ${pixfmt}${want:+, as set}"; fi
+  fi
 done
 if [[ $cams -lt $EXPECT ]]; then fail "$cams camera(s) found, expected $EXPECT"; fi
 # USB 2.0 bandwidth: stock uvcvideo lets a Thriftiest Cam reserve ~196 Mbps, so only 2 fit on the
