@@ -4,7 +4,7 @@
 # 07-build-bos-detector.sh set up, with the same patches, so it's the detector PhotonVision runs.
 #
 # Run ON THE JETSON after 07-build-bos-detector.sh. Builds only this tool, in its own folder: it
-# installs nothing and doesn't touch PhotonVision or lib971apriltag.so. About 10 min the first time.
+# installs nothing and doesn't touch PhotonVision or lib971apriltag.so. About 2.5 min (measured).
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)

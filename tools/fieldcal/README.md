@@ -21,7 +21,7 @@ there. The tags are found by replaying the recording through **the 971 GPU detec
 uses in matches**, with its settings, at about 400 frames per second. The solve runs on the
 Jetson's own Python (numpy, scipy and OpenCV come with JetPack).
 
-1. **Once:** build the replay tool (about 10 min, installs nothing, PhotonVision keeps running):
+1. **Once:** build the replay tool (about 2.5 min, installs nothing, PhotonVision keeps running):
 
    ```bash
    ~/SpectrumJetson/scripts/jetson/13-build-fieldcal-detect.sh
@@ -90,6 +90,9 @@ is cached in `detections.json`, so re-solving with other options takes seconds.
 | `--calibration NAME=file.json` | A camera's calibration from PhotonVision's calibration export. |
 | `--every N` | Analyse every Nth frame (default: about 5 per second). |
 | `--detector` | `971` (the default on the Jetson once it's built) or `cpu`. |
+
+`fieldcal.sh compare A B` shows how two solves differ: do the procedure twice and it measures
+repeatability without a tape measure.
 | `--prior-cm`, `--prior-deg` | How far tags may move from the layout before the solver resists (default 5 cm, 2°). |
 
 ## What it does
@@ -154,7 +157,9 @@ tools/fieldcal/tests/test_images.sh
 | Rendered recording (Jetson, 971 detector) | median 0.4 cm | height within 3 mm, pitch/roll within 0.02°, x/y within 3 mm, yaw within 0.01° |
 
 On rendered recordings, the report also found both mistakes planted in the test's CAD file: a
-camera's pitch off by 1.5°, and another's height off by 1 cm.
+camera's pitch off by 1.5°, and another's height off by 1 cm. The laptop (CPU detector) and the
+Jetson (971 detector) solves of the same recording agree to 0.34 cm on every tag and 0.2 cm /
+0.01° on the mounts.
 
 ## Things we learned building it
 

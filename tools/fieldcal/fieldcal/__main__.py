@@ -4,6 +4,7 @@
         [--reference-spot N=x,y,yawDeg | --anchor-camera NAME=x,y,yawDeg] [--every 2]
     tools/fieldcal/fieldcal.sh synth OUT_DIR --layout LAYOUT.json [--images] [--spots 16]
     tools/fieldcal/fieldcal.sh evaluate SOLVE_OUT_DIR TRUTH.json
+    tools/fieldcal/fieldcal.sh compare SOLVE_A SOLVE_B     (repeatability of two runs)
 
 See tools/fieldcal/README.md and docs/FIELD-CALIBRATION-PLAN.md.
 """
@@ -246,6 +247,42 @@ def cmd_evaluate(a) -> int:
     return 0 if not bad else 1
 
 
+def cmd_compare(a) -> int:
+    """Two solves of the same field and robot (say, the procedure done twice): how much they differ
+    is how repeatable the calibration is, with no tape measure needed."""
+    def load(d):
+        res = json.loads((Path(d) / "results.json").read_text())
+        tags = {t: g.from_wpilib_pose(e["solvedPose"]) for t, e in res["tags"].items()
+                if "solvedPose" in e and e["observations"] >= 2}
+        return res, tags
+    ra, ta = load(a.a)
+    rb, tb = load(a.b)
+    common = sorted(set(ta) & set(tb), key=int)
+    print(f"Tags seen well in both: {len(common)}")
+    dp = []
+    for t in common:
+        d = np.linalg.norm(ta[t][:3, 3] - tb[t][:3, 3]) * 100
+        ang = np.degrees(g.angle_between(ta[t][:3, :3], tb[t][:3, :3]))
+        dp.append(d)
+        print(f"  tag {t:>2}: {d:5.2f} cm, {ang:4.2f} deg apart")
+    if dp:
+        print(f"  median {np.median(dp):.2f} cm, max {np.max(dp):.2f} cm")
+    print("Mounts (b minus a):")
+    for c, ma in ra["mounts"].items():
+        mb = rb["mounts"].get(c)
+        if not mb:
+            continue
+        fa, fb = ma.get("robotToCamera", ma["rigFrame"]), mb.get("robotToCamera", mb["rigFrame"])
+        line = (f"  {c}: height {100 * (fb['z'] - fa['z']):+.1f} cm, pitch {fb['pitchDeg'] - fa['pitchDeg']:+.2f} deg, "
+                f"roll {fb['rollDeg'] - fa['rollDeg']:+.2f} deg")
+        if "robotToCamera" in ma and "robotToCamera" in mb:
+            dyaw = (fb["yawDeg"] - fa["yawDeg"] + 180) % 360 - 180
+            line += (f", x {100 * (fb['x'] - fa['x']):+.1f} cm, y {100 * (fb['y'] - fa['y']):+.1f} cm, "
+                     f"yaw {dyaw:+.2f} deg")
+        print(line)
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="fieldcal", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -281,6 +318,10 @@ def main(argv=None) -> int:
     y.add_argument("--seed", type=int, default=1)
     y.add_argument("--full-field", action="store_true")
     y.set_defaults(func=cmd_synth)
+    c = sub.add_parser("compare", help="Compare two solves (repeatability)")
+    c.add_argument("a", type=Path)
+    c.add_argument("b", type=Path)
+    c.set_defaults(func=cmd_compare)
     e = sub.add_parser("evaluate", help="Compare a solve's results with synthetic truth")
     e.add_argument("results", type=Path)
     e.add_argument("truth", type=Path)

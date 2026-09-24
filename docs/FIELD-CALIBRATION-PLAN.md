@@ -108,14 +108,29 @@ itself (camera poses and gyro not changing).
 
 ## Shop test first
 
-Prove the accuracy before an event:
-1. Put ~8 printed tags around the shop and measure a few by tape.
-2. Use a room corner as the reference spot.
-3. Run the procedure, then compare against the tape measurements.
-4. Also compare the solved mounts with CAD, and with the live mount estimate (`photonvision-17`).
+On our half field (most of half a field's tags), before an event. About 30 min, 2 people.
 
-**Expected accuracy:** about 1 cm and a few tenths of a degree. This is unverified; the lens
-calibration and a flat floor are the main limits.
+1. **Before:** build the replay tool on the Jetson once (`scripts/jetson/13-build-fieldcal-detect.sh`).
+   Write `cad.json` from robot code's `robotToCamera` for every camera (format in
+   [tools/fieldcal](../tools/fieldcal/README.md)). Pick the layout that matches how our field
+   elements are built.
+2. **Tape-measure 3–4 tags** from a wall or field corner: centre height, and distance along and out
+   from the wall. That's the only ground truth.
+3. **Record:** robot on and disabled, Settings → Rewind → **Record now**. Push the robot to ~15
+   spots on flat carpet, hold each 3 s, turn it at some so every camera sees tags from several
+   angles and distances. Keep people out of the views during holds. Stop.
+4. **Do it again** (a second recording, different spots).
+5. **Solve both on the Jetson** (`fieldcal.sh solve ... --cad cad.json`), then compare:
+   - **Repeatability:** `fieldcal.sh compare ~/fieldcal/<first> ~/fieldcal/<second>`. The two
+     runs should agree to ~1 cm on tags and a few tenths of a degree on mounts. More than that
+     means a spot problem (bumps, the robot rocking) or a lens calibration problem.
+   - **The tape-measured tags** against the report.
+   - **The mounts** against CAD (the report's "Against CAD" table) and against the live mount
+     estimate (`photonvision-17`).
+   - **The lens check** in the report: fit errors growing toward the image edges mean recalibrate.
+
+**Expected accuracy:** about 1 cm and a few tenths of a degree. On synthetic data the solver does
+better (a few mm, 0.03°), so the real limits will be the lens calibration and the floor.
 
 ## Open questions
 
