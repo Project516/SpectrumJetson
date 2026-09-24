@@ -6,13 +6,15 @@ vision coprocessor: what we built, why, and how to redo it. The detailed technic
 
 **Thank you, Austin Schuh.** The CUDA AprilTag detector at the heart of this build is Austin's work, first written for FRC 971 Spartan Robotics. He's the reason any of this works. He now develops it in [RealtimeRoboticsGroup/aos](https://github.com/RealtimeRoboticsGroup/aos) ([`frc/orin`](https://github.com/RealtimeRoboticsGroup/aos/tree/main/frc/orin)). We built from his copy in [frc971/bos](https://github.com/frc971/bos), inside [FRC-Team-4143's CUDA PhotonVision](https://github.com/FRC-Team-4143/photonvision). Full credits are at the [end](#credits-and-licenses).
 
+Built by Spectrum 3847 with Claude Opus 5.5 (Anthropic) in Claude Code, which did the research, code, patches, tests and docs alongside the team.
+
 *Last updated September 24, 2026.*
 
 ## Headlines
 
 Measured on the bench:
 
-- **2 AprilTag cameras at 120 fps each, full resolution (1280x800), about 15 ms latency, using about 25% of the CPU.** The cameras are Thrifty Bot [Thriftiest Cams](https://www.thethriftybot.com/products/thriftiest-cam): mono, global shutter, USB 2.0, $50 each. The GPU finds the tags in about 2 ms per frame.
+- **2 AprilTag cameras at 120 fps each, full resolution (1280x800), about 15 ms latency, using about 25% of the CPU.** The cameras are Thrifty Bot [Thriftiest Cams](https://www.thethriftybot.com/products/thriftiest-cam): mono, global shutter, USB 2.0, $50 each. The GPU finds the tags in about 2 ms per frame and is only about 12% busy (peaks under 25%).
 - **Set up for 4 AprilTag cameras** on the USB-A ports, with more on a USB-C hub.
 - **Game-piece detection at 30 fps alongside the AprilTag cameras,** with no measurable slowdown to them (76 fps if uncapped).
 - **Rewind:** robot code can record every camera at 30 fps, for 3% of one core, and you can download the recordings from the web UI.
@@ -357,4 +359,4 @@ We don't redistribute either; see [docs/GAME-PIECE-MODELS.md](docs/GAME-PIECE-MO
 - Mechanical Advantage 6328's Northstar.
 - Many Chief Delphi threads, linked in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
 
-**This repo** is licensed under the [GPL-3.0](LICENSE), following PhotonVision. The kernel patch in `kernel/` is GPL-2.0, like the Linux driver it changes. The scripts, tests, docs and our own code (`detector/`, and the new files in our patches) were written by Spectrum 3847 with help from Claude (Anthropic).
+**This repo** is licensed under the [GPL-3.0](LICENSE), following PhotonVision. The kernel patch in `kernel/` is GPL-2.0, like the Linux driver it changes. The scripts, tests, docs and our own code (`detector/`, and the new files in our patches) were written by Spectrum 3847 with Claude Opus 5.5 (Anthropic), working in Claude Code.

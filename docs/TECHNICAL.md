@@ -399,6 +399,7 @@ Full write-up in [VISION-RESEARCH.md](VISION-RESEARCH.md).
   | + OpenCV pool | 122 / 122, 1.6 ms detect | **129%** |
 
   UI latency went from ~23 ms to **13 ms**.
+- **GPU load, 2 cameras at 122 fps** (`tegrastats` every 0.5 s for 30 s, GPU locked at 1020 MHz, capped camera driver, measured after the backup reboot): mean 12%, median 14%, p90 22%, max 24%. Detect 1.95 / 2.16 ms, PhotonVision CPU 145% with one stream open.
 - **CUDA wait mode** (`SPECTRUM_971_CUDA_SYNC` or `/tmp/spectrum-971-cuda-sync`), measured with the decode fix:
 
   | Mode | CPU | Detect time |
