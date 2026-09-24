@@ -8,7 +8,12 @@ itself, see the [README](../README.md) and [TECHNICAL.md](TECHNICAL.md).
 
 - the off-season Limelight vision code on `Spectrum3847/2026-Spectrum` branch
   `2026-offseason-bot` (`Vision.java`, `docs/tools/vision.md`, the robot app),
+- the `Spectrum3847/2026-FM-SystemCore` branches (`port/fm-2027`, `perf/cleanups`,
+  `perf/main-thread-rt`): `PhotonIO`, `PoseFusion`, `docs/pose-sources.md` and the bench CPU
+  notes in the README,
 - the PhotonLib source at `v2027.0.0-alpha-2`, the version the robot uses,
+- the AOS localizer and calibration source (`frc/vision/swerve_localizer/`,
+  `calibrate_multi_cameras_lib.cc`),
 - the Limelight docs and changelog (LLOS 2026.1),
 - the AOS, bos and cos repositories,
 - Chief Delphi.
@@ -126,20 +131,185 @@ each one would add:
 - **Whacknet** is our upgrade path if the constrained solve turns out too heavy for the
   SystemCore.
 
+## Questions from AOS
+
+These three questions came up while comparing us with AOS.
+
+### NetworkTables or UDP?
+
+PhotonVision sends results over NetworkTables (NT), which runs on TCP: every message arrives, and
+in order. AOS sends its fast data over bare UDP, where a packet arrives or it doesn't:
+
+- the robot sends the Orin its pose and chassis speeds (port 4647),
+- the Orin sends back the fused pose (port 4648).
+
+AOS still uses NT for the clock offset and driver station state.
+
+| | NT (PhotonVision today) | UDP (AOS) |
+|---|---|---|
+| Latency | A little higher. If a TCP packet is lost, everything behind it waits for the resend. | Lowest. A lost packet is just gone, and the next one follows. |
+| Logging | Automatic. AdvantageKit and DataLog record it. | Nothing unless we write the logging. |
+| Dashboards and debugging | AdvantageScope and Elastic can see it | Custom tools needed |
+| Code to write | None; PhotonLib does it | Packet format and parsing on both sides |
+| Time sync | PhotonLib runs its own (UDP port 5810) | Uses NT's server time offset |
+| On the field | Fine | Fine. Jetson to SystemCore traffic stays on the robot's network. |
+
+**For us, the transport barely matters.** Every PhotonVision result carries its capture
+timestamp. The pose estimator applies it at the moment the frame was taken, then replays odometry
+forward. A few extra milliseconds in transit only make the correction arrive later; the pose
+itself doesn't get worse.
+
+UDP only matters for data flowing the other way at a high rate, such as streaming the gyro to the
+Jetson at 200 Hz (what 4533's Whacknet does). **Stay on NT.**
+
+### Is multi-camera extrinsics calibration better?
+
+There are two kinds of calibration.
+
+**Intrinsics** describe the lens itself: focal length, image center and distortion. PhotonVision's
+ChArUco board calibration does this. AOS and Limelight do the same thing the same way:
+
+- **Limelight 4** ships factory-calibrated.
+- **PhotonVision** needs us to calibrate. Ours are 0.87–0.97 px mean error, which is fine.
+- **AOS** is no better here.
+
+**Extrinsics** describe where each camera sits on the robot: x, y, z, roll, pitch and yaw.
+**Neither Limelight nor PhotonVision measures this.** We type in CAD numbers. The robot app's
+"Measure mount" checks pitch, roll and height, and says outright that it can't measure forward,
+right or yaw.
+
+AOS's `calibrate_multi_cameras` (`frc/vision/calibrate_multi_cameras_lib.cc`) **does** measure
+extrinsics from data:
+
+1. We hold ChArUco boards where two neighbouring cameras see them at nearly the same moment.
+2. It works out each camera's position relative to its neighbour and throws out outliers.
+3. It warns if a camera's result varies by more than 3 cm or 3°.
+
+The catch: one "base" camera still takes its mount from CAD. The others are measured relative to
+it, so the cameras agree with each other even if the whole set is slightly off.
+
+**This is the calibration that matters most.** A 1° yaw error in a mount moves the pose about
+7 cm at 4 m. The 2026 `vision.md` records all three Limelights mounted at about 30° while the code
+said 60°. Lens calibration can't catch that; extrinsics calibration can.
+
+**We could build a simpler version with PhotonVision:**
+
+1. Park the robot at a known spot on the field with tags in view.
+2. Each camera's multi-tag result gives the camera's field pose, so
+   `robotToCamera = fieldToRobot⁻¹ × fieldToCamera`.
+3. Average over a few parking spots.
+
+That measures x, y and yaw too, which the robot app can't do today. AOS also has `target_mapper`,
+which measures where the tags actually are on a real field, for fields that don't match the
+official layout.
+
+### An AOS-style EKF, and where it should run
+
+An EKF (extended Kalman filter) keeps a best-guess pose plus how confident it is in that guess:
+
+- **Between frames**, it drives the pose forward with chassis speeds, and its confidence shrinks.
+- **When a tag is seen**, it corrects the pose. How far depends on its confidence and on how
+  noisy that measurement is.
+
+AOS's EKF (`frc/vision/swerve_localizer/localizer.cc`) does four things WPILib's
+`SwerveDrivePoseEstimator` doesn't:
+
+1. **Each tag is its own measurement.** It uses the heading, distance and skew to that tag instead
+   of a finished x/y/θ pose. A single tag measures distance well and sideways position poorly, and
+   this shape captures that. WPILib only takes one x/y std dev, so it can't express "sure along
+   this line, unsure across it."
+2. **It tracks confidence over time.** After a long stretch without tags, it trusts the next tag
+   more. WPILib's estimator uses the same fixed weighting every time, which is part of why our code
+   needs hand-built tiers.
+3. **Noise follows the measurement.** Base noise per tag at 1 m is 0.06 heading, 0.5 distance and
+   0.3 skew. Distance and skew noise scale with distance² (capped at 1 m). All noise also scales
+   with lens distortion at that tag and with robot speed.
+4. **The gyro owns heading.** It rejects a tag whose implied heading disagrees with the gyro (the
+   same idea as our turret heading gate). It resets if the filter's heading drifts more than
+   0.4 rad from the gyro in teleop, or 1.5 rad in auto.
+
+WPILib's estimator also corrects at the capture time and replays forward. AdvantageKit replay is
+the equivalent of AOS's `localizer_replay`, as long as the per-tag data is logged as inputs. AOS is
+Apache 2.0, so its `HybridEkf` and corrector math can be ported with credit.
+
+**Where to run it: on the SystemCore, not the Jetson.** AOS runs on the Orin only because the
+roboRIO was too slow. That forces the rio to stream speeds and heading over UDP and wait for a
+pose to come back. On our robot, the SystemCore wins on every count:
+
+- **The inputs are already there.** CTRE's 250 Hz odometry and the gyro run on the SystemCore. On
+  the Jetson we'd have to stream them over the network at 250 Hz, sync clocks, and send the pose
+  back: two network hops for data the drivetrain already has.
+- **The drivetrain needs the pose on the SystemCore anyway,** for path following and aiming. A
+  pose made on the Jetson would be a second copy to keep in step with CTRE's.
+- **Replay works.** `PoseFusion` runs on the main loop from logged inputs, so a filter change can
+  be replayed against real match logs. A filter on the Jetson sits outside the AdvantageKit log.
+- **Failures stay contained.** If the Jetson reboots (about 20 s), a SystemCore filter keeps
+  running on odometry and any other enabled sources. A Jetson filter would take the robot's pose
+  down with it.
+- **The math is cheap.** A 3-state filter works on 3×3 matrices. Even rewinding about 0.2 s of
+  250 Hz samples to a frame's capture time is microseconds of work, which the WPILib estimator
+  already does.
+
+CPU numbers from `2026-FM-SystemCore`, measured on the bench unit on 2026-09-22 and 23:
+
+| Load | CPU |
+|---|---|
+| The whole controller | 80–90% busy |
+| The SystemCore's own Limelight servers for its two cameras | About 55% of the machine |
+| One Phoenix native thread | Spins a full core. Expected to stop with a CANivore attached (not yet confirmed). |
+| The robot program's main thread | About 16% of one core |
+| `robotPeriodic` at 100 Hz | About 1 ms |
+
+With no cameras on the SystemCore (the competition plan), about half the machine frees up. **The
+filter isn't where the CPU goes.** The heavy robot-side item is PhotonLib's constrained solvePnP
+(up to about 2 ms per frame on a roboRIO). If that ever gets too heavy, move the **solve** to the
+Jetson, Whacknet-style, and keep the **fusion** on the SystemCore. The Jetson isn't idle either: 2
+cameras use about 2.8 of its 6 cores, and 4 cameras about 4.5.
+
+**This matches what `2026-FM-SystemCore` already decided.** `docs/pose-sources.md`, carried over
+from the `HANDOFF-fm-pose-sources.md` brief, says:
+
+- fusion runs where the drivetrain loop runs (the SystemCore),
+- fusion stays WPILib's `SwerveDrivePoseEstimator`,
+- "FRC 971's hybrid EKF was evaluated and rejected."
+
+The brief isn't in that repo, so the reason for rejecting the EKF isn't recorded. For October,
+keep the WPILib estimator. After the event, the testbed already runs a "shadow" estimator per
+source (`PoseFusion`). An EKF could be added the same way as a shadow track, and judged against
+the WPILib estimator on real match logs before it ever drives the robot.
+
 ## Plan for `2026-FM-SystemCore`
 
-1. **Estimators.** Create one `PhotonCamera` and one `PhotonPoseEstimator` per camera. Feed
-   `addHeadingData` every loop, ideally from the 250 Hz odometry-thread samples.
-2. **Per result from `getAllUnreadResults()`:**
-   - MT1 is `estimateCoprocMultiTagPose`, falling back to `estimateLowestAmbiguityPose`.
-   - MT2 is `estimateConstrainedSolvepnpPose` with `headingFree=false`, seeded from MT1 or the
-     current pose, falling back to `estimatePnpDistanceTrigSolvePose` for a single tag.
-3. **Port the logic** from the off-season `Vision.java`: gates, tiers, seeding and confirmation,
-   and heading checks. Retune the thresholds.
-4. **Turret camera.** Set a per-frame `robotToCamera` from the turret angle history.
+The Orin is already wired into the SystemCore code on the `port/fm-2027` branch and the branches
+built on it (not `main` yet). `PhotonIO` reads each camera with `getAllUnreadResults()`. It uses
+the Jetson's multi-tag solve when there is one, and otherwise the best single target. Each
+camera's results go through the same gates as the Limelights, with its own shadow track.
+
+**Fix before the first robot test:**
+
+- [ ] **Camera names.** `VisionConfig.orinCameraNames` is `{"orin-front", "orin-left",
+      "orin-right"}`, but the Jetson names cameras by USB port: `TopLeft`, `TopRight`,
+      `BottomLeft`, `BottomRight`. `PhotonCamera` will never connect until these match.
+- [ ] **Field layout.** The robot code loads `k2026RebuiltWelded`, and the Jetson is set to 2026
+      Rebuilt AndyMark. Multi-tag poses (solved on the Jetson) and single-tag poses (solved on the
+      robot) would use different tag positions. Pick the event's field and set both to it.
+- [ ] **Mounts.** `VisionConfig.orinRobotToCamera` is still placeholders.
+
+**Next:**
+
+1. **Heading.** Give each camera a `PhotonPoseEstimator` and feed `addHeadingData` every loop,
+   ideally from the 250 Hz odometry samples.
+2. **MT2-style solves.** Add `estimateConstrainedSolvepnpPose` (`headingFree=false`, seeded from
+   the multi-tag pose or the current pose) and `estimatePnpDistanceTrigSolvePose` as extra
+   sources. Compare their shadow tracks with the multi-tag one.
+3. **Single-tag fallback.** `PhotonIO` uses the best target's `bestCameraToTarget`. Consider
+   `estimateLowestAmbiguityPose`, and check how ambiguity gates on real data (sim ambiguity runs
+   high, per `pose-sources.md`).
+4. **Turret camera.** If a camera goes on a turret, set its `robotToCamera` per frame from the
+   turret angle history.
 5. **Replacements.** Move LEDs to a CANdle, decide what replaces Rewind, and decide whether the
    robot app's Cameras page gets a PhotonVision backend.
-6. **Validate** timestamps and heading lookup on the robot before trusting the new tiers.
+6. **Validate** timestamps and heading lookup on the robot before trusting the tiers.
 
 ## Could not confirm
 
@@ -147,6 +317,8 @@ each one would add:
 - Whether the Jetson's USB (UVC) capture path gives start-of-exposure timestamps.
 - The LL4's default IMU mode (a forum reply says 0; the docs don't say).
 - Whether 971 still runs AOS's localizer in 2026 (evidence points to bos).
+- Why the FM handoff rejected 971's EKF (the brief isn't in `2026-FM-SystemCore`).
+- Whether the spinning Phoenix thread stops once a CANivore is attached.
 - Any head-to-head accuracy data comparing MT2 with PhotonLib's trig or constrained solve.
 
 ## References
