@@ -29,7 +29,10 @@ if [[ ! -d $SRC/.git ]]; then
   git clone --filter=blob:none "$BOS_REPO" "$SRC"
 fi
 cd "$SRC"
-git fetch -q origin
+# Offline (an event, or DNS down) is fine once the pinned commit is in the clone.
+git fetch -q origin || echo "==> Can't reach $BOS_REPO; using the local clone"
+git cat-file -e "$BOS_SHA^{commit}" 2>/dev/null ||
+  { echo "bos $BOS_SHA isn't in $SRC: the first build needs the internet" >&2; exit 1; }
 git checkout -q -f "$BOS_SHA"
 # Only abseil is needed (the pinned commit bos uses); skip json and bos-logs.
 git submodule update --init --depth 1 third_party/abseil-cpp
