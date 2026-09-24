@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Build lib971apriltag.so from Austin Schuh's current CUDA AprilTag detector
+# (frc971/bos third_party/971apriltag) with our JNI bridge (detector/).
+# Drop-in replacement for the FRC-Team-4143 GpuDetectorJNI build (05-*.sh): same Java API.
+#
+# Run ON THE JETSON after 04-build-allwpilib.sh. Builds only; does NOT install.
+# Install (and roll back) with:
+#   sudo install -m 755 ~/build/bos-detector/lib971apriltag.so /usr/lib/lib971apriltag.so
+#   sudo systemctl restart photonvision
+#   (rollback: rerun 05-build-gpudetector.sh, which installs the 4143 build)
+set -euo pipefail
+
+BOS_REPO=https://github.com/frc971/bos.git
+BOS_SHA=62e93b4   # 2026-09-07; third_party/971apriltag last changed in 1dbdf51 (2026-05-19)
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+SRC=$HOME/build/bos
+OUT=$HOME/build/bos-detector
+
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
+export PATH=$PATH:/usr/local/cuda/bin
+
+[[ -f /usr/local/lib/libwpiutil.so ]] || { echo "Run 04-build-allwpilib.sh first." >&2; exit 1; }
+
+if [[ ! -d $SRC/.git ]]; then
+  git clone --filter=blob:none "$BOS_REPO" "$SRC"
+fi
+cd "$SRC"
+git fetch -q origin
+git checkout -q -f "$BOS_SHA"
+# Only abseil is needed (the pinned commit bos uses); skip json and bos-logs.
+git submodule update --init --depth 1 third_party/abseil-cpp
+
+cmake -S "$REPO_ROOT/detector" -B "$OUT" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBOS_DIR="$SRC"
+cmake --build "$OUT" --parallel 4 --target 971apriltag_jni
+
+echo
+ldd "$OUT/lib971apriltag.so" | grep -E "not found|wpiutil|apriltag|cudart" || true
+echo "Built $OUT/lib971apriltag.so (not installed)"
