@@ -158,8 +158,9 @@ def cmd_solve(a) -> int:
                          prior_rotation_deg=a.prior_deg)
     if not obs:
         seen = {c: sum(1 for _, d in fr if d) for c, fr in dets.items()}
-        print(f"Nothing to solve: {len(segs)} still stretches with tags. Frames with any tag, per camera: {seen}. "
-              "Check --min-margin, and that the recording has the robot held still in front of tags.", file=sys.stderr)
+        print(f"Nothing to solve: no camera saw a tag while the robot was held still ({len(segs)} still stretches; "
+              f"frames with any tag, per camera: {seen}). Record again with the robot held still for 2 s or more "
+              "at each spot, where the cameras can see tags.", file=sys.stderr)
         return 1
     try:
         res = solver.solve(cams, obs, layout, opt, verbose=a.verbose)

@@ -1,0 +1,2433 @@
+diff --git a/photon-client/src/components/app/photon-sidebar.vue b/photon-client/src/components/app/photon-sidebar.vue
+index deb43d6b..5af91ef1 100644
+--- a/photon-client/src/components/app/photon-sidebar.vue
++++ b/photon-client/src/components/app/photon-sidebar.vue
+@@ -57,6 +57,9 @@ const renderCompact = computed<boolean>(() => compact.value || !mdAndUp.value);
+           >Camera Matching</v-list-item-title
+         >
+       </v-list-item>
++      <v-list-item link to="/fieldcal" prepend-icon="mdi-map-marker-path">
++        <v-list-item-title>Field Calibration</v-list-item-title>
++      </v-list-item>
+       <v-list-item link to="/docs" prepend-icon="mdi-bookshelf">
+         <v-list-item-title>Documentation</v-list-item-title>
+       </v-list-item>
+diff --git a/photon-client/src/components/fieldcal/FieldCalMap.vue b/photon-client/src/components/fieldcal/FieldCalMap.vue
+new file mode 100644
+index 00000000..b70eea25
+--- /dev/null
++++ b/photon-client/src/components/fieldcal/FieldCalMap.vue
+@@ -0,0 +1,211 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-30): the field from above for the field-calibration page. Tags are
++// coloured by how many still spots have seen them; live cameras, captured spots, the suggested
++// next spot, and (on results) each tag's solved offset, exaggerated so centimetres show.
++import { computed } from "vue";
++import type { AprilTagFieldLayout } from "@/types/PhotonTrackingTypes";
++import type { MapCamera, MapOffset, MapPoint, MapSuggestion } from "@/types/FieldCalTypes";
++
++const props = defineProps<{
++  layout: AprilTagFieldLayout;
++  tagSpots?: Record<string, number>;
++  inView?: number[];
++  cameras?: MapCamera[];
++  spots?: MapPoint[];
++  suggestion?: MapSuggestion | null;
++  offsets?: Record<string, MapOffset>;
++  focusSeen?: boolean;
++}>();
++
++const OFFSET_SCALE = 10; // 1 cm drawn as 10 cm
++
++const yawOf = (q: { W: number; X: number; Y: number; Z: number }) =>
++  Math.atan2(2 * (q.W * q.Z + q.X * q.Y), 1 - 2 * (q.Y * q.Y + q.Z * q.Z));
++
++const W = computed(() => props.layout.field.width);
++const L = computed(() => props.layout.field.length);
++
++const tags = computed(() =>
++  props.layout.tags.map((t) => ({
++    id: t.ID,
++    x: t.pose.translation.x,
++    y: t.pose.translation.y,
++    yaw: yawOf(t.pose.rotation.quaternion),
++    spots: props.tagSpots?.[String(t.ID)] ?? 0
++  }))
++);
++
++// With focusSeen, zoom to the tags seen so far (the part of the field in use), plus a margin.
++const view = computed(() => {
++  let x0 = 0,
++    y0 = 0,
++    x1 = L.value,
++    y1 = W.value;
++  const seen = tags.value.filter((t) => t.spots > 0 || props.inView?.includes(t.id) || props.offsets?.[String(t.id)]);
++  if (props.focusSeen && seen.length >= 2) {
++    x0 = Math.max(0, Math.min(...seen.map((t) => t.x)) - 2);
++    x1 = Math.min(L.value, Math.max(...seen.map((t) => t.x)) + 2);
++    y0 = Math.max(0, Math.min(...seen.map((t) => t.y)) - 2);
++    y1 = Math.min(W.value, Math.max(...seen.map((t) => t.y)) + 2);
++  }
++  return { x0, y0, x1, y1 };
++});
++const viewBox = computed(() => {
++  const v = view.value;
++  // SVG y points down: field y = W at the top.
++  return `${v.x0 - 0.4} ${W.value - v.y1 - 0.4} ${v.x1 - v.x0 + 0.8} ${v.y1 - v.y0 + 0.8}`;
++});
++const sy = (y: number) => W.value - y;
++
++const tagColor = (t: { id: number; spots: number }) => {
++  if (props.offsets) {
++    const o = props.offsets[String(t.id)];
++    return o ? (o.moved ? "#e53935" : "#43a047") : "#9e9e9e";
++  }
++  if (t.spots >= 2) return "#43a047";
++  if (t.spots === 1) return "#fb8c00";
++  return props.inView?.includes(t.id) ? "#1e88e5" : "#9e9e9e";
++};
++</script>
++
++<template>
++  <svg :viewBox="viewBox" class="fieldcal-map" preserveAspectRatio="xMidYMid meet">
++    <rect :x="0" :y="0" :width="L" :height="W" class="field" />
++    <line :x1="L / 2" :y1="0" :x2="L / 2" :y2="W" class="midline" />
++
++    <!-- captured spots -->
++    <g v-for="(s, i) in spots ?? []" :key="'s' + i">
++      <circle :cx="s.x" :cy="sy(s.y)" r="0.16" class="spot" />
++      <text :x="s.x" :y="sy(s.y) + 0.09" class="spot-label">{{ s.label ?? i + 1 }}</text>
++    </g>
++
++    <!-- tags: the face, and a tick pointing the way it faces -->
++    <g v-for="t in tags" :key="t.id">
++      <line
++        :x1="t.x + 0.22 * Math.sin(t.yaw)"
++        :y1="sy(t.y - 0.22 * Math.cos(t.yaw))"
++        :x2="t.x - 0.22 * Math.sin(t.yaw)"
++        :y2="sy(t.y + 0.22 * Math.cos(t.yaw))"
++        :stroke="tagColor(t)"
++        stroke-width="0.12"
++        stroke-linecap="round"
++      />
++      <line
++        :x1="t.x"
++        :y1="sy(t.y)"
++        :x2="t.x + 0.3 * Math.cos(t.yaw)"
++        :y2="sy(t.y + 0.3 * Math.sin(t.yaw))"
++        :stroke="tagColor(t)"
++        stroke-width="0.05"
++      />
++      <circle v-if="inView?.includes(t.id)" :cx="t.x" :cy="sy(t.y)" r="0.35" class="in-view" />
++      <text :x="t.x + 0.6 * Math.cos(t.yaw)" :y="sy(t.y + 0.6 * Math.sin(t.yaw)) + 0.1" class="tag-label">
++        {{ t.id }}
++      </text>
++      <!-- solved offset (results) -->
++      <line
++        v-if="offsets?.[String(t.id)]"
++        :x1="t.x"
++        :y1="sy(t.y)"
++        :x2="t.x + (offsets[String(t.id)].dxCm / 100) * OFFSET_SCALE"
++        :y2="sy(t.y + (offsets[String(t.id)].dyCm / 100) * OFFSET_SCALE)"
++        :stroke="offsets[String(t.id)].moved ? '#e53935' : '#43a047'"
++        stroke-width="0.06"
++        marker-end="url(#fc-arrow)"
++      />
++    </g>
++
++    <!-- the suggested next spot -->
++    <g v-if="suggestion" class="suggestion">
++      <line
++        :x1="suggestion.x"
++        :y1="sy(suggestion.y)"
++        :x2="suggestion.faceX"
++        :y2="sy(suggestion.faceY)"
++        stroke="#8e24aa"
++        stroke-width="0.05"
++        stroke-dasharray="0.15 0.1"
++      />
++      <circle :cx="suggestion.x" :cy="sy(suggestion.y)" r="0.45" class="suggest-ring" />
++      <text :x="suggestion.x" :y="sy(suggestion.y) + 0.12" class="suggest-label">next</text>
++    </g>
++
++    <!-- live cameras: where each is and which way it looks -->
++    <g v-for="c in (cameras ?? []).filter((c) => c.pose)" :key="c.name">
++      <line
++        :x1="c.pose![0]"
++        :y1="sy(c.pose![1])"
++        :x2="c.pose![0] + 0.7 * Math.cos(c.pose![2])"
++        :y2="sy(c.pose![1] + 0.7 * Math.sin(c.pose![2]))"
++        stroke="#00acc1"
++        stroke-width="0.07"
++        marker-end="url(#fc-arrow-cam)"
++      />
++      <circle :cx="c.pose![0]" :cy="sy(c.pose![1])" r="0.12" fill="#00acc1" />
++    </g>
++
++    <defs>
++      <marker id="fc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
++        <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
++      </marker>
++      <marker id="fc-arrow-cam" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto">
++        <path d="M0,0 L10,5 L0,10 z" fill="#00acc1" />
++      </marker>
++    </defs>
++  </svg>
++</template>
++
++<style scoped>
++.fieldcal-map {
++  width: 100%;
++  max-height: 60vh;
++  background: rgba(127, 127, 127, 0.06);
++  border-radius: 8px;
++}
++.field {
++  fill: rgba(76, 175, 80, 0.07);
++  stroke: rgba(127, 127, 127, 0.8);
++  stroke-width: 0.04;
++}
++.midline {
++  stroke: rgba(127, 127, 127, 0.4);
++  stroke-width: 0.03;
++  stroke-dasharray: 0.2 0.15;
++}
++.tag-label {
++  font-size: 0.3px;
++  text-anchor: middle;
++  fill: currentColor;
++}
++.in-view {
++  fill: none;
++  stroke: #1e88e5;
++  stroke-width: 0.04;
++}
++.spot {
++  fill: rgba(33, 150, 243, 0.25);
++  stroke: #1e88e5;
++  stroke-width: 0.03;
++}
++.spot-label {
++  font-size: 0.2px;
++  text-anchor: middle;
++  fill: currentColor;
++}
++.suggest-ring {
++  fill: rgba(142, 36, 170, 0.15);
++  stroke: #8e24aa;
++  stroke-width: 0.05;
++  animation: pulse 1.2s ease-in-out infinite;
++}
++.suggest-label {
++  font-size: 0.28px;
++  text-anchor: middle;
++  fill: #8e24aa;
++}
++@keyframes pulse {
++  50% {
++    opacity: 0.4;
++  }
++}
++</style>
+diff --git a/photon-client/src/router/index.ts b/photon-client/src/router/index.ts
+index 1535b16e..88e5ef10 100644
+--- a/photon-client/src/router/index.ts
++++ b/photon-client/src/router/index.ts
+@@ -6,6 +6,7 @@ import GeneralSettingsView from "@/views/GeneralSettingsView.vue";
+ import DocsView from "@/views/DocsView.vue";
+ import NotFoundView from "@/views/NotFoundView.vue";
+ import CameraMatchingView from "@/views/CameraMatchingView.vue";
++import FieldCalibrationView from "@/views/FieldCalibrationView.vue";
+ 
+ const router = createRouter({
+   // Using HTML5 History Mode is problematic with Javalin because each route is treated as a server endpoint which causes Javalin to return a 404 error before being redirected to the UI.
+@@ -36,6 +37,11 @@ const router = createRouter({
+       name: "Camera Matching",
+       component: CameraMatchingView
+     },
++    {
++      path: "/fieldcal",
++      name: "Field Calibration",
++      component: FieldCalibrationView
++    },
+     {
+       path: "/docs",
+       name: "Docs",
+diff --git a/photon-client/src/types/FieldCalTypes.ts b/photon-client/src/types/FieldCalTypes.ts
+new file mode 100644
+index 00000000..2c62d7d1
+--- /dev/null
++++ b/photon-client/src/types/FieldCalTypes.ts
+@@ -0,0 +1,5 @@
++// SpectrumJetson (photonvision-30): shapes the field-calibration map draws.
++export type MapCamera = { name: string; pose: number[] | null };
++export type MapPoint = { x: number; y: number; label?: string };
++export type MapSuggestion = { x: number; y: number; tag: number; faceX: number; faceY: number };
++export type MapOffset = { dxCm: number; dyCm: number; moved: boolean };
+diff --git a/photon-client/src/views/FieldCalibrationView.vue b/photon-client/src/views/FieldCalibrationView.vue
+new file mode 100644
+index 00000000..39cc857b
+--- /dev/null
++++ b/photon-client/src/views/FieldCalibrationView.vue
+@@ -0,0 +1,786 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-30): field calibration. Tune the camera settings at one spot, then
++// push the robot by hand to still spots while every camera records; the Jetson then solves every
++// tag's real pose and every camera's mount (tools/fieldcal, with the 971 GPU detector).
++import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
++import axios from "axios";
++import { useStateStore } from "@/stores/StateStore";
++import { useSettingsStore } from "@/stores/settings/GeneralSettingsStore";
++import FieldCalMap from "@/components/fieldcal/FieldCalMap.vue";
++import type { MapOffset, MapPoint, MapSuggestion } from "@/types/FieldCalTypes";
++
++type Mount = { x: number; y: number; z: number; rollDeg: number; pitchDeg: number; yawDeg: number };
++type StepResult = {
++  control: string;
++  value: number;
++  frames: number;
++  found: number;
++  margin: number;
++  jitterPx: number;
++  brightness: number;
++  tags: number;
++};
++type TuneCamera = {
++  problem: string;
++  baselineTags: number[];
++  baseline: StepResult | null;
++  pipeline: Record<string, number>;
++  startValues: Record<string, number>;
++  ranges: Record<string, number[]>;
++  recommended: Record<string, number>;
++  notes: Record<string, string>;
++  results: StepResult[];
++  pipelineIndex: number;
++};
++type Status = {
++  state: "IDLE" | "RECORDING" | "SOLVING" | "SOLVED" | "FAILED";
++  session: string;
++  message: string;
++  toolInstalled: boolean;
++  seconds: number;
++  rewindRecording: boolean;
++  rewindSession: string;
++  still?: boolean;
++  stillSeconds?: number;
++  holdSeconds?: number;
++  spotCaptured?: boolean;
++  live?: Record<string, { tags: number[]; pose: number[] | null; multiTag: boolean }>;
++  spots: { views: Record<string, number[]>; cameraPoses: Record<string, number[]> }[];
++  tagSpots: Record<string, number>;
++  cameraSpots: Record<string, number>;
++  solveLog: string[];
++  tuning: {
++    running: boolean;
++    phase: string;
++    stepsDone: number;
++    stepsTotal: number;
++    result: string;
++    cameras: Record<string, TuneCamera>;
++  };
++  robotMounts: Record<string, Mount>;
++  robotConnected: boolean;
++  cameras: Record<string, { calibration: { resolution: string } | null; videoMode?: string }>;
++  runs: string[];
++  recordings: string[];
++  latestBackup: string;
++};
++type TagResult = {
++  observations: number;
++  rmsPx: number;
++  sigmaRelCm: number;
++  sigmaDeg: number;
++  dxCm?: number;
++  dyCm?: number;
++  dzCm?: number;
++  offsetCm?: number;
++  angleDeg?: number;
++  verdict: string;
++};
++type MountResult = {
++  rigFrame: Mount;
++  sigma: Record<string, number>;
++  robotToCamera?: Mount;
++  cad?: Mount;
++  minusCad?: Mount;
++};
++type Results = {
++  referenceCamera: string;
++  spots: number;
++  observations: number;
++  dropped: number;
++  rmsPxByCamera: Record<string, number>;
++  tags: Record<string, TagResult>;
++  mounts: Record<string, MountResult>;
++  anchor: string;
++  correctedTags: number[];
++  lensCheck: Record<string, { centrePx: number | null; edgePx: number | null; recalibrate: boolean }>;
++  notes: string[];
++  alignment: { tagsUsed?: number[]; tagsIgnored?: number[] };
++};
++
++const status = ref<Status | null>(null);
++const busy = ref(false);
++const results = ref<Results | null>(null);
++const resultsRun = ref("");
++const beep = ref(true);
++let timer: ReturnType<typeof setTimeout> | undefined;
++
++const layout = computed(() => useSettingsStore().currentFieldLayout);
++const recording = computed(() => status.value?.state === "RECORDING");
++
++const load = async () => {
++  try {
++    status.value = (await axios.get("/fieldcal")).data;
++  } catch {
++    status.value = null;
++  }
++  clearTimeout(timer);
++  timer = setTimeout(load, recording.value || status.value?.tuning?.running ? 400 : 2000);
++};
++const act = async (body: object, done?: string) => {
++  busy.value = true;
++  try {
++    const r = await axios.post("/fieldcal", body);
++    if (typeof r.data === "object") status.value = r.data;
++    if (done) useStateStore().showSnackbarMessage({ message: done, color: "success" });
++  } catch (e: any) {
++    useStateStore().showSnackbarMessage({ message: e?.response?.data || "Request failed", color: "error" });
++  } finally {
++    busy.value = false;
++    load();
++  }
++};
++
++// ---- readiness
++const cameraNames = computed(() => Object.keys(status.value?.cameras ?? {}).sort());
++const calibrated = (name: string) => {
++  const c = status.value?.cameras[name];
++  if (!c?.calibration) return false;
++  return !c.videoMode || c.videoMode.startsWith(c.calibration.resolution);
++};
++const mountsFromRobot = computed(() => Object.keys(status.value?.robotMounts ?? {}).length);
++
++// ---- recording guidance
++const spotCount = computed(() => status.value?.spots.length ?? 0);
++const inView = computed(() => {
++  const s = new Set<number>();
++  for (const c of Object.values(status.value?.live ?? {})) c.tags.forEach((t) => s.add(t));
++  return [...s];
++});
++const liveCameras = computed(() =>
++  Object.entries(status.value?.live ?? {}).map(([name, c]) => ({ name, pose: c.pose }))
++);
++const spotPoints = computed<MapPoint[]>(() =>
++  (status.value?.spots ?? [])
++    .map((s, i) => {
++      const poses = Object.values(s.cameraPoses);
++      if (!poses.length) return null;
++      return {
++        x: poses.reduce((a, p) => a + p[0], 0) / poses.length,
++        y: poses.reduce((a, p) => a + p[1], 0) / poses.length,
++        label: String(i + 1)
++      };
++    })
++    .filter((p): p is MapPoint & { label: string } => p !== null)
++);
++const tagSeen = (id: number) => status.value?.tagSpots[String(id)] ?? 0;
++const seenTags = computed(() => layout.value.tags.filter((t) => tagSeen(t.ID) > 0));
++const wellSeen = computed(() => seenTags.value.filter((t) => tagSeen(t.ID) >= 2));
++const needMore = computed(() => seenTags.value.filter((t) => tagSeen(t.ID) === 1));
++
++const yawOf = (q: { W: number; X: number; Y: number; Z: number }) =>
++  Math.atan2(2 * (q.W * q.Z + q.X * q.Y), 1 - 2 * (q.Y * q.Y + q.Z * q.Z));
++const here = computed(() => {
++  const poses = liveCameras.value.map((c) => c.pose).filter((p): p is number[] => !!p);
++  if (poses.length) {
++    return {
++      x: poses.reduce((a, p) => a + p[0], 0) / poses.length,
++      y: poses.reduce((a, p) => a + p[1], 0) / poses.length
++    };
++  }
++  const last = spotPoints.value[spotPoints.value.length - 1];
++  return last ? { x: last.x, y: last.y } : null;
++});
++// Next: in front of the nearest tag seen from only one spot (2.5 m out, facing it).
++const suggestion = computed<MapSuggestion | null>(() => {
++  if (!recording.value || !needMore.value.length) return null;
++  const h = here.value;
++  const scored = needMore.value
++    .map((t) => {
++      const yaw = yawOf(t.pose.rotation.quaternion);
++      const f = layout.value.field;
++      const x = Math.min(f.length - 0.6, Math.max(0.6, t.pose.translation.x + 2.5 * Math.cos(yaw)));
++      const y = Math.min(f.width - 0.6, Math.max(0.6, t.pose.translation.y + 2.5 * Math.sin(yaw)));
++      const d = h ? Math.hypot(x - h.x, y - h.y) : 0;
++      return { tag: t.ID, x, y, faceX: t.pose.translation.x, faceY: t.pose.translation.y, d };
++    })
++    .sort((a, b) => a.d - b.d);
++  return scored[0];
++});
++const headingBins = computed(() => {
++  const bins = new Set<number>();
++  for (const s of status.value?.spots ?? []) {
++    const p = Object.values(s.cameraPoses)[0];
++    if (p) bins.add(Math.round(((p[2] * 180) / Math.PI + 360) / 45) % 8);
++  }
++  return bins.size;
++});
++const checklist = computed(() => [
++  { ok: spotCount.value >= 12, text: `${spotCount.value} spots (aim for 12–20)` },
++  {
++    ok: seenTags.value.length > 0 && needMore.value.length === 0,
++    text: `${wellSeen.value.length} of ${seenTags.value.length} tags seen from 2+ spots`
++  },
++  {
++    ok: cameraNames.value.length > 0 && cameraNames.value.every((c) => (status.value?.cameraSpots[c] ?? 0) >= 3),
++    text: `Every camera saw tags at 3+ spots (${cameraNames.value
++      .map((c) => `${c} ${status.value?.cameraSpots[c] ?? 0}`)
++      .join(", ")})`
++  },
++  { ok: headingBins.value >= 3, text: "The robot turned to several headings" }
++]);
++const banner = computed(() => {
++  const s = status.value;
++  if (!s || !recording.value) return null;
++  if (!inView.value.length)
++    return { color: "error", text: "No camera sees a tag here. Push the robot to where cameras see tags." };
++  if (s.spotCaptured)
++    return { color: "success", text: `Spot ${spotCount.value} captured. Push the robot to the next spot.` };
++  if (s.still)
++    return {
++      color: "warning",
++      text: "Hold still…",
++      progress: Math.min(100, (100 * (s.stillSeconds ?? 0)) / (s.holdSeconds ?? 1.5))
++    };
++  return { color: "info", text: "Moving. Push the robot to a new spot 1–2 m away, then hold it still." };
++});
++
++// A short beep when a spot counts, for whoever is pushing and not watching the screen.
++let lastSpots = 0;
++watch(spotCount, (n) => {
++  if (n > lastSpots && beep.value) {
++    try {
++      const ctx = new AudioContext();
++      const o = ctx.createOscillator();
++      o.frequency.value = 880;
++      o.connect(ctx.destination);
++      o.start();
++      o.stop(ctx.currentTime + 0.15);
++    } catch {
++      // no audio
++    }
++  }
++  lastSpots = n;
++});
++
++// ---- tuning
++const tuning = computed(() => status.value?.tuning);
++const controlLabel: Record<string, string> = {
++  exposure: "Exposure (raw)",
++  gain: "Gain",
++  brightness: "Brightness",
++  contrast: "Contrast",
++  gamma: "Gamma",
++  sharpness: "Sharpness",
++  backlight: "Backlight compensation"
++};
++const fmtSetting = (control: string, v: number | undefined) => {
++  if (v === undefined) return "";
++  if (control === "exposure") return v < 0 ? "auto" : `${v} (${(v / 10).toFixed(1)} ms)`;
++  return v < 0 ? "camera default" : String(v);
++};
++const anyRecommendation = computed(() =>
++  Object.values(tuning.value?.cameras ?? {}).some((c) => Object.keys(c.recommended).length > 0)
++);
++
++// ---- results
++const loadResults = async (run: string) => {
++  resultsRun.value = run;
++  results.value = null;
++  if (!run) return;
++  try {
++    results.value = (await axios.get(`/fieldcal/file?session=${encodeURIComponent(run)}&name=results.json`)).data;
++  } catch {
++    results.value = null;
++  }
++};
++watch(
++  () => [status.value?.state, status.value?.session],
++  ([st, s]) => {
++    if (st === "SOLVED" && s && s !== resultsRun.value) loadResults(s as string);
++  }
++);
++watch(
++  () => status.value?.runs,
++  (runs) => {
++    if (!resultsRun.value && runs?.length) loadResults(runs[0]);
++  }
++);
++const offsets = computed<Record<string, MapOffset> | undefined>(() => {
++  if (!results.value) return undefined;
++  const o: Record<string, MapOffset> = {};
++  for (const [id, t] of Object.entries(results.value.tags)) {
++    if (t.dxCm === undefined) continue;
++    o[id] = { dxCm: t.dxCm, dyCm: t.dyCm ?? 0, moved: t.verdict === "moved" };
++  }
++  return o;
++});
++const verdictColor = (v: string) =>
++  v === "moved" ? "error" : v.startsWith("as drawn, but") || v.startsWith("seen once") ? "warning" : "success";
++const fileUrl = (name: string) =>
++  `/api/fieldcal/file?session=${encodeURIComponent(resultsRun.value)}&name=${name}&download=1`;
++const java = computed(() => {
++  if (!results.value) return "";
++  const lines = [`// Field calibration ${resultsRun.value}: robotToCamera for each camera`];
++  for (const [c, m] of Object.entries(results.value.mounts)) {
++    const f = m.robotToCamera;
++    if (!f) continue;
++    lines.push(
++      `Transform3d ${c.charAt(0).toLowerCase() + c.slice(1)}ToCamera = new Transform3d(`,
++      `    new Translation3d(${f.x.toFixed(4)}, ${f.y.toFixed(4)}, ${f.z.toFixed(4)}),`,
++      `    new Rotation3d(Units.degreesToRadians(${f.rollDeg.toFixed(2)}), Units.degreesToRadians(${f.pitchDeg.toFixed(
++        2
++      )}), Units.degreesToRadians(${f.yawDeg.toFixed(2)})));`
++    );
++  }
++  return lines.length > 1 ? lines.join("\n") : "";
++});
++const copyJava = () => navigator.clipboard?.writeText(java.value);
++const applyLayout = () => {
++  if (
++    window.confirm(
++      "Put the corrected layout into PhotonVision?\n\nThe layout in use now is saved first, and Undo puts it back. " +
++        "PhotonVision restarts (about 20 s). Robot code needs the same layout: download it here too."
++    )
++  )
++    act({ action: "apply", session: resultsRun.value }, "Layout applied; PhotonVision is restarting");
++};
++const undoLayout = () => {
++  if (
++    window.confirm(
++      `Put back the layout saved before the last apply (${status.value?.latestBackup})? PhotonVision restarts.`
++    )
++  )
++    act({ action: "undo" }, "Previous layout restored; PhotonVision is restarting");
++};
++const fmt = (v: number | undefined, d = 1) => (v === undefined || v === null ? "" : v.toFixed(d));
++const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
++const solveRecording = ref("");
++
++onMounted(load);
++onBeforeUnmount(() => clearTimeout(timer));
++</script>
++
++<template>
++  <div class="pa-3">
++    <v-card class="mb-3 rounded-12" color="surface">
++      <v-card-title>Field calibration</v-card-title>
++      <v-card-text>
++        <p class="mb-3">
++          Finds where this field's tags really are and where every camera sits on the robot, from the robot's own
++          cameras. Robot on and <b>disabled</b>, pushed by hand. Tune the camera settings at one spot, then record 10–20
++          spots; the Jetson does the rest in about a minute.
++        </p>
++        <div v-if="status">
++          <div class="check">
++            <v-icon :color="status.toolInstalled ? 'success' : 'error'">
++              {{ status.toolInstalled ? "mdi-check-circle" : "mdi-close-circle" }}
++            </v-icon>
++            <span v-if="status.toolInstalled">Solver installed on this Jetson.</span>
++            <span v-else>
++              The solver isn't installed: run <code>scripts/jetson/13-build-fieldcal-detect.sh --install</code> on the
++              Jetson.
++            </span>
++          </div>
++          <div v-for="c in cameraNames" :key="c" class="check">
++            <v-icon :color="calibrated(c) ? 'success' : 'error'">
++              {{ calibrated(c) ? "mdi-check-circle" : "mdi-close-circle" }}
++            </v-icon>
++            {{ c }}:
++            <span v-if="calibrated(c)">lens calibrated at {{ status.cameras[c].calibration?.resolution }}</span>
++            <span v-else
++              >not calibrated at its current resolution ({{ status.cameras[c].videoMode }}): calibrate it first (Camera
++              page)</span
++            >
++            <span v-if="status.robotMounts[c]">
++              · mount from robot code: {{ fmt(status.robotMounts[c].z, 3) }} m high, pitch
++              {{ fmt(status.robotMounts[c].pitchDeg) }}°</span
++            >
++          </div>
++          <div class="check">
++            <v-icon :color="mountsFromRobot ? 'success' : 'warning'">
++              {{ mountsFromRobot ? "mdi-check-circle" : "mdi-alert-circle" }}
++            </v-icon>
++            <span v-if="mountsFromRobot"
++              >Camera mounts from robot code for {{ mountsFromRobot }} camera(s): the solve compares against them and
++              anchors x, y and yaw.</span
++            >
++            <span v-else>
++              {{ status.robotConnected ? "Robot code isn't sending camera mounts" : "No robot connected" }}: publish
++              each camera's <code>robotToCamera</code> (Transform3d struct) at
++              <code>/photonvision/&lt;camera&gt;/robotToCamera</code>. Without them, height, pitch and roll are still
++              found; x, y and yaw are relative.
++            </span>
++          </div>
++          <div class="check">
++            <v-icon color="success">mdi-check-circle</v-icon>
++            Field layout: {{ layout.tags.length }} tags, {{ fmt(layout.field.length, 2) }} ×
++            {{ fmt(layout.field.width, 2) }} m. Every camera should be on its AprilTag pipeline.
++          </div>
++        </div>
++      </v-card-text>
++    </v-card>
++
++    <!-- Step 1: camera settings -->
++    <v-card v-if="status" class="mb-3 rounded-12" color="surface">
++      <v-card-title>1. Camera settings (optional, about a minute)</v-card-title>
++      <v-card-text>
++        <p class="mb-2">
++          Park the robot where every camera sees tags, some close and some far, under the lights you'll play under. Keep
++          people out of view and don't touch the robot. Each camera steps through exposure (as short as still finds
++          every tag: less motion blur), then gain, brightness, contrast, gamma and sharpness, keeping a value only if it
++          clearly beats the current one.
++        </p>
++        <v-btn
++          v-if="!tuning?.running"
++          color="primary"
++          :disabled="busy || recording || status.state === 'SOLVING'"
++          prepend-icon="mdi-tune"
++          @click="act({ action: 'tune' })"
++          >Tune camera settings</v-btn
++        >
++        <div v-else>
++          <div class="mb-1">{{ tuning.phase }}</div>
++          <v-progress-linear
++            :model-value="tuning.stepsTotal ? (100 * tuning.stepsDone) / tuning.stepsTotal : 0"
++            color="primary"
++            height="8"
++            class="mb-2"
++          />
++          <v-btn size="small" variant="tonal" @click="act({ action: 'cancelTune' })">Stop</v-btn>
++        </div>
++        <v-alert v-if="tuning?.result && !tuning.running" class="mt-3" density="compact" variant="tonal">
++          {{ tuning.result }}
++        </v-alert>
++        <template v-for="(c, name) in tuning?.cameras ?? {}" :key="name">
++          <div class="mt-4 text-subtitle-1">
++            {{ name }} <span class="text-caption">(pipeline {{ c.pipelineIndex }})</span>
++          </div>
++          <div v-if="c.problem" class="text-error">{{ c.problem }}</div>
++          <template v-else>
++            <div class="text-caption mb-1">
++              Tags at the start: {{ c.baselineTags.join(", ") }} · margin {{ fmt(c.baseline?.margin) }} · jitter
++              {{ fmt(c.baseline?.jitterPx, 2) }} px
++            </div>
++            <v-table density="compact">
++              <thead>
++                <tr>
++                  <th>Setting</th>
++                  <th>Now</th>
++                  <th>Recommended</th>
++                  <th>Tried (found % / margin / brightness)</th>
++                </tr>
++              </thead>
++              <tbody>
++                <tr v-for="(r, control) in c.ranges" :key="control">
++                  <td>{{ controlLabel[control] ?? control }}</td>
++                  <td>{{ fmtSetting(String(control), c.pipeline[control]) }}</td>
++                  <td>
++                    <b
++                      v-if="c.recommended[control] !== undefined && c.recommended[control] !== c.startValues[control]"
++                      >{{ fmtSetting(String(control), c.recommended[control]) }}</b
++                    >
++                    <span v-else-if="c.recommended[control] !== undefined">keep</span>
++                    <span v-if="c.notes[control]" class="text-caption"> ({{ c.notes[control] }})</span>
++                  </td>
++                  <td class="text-caption">
++                    <span v-for="s in c.results.filter((x) => x.control === control)" :key="s.value" class="mr-2">
++                      {{ s.value }}: {{ Math.round(100 * s.found) }}% / {{ fmt(s.margin, 0) }} /
++                      {{ fmt(s.brightness, 0) }}
++                    </span>
++                  </td>
++                </tr>
++              </tbody>
++            </v-table>
++          </template>
++        </template>
++        <v-btn
++          v-if="anyRecommendation && !tuning?.running"
++          class="mt-3"
++          color="primary"
++          :disabled="busy"
++          prepend-icon="mdi-content-save"
++          @click="act({ action: 'applyTuning' }, 'Settings saved to each camera\'s pipeline')"
++          >Apply the recommended settings</v-btn
++        >
++      </v-card-text>
++    </v-card>
++
++    <!-- Step 2: record the spots -->
++    <v-card v-if="status" class="mb-3 rounded-12" color="surface">
++      <v-card-title>2. Record the spots</v-card-title>
++      <v-card-text>
++        <template v-if="!recording">
++          <ul class="mb-3 ml-5">
++            <li>Start at a spot where you know the robot's position if you can (pushed into a corner).</li>
++            <li>
++              Push the robot 1–2 m, hold it still until this page says the spot counts (about 2 s, it beeps), repeat.
++            </li>
++            <li>Turn the robot at some spots so every camera sees tags from several angles and distances.</li>
++            <li>Flat carpet only (not bumps or ramps), and keep people out of the cameras' view while holding.</li>
++          </ul>
++          <v-btn
++            color="error"
++            prepend-icon="mdi-record-rec"
++            :disabled="busy || status.state === 'SOLVING' || tuning?.running"
++            @click="act({ action: 'start' })"
++            >Start recording</v-btn
++          >
++          <span v-if="status.rewindRecording" class="ml-3 text-caption"
++            >Rewind is already recording ({{ status.rewindSession }}); that recording will be used.</span
++          >
++        </template>
++        <template v-else>
++          <v-alert v-if="banner" :color="banner.color" variant="tonal" class="mb-3 banner">
++            <div class="text-h6">{{ banner.text }}</div>
++            <v-progress-linear
++              v-if="banner.progress !== undefined"
++              :model-value="banner.progress"
++              color="warning"
++              height="10"
++              class="mt-2"
++            />
++          </v-alert>
++          <v-row>
++            <v-col cols="12" md="8">
++              <FieldCalMap
++                :layout="layout"
++                :tag-spots="status.tagSpots"
++                :in-view="inView"
++                :cameras="liveCameras"
++                :spots="spotPoints"
++                :suggestion="suggestion"
++                focus-seen
++              />
++              <div class="text-caption mt-1">
++                Tags: <span class="text-success">green</span> seen from 2+ spots,
++                <span class="text-warning">orange</span> from 1, <span class="text-info">blue</span> in view now, grey
++                not yet. Cyan: where each camera is now. Numbers: spots so far.
++              </div>
++            </v-col>
++            <v-col cols="12" md="4">
++              <div class="text-h6 mb-2">{{ fmtTime(status.seconds) }} · {{ spotCount }} spots</div>
++              <div v-for="(c, i) in checklist" :key="i" class="check">
++                <v-icon :color="c.ok ? 'success' : 'grey'">
++                  {{ c.ok ? "mdi-check-circle" : "mdi-circle-outline" }}
++                </v-icon>
++                {{ c.text }}
++              </div>
++              <v-alert v-if="suggestion" class="mt-3" density="compact" color="purple" variant="tonal">
++                Next: about where the purple ring is, with a camera facing tag {{ suggestion.tag }} (seen from only one
++                spot so far).
++              </v-alert>
++              <v-alert
++                v-else-if="checklist.every((c) => c.ok)"
++                class="mt-3"
++                density="compact"
++                color="success"
++                variant="tonal"
++              >
++                That's enough. Stop and solve (more spots still help).
++              </v-alert>
++              <v-checkbox v-model="beep" density="compact" hide-details label="Beep when a spot counts" />
++              <div class="mt-3">
++                <v-btn color="primary" :disabled="busy" class="mr-2" @click="act({ action: 'solve' })"
++                  >Stop and solve</v-btn
++                >
++                <v-btn variant="tonal" :disabled="busy" @click="act({ action: 'stop' })">Stop</v-btn>
++              </div>
++            </v-col>
++          </v-row>
++        </template>
++      </v-card-text>
++    </v-card>
++
++    <!-- Step 3: solve -->
++    <v-card v-if="status && !recording" class="mb-3 rounded-12" color="surface">
++      <v-card-title>3. Solve</v-card-title>
++      <v-card-text>
++        <template v-if="status.state === 'SOLVING'">
++          <div class="mb-2">
++            Solving {{ status.session }}… (replaying every camera through the GPU detector, then the solve)
++          </div>
++          <v-progress-linear indeterminate color="primary" class="mb-2" />
++          <pre class="log">{{ status.solveLog.slice(-12).join("\n") }}</pre>
++          <v-btn size="small" variant="tonal" @click="act({ action: 'cancel' })">Cancel</v-btn>
++        </template>
++        <template v-else>
++          <v-alert v-if="status.state === 'FAILED'" color="error" variant="tonal" density="compact" class="mb-3">
++            {{ status.message }}
++          </v-alert>
++          <v-row align="center">
++            <v-col cols="12" md="6">
++              <v-select
++                v-model="solveRecording"
++                :items="status.recordings"
++                label="Recording"
++                density="compact"
++                hide-details
++                placeholder="the newest field-calibration recording"
++              />
++            </v-col>
++            <v-col cols="12" md="6">
++              <v-btn
++                color="primary"
++                :disabled="busy || !status.toolInstalled || !(solveRecording || status.recordings[0])"
++                @click="act({ action: 'solve', session: solveRecording || status.recordings[0] })"
++                >Solve</v-btn
++              >
++            </v-col>
++          </v-row>
++          <details v-if="status.solveLog.length" class="mt-2">
++            <summary>Last solve's log</summary>
++            <pre class="log">{{ status.solveLog.join("\n") }}</pre>
++          </details>
++        </template>
++      </v-card-text>
++    </v-card>
++
++    <!-- Step 4: results -->
++    <v-card v-if="status && status.runs.length" class="mb-3 rounded-12" color="surface">
++      <v-card-title>4. Results</v-card-title>
++      <v-card-text>
++        <v-select
++          :model-value="resultsRun"
++          :items="status.runs"
++          label="Solved recording"
++          density="compact"
++          hide-details
++          class="mb-3"
++          @update:model-value="(v) => loadResults(String(v))"
++        />
++        <template v-if="results">
++          <p>
++            <b>{{ results.spots }}</b> spots, {{ results.observations }} tag views ({{ results.dropped }} dropped as
++            outliers). {{ results.anchor }}
++          </p>
++          <v-alert v-for="n in results.notes" :key="n" density="compact" variant="tonal" color="warning" class="mb-2">
++            {{ n }}
++          </v-alert>
++
++          <div class="text-h6 mt-4">Cameras</div>
++          <v-table density="compact">
++            <thead>
++              <tr>
++                <th>Camera</th>
++                <th>Fit (px)</th>
++                <th>Height (m)</th>
++                <th>Pitch (°)</th>
++                <th>Roll (°)</th>
++                <th>x (m)</th>
++                <th>y (m)</th>
++                <th>Yaw (°)</th>
++                <th>vs robot code</th>
++                <th>Lens</th>
++              </tr>
++            </thead>
++            <tbody>
++              <tr v-for="(m, c) in results.mounts" :key="c">
++                <td>{{ c }}</td>
++                <td>{{ fmt(results.rmsPxByCamera[c], 2) }}</td>
++                <td>{{ fmt((m.robotToCamera ?? m.rigFrame).z, 3) }}</td>
++                <td>{{ fmt((m.robotToCamera ?? m.rigFrame).pitchDeg, 2) }}</td>
++                <td>{{ fmt((m.robotToCamera ?? m.rigFrame).rollDeg, 2) }}</td>
++                <td>{{ m.robotToCamera ? fmt(m.robotToCamera.x, 3) : "rel." }}</td>
++                <td>{{ m.robotToCamera ? fmt(m.robotToCamera.y, 3) : "rel." }}</td>
++                <td>{{ m.robotToCamera ? fmt(m.robotToCamera.yawDeg, 2) : "rel." }}</td>
++                <td class="text-caption">
++                  <span v-if="m.minusCad"
++                    >{{ fmt(m.minusCad.z * 100) }} cm high, {{ fmt(m.minusCad.pitchDeg, 2) }}° pitch,
++                    {{ fmt(m.minusCad.rollDeg, 2) }}° roll, {{ fmt(m.minusCad.x * 100) }}/{{
++                      fmt(m.minusCad.y * 100)
++                    }}
++                    cm, {{ fmt(m.minusCad.yawDeg, 2) }}° yaw</span
++                  >
++                </td>
++                <td>
++                  <v-chip v-if="results.lensCheck[c]?.recalibrate" size="small" color="error">recalibrate</v-chip>
++                </td>
++              </tr>
++            </tbody>
++          </v-table>
++          <div v-if="java" class="mt-3">
++            <div class="d-flex align-center">
++              <span class="text-subtitle-2">For robot code</span>
++              <v-btn size="x-small" variant="text" icon="mdi-content-copy" title="Copy" @click="copyJava" />
++            </div>
++            <pre class="log">{{ java }}</pre>
++            <div class="text-caption">
++              The solved mounts are also on NetworkTables at
++              <code>/photonvision/&lt;camera&gt;/fieldcal/robotToCamera</code>.
++            </div>
++          </div>
++
++          <div class="text-h6 mt-4">Tags</div>
++          <v-row>
++            <v-col cols="12" md="6">
++              <FieldCalMap :layout="layout" :offsets="offsets" focus-seen />
++              <div class="text-caption">
++                Arrows: each tag's offset from the layout, drawn 10× larger. Red: moved.
++                <span v-if="results.alignment.tagsIgnored?.length"
++                  >Lined up on the tags that agree; not used for that:
++                  {{ results.alignment.tagsIgnored.join(", ") }}.</span
++                >
++              </div>
++            </v-col>
++            <v-col cols="12" md="6">
++              <v-table density="compact">
++                <thead>
++                  <tr>
++                    <th>Tag</th>
++                    <th>Seen</th>
++                    <th>Offset (cm)</th>
++                    <th>Angle (°)</th>
++                    <th></th>
++                  </tr>
++                </thead>
++                <tbody>
++                  <tr v-for="(t, id) in results.tags" :key="id">
++                    <td>{{ id }}</td>
++                    <td>{{ t.observations }}</td>
++                    <td>{{ fmt(t.offsetCm) }} ± {{ fmt(t.sigmaRelCm) }}</td>
++                    <td>{{ fmt(t.angleDeg, 2) }}</td>
++                    <td>
++                      <v-chip size="small" :color="verdictColor(t.verdict)">{{ t.verdict }}</v-chip>
++                    </td>
++                  </tr>
++                </tbody>
++              </v-table>
++            </v-col>
++          </v-row>
++
++          <div class="mt-4">
++            <v-btn color="primary" class="mr-2 mb-2" :disabled="busy" prepend-icon="mdi-map-check" @click="applyLayout"
++              >Use this layout in PhotonVision</v-btn
++            >
++            <v-btn
++              v-if="status.latestBackup"
++              variant="tonal"
++              class="mr-2 mb-2"
++              :disabled="busy"
++              prepend-icon="mdi-undo"
++              @click="undoLayout"
++              >Undo the last layout change</v-btn
++            >
++            <v-btn variant="text" class="mb-2" :href="fileUrl('corrected-layout.json')" prepend-icon="mdi-download"
++              >Layout for robot code</v-btn
++            >
++            <v-btn variant="text" class="mb-2" :href="fileUrl('mounts.json')" prepend-icon="mdi-download">Mounts</v-btn>
++            <v-btn variant="text" class="mb-2" :href="fileUrl('report.md')" prepend-icon="mdi-download">Report</v-btn>
++          </div>
++        </template>
++      </v-card-text>
++    </v-card>
++  </div>
++</template>
++
++<style scoped>
++.check {
++  display: flex;
++  gap: 8px;
++  align-items: flex-start;
++  margin-bottom: 4px;
++}
++.log {
++  font-size: 12px;
++  white-space: pre-wrap;
++  max-height: 260px;
++  overflow: auto;
++  background: rgba(127, 127, 127, 0.1);
++  padding: 8px;
++  border-radius: 6px;
++}
++.banner .text-h6 {
++  line-height: 1.3;
++}
++</style>
+diff --git a/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java b/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
+new file mode 100644
+index 00000000..5a2c366b
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
+@@ -0,0 +1,540 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.fieldcal;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.TreeMap;
++import java.util.TreeSet;
++import org.opencv.core.Core;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.vision.pipeline.CVPipelineSettings;
++import org.photonvision.vision.pipeline.result.CVPipelineResult;
++import org.photonvision.vision.processes.VisionModule;
++import org.photonvision.vision.processes.VisionSourceManager;
++
++/**
++ * SpectrumJetson (photonvision-30): picks each camera's settings under the lights it will play
++ * under. With the robot held still where the cameras see tags near and far, it steps every camera
++ * through its settings (all cameras at once, each measured on its own) and measures, from the live
++ * detections: how reliably each tag is found, the decision margin, corner jitter and image
++ * brightness (which also shows whether a control does anything at all on this camera).
++ *
++ * <p>Order (docs/TUNING in patch 26): exposure first, as short as keeps every tag reliable (short
++ * exposure means less motion blur on a moving robot); then gain, brightness, contrast, gamma,
++ * sharpness and backlight compensation, one at a time, each kept only if it clearly beats the
++ * current value. The camera goes back to its pipeline's settings at the end; "apply" writes the
++ * recommendations into the pipeline in use.
++ */
++public class CameraSettingsTuner {
++    private static final Logger logger = new Logger(CameraSettingsTuner.class, LogGroup.General);
++
++    private static final long SETTLE_MS = 400;
++    private static final long MEASURE_MS = 900;
++    private static final long BASELINE_MS = 1500;
++    private static final double MOVED_PX = 3.0;
++    private static final double[] EXPOSURE_FACTORS = {2.0, 1.4, 1.0, 0.7, 0.5, 0.35, 0.25, 0.18};
++
++    /** What one setting gave on one camera. */
++    public static final class StepResult {
++        public String control;
++        public double value;
++        public int frames;
++        public double found; // fraction of the baseline's tags found, averaged over frames
++        public double margin; // mean decision margin of the baseline's tags
++        public double jitterPx; // mean per-tag corner standard deviation
++        public double brightness; // mean pixel value (0-255)
++        public int tags; // tags seen at least once
++    }
++
++    private static final class Sample {
++        Map<Integer, double[]> corners = new HashMap<>();
++        Map<Integer, Double> margins = new HashMap<>();
++        double brightness = -1;
++    }
++
++    private final class Cam {
++        final VisionModule module;
++        final String name;
++        final double[] original; // exposureRaw, autoExposure(0/1), brightness, gain, contrast, gamma, sharpness, backlight
++        final Map<String, double[]> ranges = new LinkedHashMap<>(); // control -> min, max, default
++        final Map<String, Double> current = new LinkedHashMap<>(); // the value in use as the sweep goes
++        final Map<String, Double> recommended = new LinkedHashMap<>();
++        final Map<String, Double> startValues = new LinkedHashMap<>(); // on the camera when tuning began
++        final List<StepResult> results = new ArrayList<>();
++        final Map<String, String> notes = new LinkedHashMap<>();
++        TreeSet<Integer> baselineTags = new TreeSet<>();
++        Map<Integer, double[]> baselineCentres = new HashMap<>();
++        StepResult baseline;
++        String problem = "";
++        final List<Sample> samples = new ArrayList<>();
++        long lastBrightnessNs = 0;
++
++        Cam(VisionModule m) {
++            module = m;
++            name = m.getNickname();
++            CVPipelineSettings ps = m.getCurrentPipelineSettings();
++            original =
++                    new double[] {
++                        ps.cameraExposureRaw, ps.cameraAutoExposure ? 1 : 0, ps.cameraBrightness, ps.cameraGain,
++                        ps.cameraContrast, ps.cameraGamma, ps.cameraSharpness, ps.cameraBacklightCompensation
++                    };
++            var s = m.getCameraSettables();
++            ranges.put("exposure", new double[] {s.getMinExposureRaw(), s.getMaxExposureRaw(), ps.cameraExposureRaw});
++            current.put("exposure", ps.cameraExposureRaw);
++            if (m.hasGainControl()) {
++                ranges.put("gain", new double[] {0, 100, 50});
++                current.put("gain", (double) Math.max(0, ps.cameraGain));
++            }
++            ranges.put("brightness", new double[] {0, 100, 50});
++            current.put("brightness", (double) ps.cameraBrightness);
++            for (var c : s.getExtraControls()) {
++                String key = switch ((String) c.get("key")) {
++                    case "cameraContrast" -> "contrast";
++                    case "cameraGamma" -> "gamma";
++                    case "cameraSharpness" -> "sharpness";
++                    case "cameraBacklightCompensation" -> "backlight";
++                    default -> null;
++                };
++                if (key == null) continue;
++                double min = ((Number) c.get("min")).doubleValue(), max = ((Number) c.get("max")).doubleValue();
++                double def = ((Number) c.get("default")).doubleValue(), val = ((Number) c.get("value")).doubleValue();
++                if (max <= min) continue;
++                ranges.put(key, new double[] {min, max, def});
++                current.put(key, val);
++            }
++            startValues.putAll(current);
++        }
++
++        void set(String control, double v) {
++            var s = module.getCameraSettables();
++            module.runOnVisionThread(
++                    () -> {
++                        switch (control) {
++                            case "exposure" -> {
++                                s.setAutoExposure(false);
++                                s.setExposureRaw(v);
++                            }
++                            case "gain" -> s.setGain((int) Math.round(v));
++                            case "brightness" -> s.setBrightness((int) Math.round(v));
++                            case "contrast" -> s.setContrast((int) Math.round(v));
++                            case "gamma" -> s.setGamma((int) Math.round(v));
++                            case "sharpness" -> s.setSharpness((int) Math.round(v));
++                            case "backlight" -> s.setBacklightCompensation((int) Math.round(v));
++                            default -> {}
++                        }
++                    });
++        }
++
++        StepResult measure(String control, double value) {
++            List<Sample> got;
++            synchronized (this) {
++                got = new ArrayList<>(samples);
++            }
++            var r = new StepResult();
++            r.control = control;
++            r.value = value;
++            r.frames = got.size();
++            if (got.isEmpty()) return r;
++            TreeSet<Integer> seen = new TreeSet<>();
++            double foundSum = 0, marginSum = 0, bSum = 0;
++            int marginN = 0, bN = 0;
++            Map<Integer, List<double[]>> byTag = new HashMap<>();
++            for (var s : got) {
++                seen.addAll(s.corners.keySet());
++                int f = 0;
++                for (int id : baselineTags) {
++                    if (s.corners.containsKey(id)) {
++                        f++;
++                        marginSum += s.margins.getOrDefault(id, 0.0);
++                        marginN++;
++                        byTag.computeIfAbsent(id, k -> new ArrayList<>()).add(s.corners.get(id));
++                    }
++                }
++                foundSum += baselineTags.isEmpty() ? 0 : (double) f / baselineTags.size();
++                if (s.brightness >= 0) {
++                    bSum += s.brightness;
++                    bN++;
++                }
++            }
++            r.found = foundSum / got.size();
++            r.margin = marginN > 0 ? marginSum / marginN : 0;
++            r.brightness = bN > 0 ? bSum / bN : -1;
++            r.tags = seen.size();
++            double jSum = 0;
++            int jN = 0;
++            for (var e : byTag.entrySet()) {
++                var list = e.getValue();
++                if (list.size() < 3) continue;
++                double[] mean = new double[8];
++                for (var c : list) for (int i = 0; i < 8; i++) mean[i] += c[i] / list.size();
++                double var = 0;
++                for (var c : list) for (int i = 0; i < 8; i++) var += (c[i] - mean[i]) * (c[i] - mean[i]);
++                jSum += Math.sqrt(var / (list.size() * 4));
++                jN++;
++                // Moved? The tag's centre against the baseline's.
++                double[] b = baselineCentres.get(e.getKey());
++                if (b != null && Math.hypot(centre(mean)[0] - b[0], centre(mean)[1] - b[1]) > MOVED_PX) {
++                    moved = true;
++                }
++            }
++            r.jitterPx = jN > 0 ? jSum / jN : 0;
++            return r;
++        }
++    }
++
++    private static double[] centre(double[] c) {
++        return new double[] {(c[0] + c[2] + c[4] + c[6]) / 4, (c[1] + c[3] + c[5] + c[7]) / 4};
++    }
++
++    private final Map<String, Cam> cams = new TreeMap<>();
++    private volatile boolean running = false;
++    private volatile boolean cancel = false;
++    private volatile boolean sampling = false;
++    private volatile boolean moved = false;
++    private volatile String phase = "";
++    private volatile int stepsDone = 0, stepsTotal = 0;
++    private volatile String result = "";
++
++    public boolean running() {
++        return running;
++    }
++
++    public void cancel() {
++        cancel = true;
++    }
++
++    /** Starts the sweep on every camera that has an AprilTag pipeline running. */
++    public synchronized void start() {
++        if (running) return;
++        cams.clear();
++        for (var m : VisionSourceManager.getInstance().vmm.getModules()) {
++            if (!m.getEnabled()) continue;
++            cams.put(m.getNickname(), new Cam(m));
++        }
++        if (cams.isEmpty()) throw new IllegalStateException("No cameras running");
++        running = true;
++        cancel = false;
++        moved = false;
++        result = "";
++        var t = new Thread(this::run, "FieldCalTuner");
++        t.setDaemon(true);
++        t.start();
++    }
++
++    /** Every pipeline result of every camera, while the sweep runs. */
++    public void onResult(String camera, CVPipelineResult r) {
++        if (!sampling) return;
++        var c = cams.get(camera);
++        if (c == null) return;
++        var s = new Sample();
++        for (var t : r.targets) {
++            var pts = t.getTargetCorners();
++            if (t.getFiducialId() < 0 || pts == null || pts.size() != 4) continue;
++            double[] a = new double[8];
++            for (int i = 0; i < 4; i++) {
++                a[2 * i] = pts.get(i).x;
++                a[2 * i + 1] = pts.get(i).y;
++            }
++            s.corners.put(t.getFiducialId(), a);
++            s.margins.put(t.getFiducialId(), t.getDecisionMargin());
++        }
++        long now = System.nanoTime();
++        if (now - c.lastBrightnessNs > 100_000_000L && r.inputAndOutputFrame != null) {
++            try {
++                var f = r.inputAndOutputFrame;
++                var mat = f.processedImage != null && !f.processedImage.getMat().empty()
++                        ? f.processedImage.getMat()
++                        : f.colorImage != null ? f.colorImage.getMat() : null;
++                if (mat != null && !mat.empty()) {
++                    var mean = Core.mean(mat);
++                    s.brightness = mat.channels() >= 3 ? (mean.val[0] + mean.val[1] + mean.val[2]) / 3 : mean.val[0];
++                    c.lastBrightnessNs = now;
++                }
++            } catch (Exception e) {
++                // frame already released: skip brightness for this sample
++            }
++        }
++        synchronized (c) {
++            c.samples.add(s);
++        }
++    }
++
++    private void collect(long ms) throws InterruptedException {
++        for (var c : cams.values()) {
++            synchronized (c) {
++                c.samples.clear();
++            }
++        }
++        sampling = true;
++        Thread.sleep(ms);
++        sampling = false;
++    }
++
++    private void run() {
++        try {
++            List<String> order = List.of("exposure", "gain", "brightness", "contrast", "gamma", "sharpness", "backlight");
++            // Baseline: the camera as it is.
++            phase = "Measuring the cameras as they are";
++            collect(BASELINE_MS);
++            for (var c : cams.values()) {
++                Map<Integer, Integer> count = new HashMap<>();
++                Map<Integer, double[]> sum = new HashMap<>();
++                synchronized (c) {
++                    for (var s : c.samples) {
++                        for (var e : s.corners.entrySet()) {
++                            count.merge(e.getKey(), 1, Integer::sum);
++                            double[] cc = centre(e.getValue());
++                            sum.merge(e.getKey(), cc, (a, b) -> new double[] {a[0] + b[0], a[1] + b[1]});
++                        }
++                    }
++                    int n = c.samples.size();
++                    for (var e : count.entrySet()) {
++                        if (n > 0 && e.getValue() >= 0.6 * n) {
++                            c.baselineTags.add(e.getKey());
++                            double[] s = sum.get(e.getKey());
++                            c.baselineCentres.put(e.getKey(), new double[] {s[0] / e.getValue(), s[1] / e.getValue()});
++                        }
++                    }
++                }
++                if (c.baselineTags.isEmpty()) c.problem = "no tags in view: turn the robot so this camera sees tags";
++                c.baseline = c.measure("baseline", 0);
++            }
++            cams.values().removeIf(c -> !c.problem.isEmpty() && keepProblem(c));
++            stepsTotal = 0;
++            for (var c : cams.values()) stepsTotal = Math.max(stepsTotal, plannedSteps(c, order));
++            stepsDone = 0;
++
++            for (String control : order) {
++                if (cancel || moved) break;
++                // Every camera's values for this control; cameras without it just hold.
++                Map<Cam, List<Double>> values = new LinkedHashMap<>();
++                for (var c : cams.values()) {
++                    if (!c.problem.isEmpty() || !c.ranges.containsKey(control)) continue;
++                    values.put(c, candidates(c, control));
++                }
++                int n = values.values().stream().mapToInt(List::size).max().orElse(0);
++                for (int i = 0; i < n && !cancel && !moved; i++) {
++                    phase = "Trying " + control + " (" + (i + 1) + " of " + n + ")";
++                    for (var e : values.entrySet()) {
++                        var list = e.getValue();
++                        e.getKey().set(control, list.get(Math.min(i, list.size() - 1)));
++                    }
++                    Thread.sleep(SETTLE_MS);
++                    collect(MEASURE_MS);
++                    for (var e : values.entrySet()) {
++                        var list = e.getValue();
++                        if (i < list.size()) e.getKey().results.add(e.getKey().measure(control, list.get(i)));
++                    }
++                    stepsDone++;
++                }
++                // Keep the best value of this control for the rest of the sweep.
++                for (var e : values.keySet()) {
++                    double best = choose(e, control);
++                    e.current.put(control, best);
++                    e.recommended.put(control, best);
++                    e.set(control, best);
++                }
++                if (!values.isEmpty()) Thread.sleep(SETTLE_MS);
++            }
++            boolean anyTags = cams.values().stream().anyMatch(c -> c.problem.isEmpty());
++            result = moved
++                    ? "The robot moved: hold it still and tune again."
++                    : cancel
++                            ? "Stopped."
++                            : !anyTags
++                                    ? "No camera sees tags here: turn or move the robot so every camera sees tags, near and far, then tune again."
++                                    : "Done.";
++        } catch (InterruptedException e) {
++            result = "Stopped.";
++        } catch (Exception e) {
++            logger.error("Field calibration: settings tuning failed", e);
++            result = "Tuning failed: " + e.getMessage();
++        } finally {
++            sampling = false;
++            // Back to the pipelines' own settings; "apply" is separate.
++            for (var c : cams.values()) {
++                try {
++                    c.module.reapplyPipelineCameraSettings();
++                } catch (Exception e) {
++                    logger.warn("Field calibration: couldn't restore " + c.name + "'s settings: " + e.getMessage());
++                }
++            }
++            if (moved || cancel) for (var c : cams.values()) c.recommended.clear();
++            phase = "";
++            running = false;
++            logger.info("Field calibration: settings tuning " + result);
++        }
++    }
++
++    private static boolean keepProblem(Cam c) {
++        return false; // keep cameras with problems in the report, just don't sweep them
++    }
++
++    private int plannedSteps(Cam c, List<String> order) {
++        int n = 0;
++        if (!c.problem.isEmpty()) return 0;
++        for (String k : order) if (c.ranges.containsKey(k)) n += candidates(c, k).size();
++        return n;
++    }
++
++    /** The values to try for one control on one camera. */
++    private static List<Double> candidates(Cam c, String control) {
++        double[] r = c.ranges.get(control);
++        double min = r[0], max = r[1], def = r[2];
++        double cur = c.current.getOrDefault(control, def);
++        TreeSet<Double> v = new TreeSet<>();
++        switch (control) {
++            case "exposure" -> {
++                double base = cur > 0 ? cur : Math.max(min, (max - min) * 0.1);
++                for (double f : EXPOSURE_FACTORS) v.add((double) Math.round(clamp(base * f, Math.max(min, 1), max)));
++                // Longest first: the list is walked shortest-to-longest below, but order doesn't matter.
++            }
++            case "gain", "brightness" -> {
++                for (double d : new double[] {-20, -10, 0, 10, 20}) v.add((double) Math.round(clamp(cur + d, min, max)));
++            }
++            case "backlight" -> {
++                for (double x = min; x <= max && v.size() < 4; x += Math.max(1, Math.round((max - min) / 3))) v.add(x);
++                v.add(cur);
++            }
++            default -> {
++                v.add(min);
++                v.add((double) Math.round((min + def) / 2));
++                v.add(def);
++                v.add((double) Math.round((def + max) / 2));
++                v.add(max);
++                v.add(cur);
++            }
++        }
++        return new ArrayList<>(v);
++    }
++
++    private static double clamp(double x, double lo, double hi) {
++        return Math.max(lo, Math.min(hi, x));
++    }
++
++    /**
++     * The value to keep. Exposure: the shortest that still finds the baseline's tags as reliably as
++     * the best setting and keeps 85% of its margin. Others: the best margin among values that find
++     * the tags as reliably, but only if it beats the current value's margin by 5%.
++     */
++    private static double choose(Cam c, String control) {
++        List<StepResult> rs = c.results.stream().filter(r -> r.control.equals(control) && r.frames > 0).toList();
++        double cur = c.current.getOrDefault(control, c.ranges.get(control)[2]);
++        if (rs.isEmpty()) return cur;
++        double bestFound = rs.stream().mapToDouble(r -> r.found).max().orElse(0);
++        double bestMargin = rs.stream().mapToDouble(r -> r.margin).max().orElse(0);
++        // Does the control do anything? (Some cameras ignore gain.)
++        double bMin = rs.stream().filter(r -> r.brightness >= 0).mapToDouble(r -> r.brightness).min().orElse(-1);
++        double bMax = rs.stream().filter(r -> r.brightness >= 0).mapToDouble(r -> r.brightness).max().orElse(-1);
++        boolean noEffect =
++                bMin >= 0
++                        && bMax - bMin < 1.5
++                        && rs.stream().mapToDouble(r -> r.margin).max().orElse(0)
++                                        - rs.stream().mapToDouble(r -> r.margin).min().orElse(0)
++                                < 2;
++        if (noEffect && !control.equals("exposure")) {
++            c.notes.put(control, "no visible effect on this camera");
++            return cur;
++        }
++        if (control.equals("exposure")) {
++            return rs.stream()
++                    .filter(r -> r.found >= bestFound - 0.03 && r.margin >= 0.85 * bestMargin)
++                    .mapToDouble(r -> r.value)
++                    .min()
++                    .orElse(cur);
++        }
++        var curR = rs.stream().filter(r -> r.value == cur).findFirst().orElse(null);
++        var best = rs.stream()
++                .filter(r -> r.found >= bestFound - 0.02)
++                .max((a, b) -> Double.compare(a.margin, b.margin))
++                .orElse(null);
++        if (best == null || curR == null) return cur;
++        if (best.value != cur && best.margin > curR.margin * 1.05 && best.found >= curR.found - 0.01) return best.value;
++        return cur;
++    }
++
++    /** Writes the recommendations into each camera's pipeline in use, and saves. */
++    public synchronized List<String> apply() {
++        if (running) throw new IllegalStateException("Tuning is still running");
++        List<String> changed = new ArrayList<>();
++        for (var c : cams.values()) {
++            if (c.recommended.isEmpty()) continue;
++            CVPipelineSettings ps = c.module.getCurrentPipelineSettings();
++            for (var e : c.recommended.entrySet()) {
++                int v = (int) Math.round(e.getValue());
++                switch (e.getKey()) {
++                    case "exposure" -> {
++                        ps.cameraAutoExposure = false;
++                        ps.cameraExposureRaw = e.getValue();
++                    }
++                    case "gain" -> ps.cameraGain = v;
++                    case "brightness" -> ps.cameraBrightness = v;
++                    case "contrast" -> ps.cameraContrast = v;
++                    case "gamma" -> ps.cameraGamma = v;
++                    case "sharpness" -> ps.cameraSharpness = v;
++                    case "backlight" -> ps.cameraBacklightCompensation = v;
++                    default -> {}
++                }
++            }
++            c.module.reapplyPipelineCameraSettings();
++            c.module.saveAndBroadcastAll();
++            changed.add(c.name + " (pipeline " + c.module.getCurrentPipelineIndex() + ")");
++        }
++        logger.info("Field calibration: applied tuned settings to " + changed);
++        return changed;
++    }
++
++    public synchronized Map<String, Object> status() {
++        Map<String, Object> m = new LinkedHashMap<>();
++        m.put("running", running);
++        m.put("phase", phase);
++        m.put("stepsDone", stepsDone);
++        m.put("stepsTotal", stepsTotal);
++        m.put("result", result);
++        Map<String, Object> cm = new TreeMap<>();
++        for (var c : cams.values()) {
++            Map<String, Object> e = new LinkedHashMap<>();
++            e.put("problem", c.problem);
++            e.put("baselineTags", c.baselineTags);
++            e.put("baseline", c.baseline);
++            Map<String, Object> orig = new LinkedHashMap<>();
++            orig.put("exposure", c.original[1] > 0 ? -1 : c.original[0]); // -1: auto exposure
++            orig.put("gain", c.original[3]);
++            orig.put("brightness", c.original[2]);
++            orig.put("contrast", c.original[4]);
++            orig.put("gamma", c.original[5]);
++            orig.put("sharpness", c.original[6]);
++            orig.put("backlight", c.original[7]);
++            e.put("pipeline", orig);
++            e.put("startValues", c.startValues);
++            e.put("ranges", c.ranges);
++            e.put("recommended", c.recommended);
++            e.put("notes", c.notes);
++            e.put("results", c.results);
++            e.put("pipelineIndex", c.module.getCurrentPipelineIndex());
++            cm.put(c.name, e);
++        }
++        m.put("cameras", cm);
++        return m;
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java b/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java
+new file mode 100644
+index 00000000..db08a9a6
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java
+@@ -0,0 +1,557 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.fieldcal;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import com.fasterxml.jackson.databind.SerializationFeature;
++import edu.wpi.first.math.geometry.Pose3d;
++import edu.wpi.first.math.geometry.Rotation3d;
++import edu.wpi.first.math.geometry.Transform3d;
++import edu.wpi.first.math.geometry.Translation3d;
++import edu.wpi.first.networktables.StructPublisher;
++import edu.wpi.first.networktables.StructSubscriber;
++import java.io.BufferedReader;
++import java.io.IOException;
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.time.LocalDateTime;
++import java.time.format.DateTimeFormatter;
++import java.util.ArrayDeque;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.TreeMap;
++import java.util.TreeSet;
++import java.util.stream.Stream;
++import org.photonvision.common.configuration.ConfigManager;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.rewind.RewindManager;
++import org.photonvision.vision.pipeline.result.CVPipelineResult;
++import org.photonvision.vision.processes.CameraSettingsPublisher;
++
++/**
++ * SpectrumJetson (photonvision-30): field calibration from the web UI. Push the robot by hand to
++ * still spots while every camera records (Rewind, labelled {@code fieldcal}); then, on the Jetson,
++ * tools/fieldcal replays the recording through the 971 GPU detector and solves every tag's pose on
++ * the field and every camera's mount.
++ *
++ * <p>While recording, every camera's live detections drive the guidance: when the robot has held
++ * still long enough for a spot to count, which tags have been seen from how many spots, and where
++ * each camera is on the field right now. The solve itself uses only the recording.
++ *
++ * <p>Camera mounts come from robot code, which owns them: each camera's current {@code
++ * robotToCamera} (from CAD, or a past calibration) as a {@code Transform3d} struct at {@code
++ * /photonvision/<camera>/robotToCamera}. The solve anchors x, y and yaw to them and reports how the
++ * solved mounts differ; the solved mounts are published back at {@code
++ * /photonvision/<camera>/fieldcal/robotToCamera}. Without them, x, y and yaw stay relative.
++ *
++ * <p>Files: results in {@link #RUNS}{@code /<recording>/} (report.md, results.json,
++ * corrected-layout.json, mounts.json, and robot-mounts.json, the mounts robot code sent); the
++ * layout in use before each "apply" in {@link #BACKUPS}. The solver and the replay tool are
++ * installed in {@link #TOOL} by scripts/jetson/13-build-fieldcal-detect.sh --install.
++ */
++public class FieldCalibration {
++    private static final Logger logger = new Logger(FieldCalibration.class, LogGroup.General);
++    private static final ObjectMapper json = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
++
++    public static final Path ROOT = Path.of("/opt/photonvision/fieldcal");
++    public static final Path RUNS = ROOT.resolve("runs");
++    public static final Path BACKUPS = ROOT.resolve("layout-backups");
++    public static final Path TOOL = Path.of("/opt/spectrum/fieldcal");
++    public static final String LABEL = "fieldcal";
++    /** Results files the web UI may download. */
++    public static final Set<String> RESULT_FILES =
++            Set.of("report.md", "results.json", "corrected-layout.json", "mounts.json");
++
++    // Live stillness: the same idea as tools/fieldcal's segments.py. A camera's tag corners are
++    // sampled every SAMPLE_NS; more than MOTION_PX between samples (or a completely different set
++    // of tags) is motion. A spot counts after STILL_NS with no motion from any camera.
++    private static final long SAMPLE_NS = 100_000_000L;
++    private static final long MAX_GAP_NS = 500_000_000L;
++    private static final double MOTION_PX = 1.5;
++    private static final long STILL_NS = 1_500_000_000L;
++    private static final long POSE_STALE_NS = 1_000_000_000L;
++
++    public enum State {
++        IDLE,
++        RECORDING,
++        SOLVING,
++        SOLVED,
++        FAILED
++    }
++
++    private static final class CamLive {
++        long sampleNs = 0;
++        Map<Integer, double[]> corners = Map.of();
++        Set<Integer> tagsNow = Set.of();
++        long tagsNs = 0;
++        double[] fieldPose = null; // x, y, yaw (rad): where the camera is on the field
++        long fieldPoseNs = 0;
++        boolean fromMultiTag = false;
++    }
++
++    /** One still stretch the live guidance counted. */
++    private static final class Spot {
++        final int index;
++        final Map<String, Set<Integer>> views = new TreeMap<>();
++        final Map<String, double[]> cameraPoses = new TreeMap<>();
++
++        Spot(int index) {
++            this.index = index;
++        }
++    }
++
++    private static FieldCalibration INSTANCE;
++
++    public static synchronized FieldCalibration getInstance() {
++        if (INSTANCE == null) INSTANCE = new FieldCalibration();
++        return INSTANCE;
++    }
++
++    private volatile State state = State.IDLE;
++    private volatile String session = "";
++    private volatile String message = "";
++    private long recordStartNs = 0;
++
++    private final Map<String, CamLive> live = new TreeMap<>();
++    private long lastMotionNs = 0;
++    private long lastStillEvidenceNs = 0;
++    private Spot current = null;
++    private final List<Spot> spots = new ArrayList<>();
++    private final Map<Integer, Set<Integer>> tagSpots = new TreeMap<>(); // tag -> spots that saw it
++    private final Map<String, Integer> cameraSpots = new TreeMap<>();
++
++    private final Map<String, StructSubscriber<Transform3d>> mountSubs = new TreeMap<>();
++    private final Map<String, StructPublisher<Transform3d>> solvedPubs = new TreeMap<>();
++    private final ArrayDeque<String> solveLog = new ArrayDeque<>();
++    private Process solveProcess = null;
++    private final CameraSettingsTuner tuner = new CameraSettingsTuner();
++
++    private FieldCalibration() {}
++
++    // ---- control (from the web UI)
++
++    public synchronized void start() {
++        if (state == State.RECORDING) return;
++        if (state == State.SOLVING) throw new IllegalStateException("A solve is running");
++        if (tuner.running()) throw new IllegalStateException("Camera settings tuning is running");
++        resetLive();
++        RewindManager.getInstance().setManual(true, LABEL);
++        session = RewindManager.getInstance().currentSessionName();
++        state = State.RECORDING;
++        message = "";
++        recordStartNs = System.nanoTime();
++        logger.info("Field calibration: recording started" + (session.isEmpty() ? "" : " (" + session + ")"));
++    }
++
++    /** Stops recording; returns the recording's name. */
++    public synchronized String stop() {
++        if (state != State.RECORDING) return session;
++        String s = RewindManager.getInstance().currentSessionName();
++        if (!s.isEmpty()) session = s;
++        RewindManager.getInstance().setManual(false, "");
++        state = State.IDLE;
++        logger.info("Field calibration: recording stopped (" + session + ", " + spots.size() + " spots)");
++        return session;
++    }
++
++    /** Stop recording, let the recorders finish their files, then solve that recording. */
++    public void stopAndSolve() throws IOException, InterruptedException {
++        String name = stop();
++        Thread.sleep(1500); // recorders close on their next frame; session.json's end ~1 s later
++        solve(name);
++    }
++
++    public synchronized void solve(String name) throws IOException {
++        if (state == State.RECORDING) throw new IllegalStateException("Stop recording first");
++        if (state == State.SOLVING) throw new IllegalStateException("A solve is already running");
++        Path rec = RewindManager.sessionDir(name);
++        if (rec == null) throw new IllegalArgumentException("No such recording: " + name);
++        if (!toolInstalled()) {
++            throw new IllegalStateException(
++                    "The solver isn't installed on this Jetson: run scripts/jetson/13-build-fieldcal-detect.sh --install");
++        }
++        Path out = RUNS.resolve(name);
++        Files.createDirectories(out);
++        Path layout = out.resolve("official-layout.json");
++        ConfigManager.getInstance().getConfig().getApriltagFieldLayout().serialize(layout);
++
++        List<String> cmd = new ArrayList<>(
++                List.of("nice", "-n", "10", "python3", "-m", "fieldcal", "solve", rec.toString(),
++                        "--layout", layout.toString(), "--out", out.toString()));
++        var mounts = robotMounts();
++        Path cad = out.resolve("robot-mounts.json");
++        Files.deleteIfExists(cad);
++        if (!mounts.isEmpty()) {
++            json.writeValue(cad.toFile(), mounts);
++            cmd.addAll(List.of("--cad", cad.toString()));
++        }
++        var pb = new ProcessBuilder(cmd).redirectErrorStream(true);
++        pb.environment().put("PYTHONPATH", TOOL.toString());
++        pb.environment().put("FIELDCAL_971_DETECT", TOOL.resolve("fieldcal_detect").toString());
++        solveLog.clear();
++        session = name;
++        state = State.SOLVING;
++        message = "";
++        solveProcess = pb.start();
++        var proc = solveProcess;
++        logger.info("Field calibration: solving " + name + ": " + String.join(" ", cmd));
++        var t = new Thread(() -> runSolve(proc, out), "FieldCalSolve");
++        t.setDaemon(true);
++        t.start();
++    }
++
++    private void runSolve(Process proc, Path out) {
++        try (var r = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
++            String line;
++            while ((line = r.readLine()) != null) {
++                synchronized (this) {
++                    solveLog.addLast(line);
++                    while (solveLog.size() > 300) solveLog.removeFirst();
++                }
++            }
++            int code = proc.waitFor();
++            synchronized (this) {
++                boolean ok = code == 0 && Files.exists(out.resolve("results.json"));
++                state = ok ? State.SOLVED : State.FAILED;
++                if (ok) publishSolvedMounts(out);
++                message = ok ? "" : lastLogLine("The solve failed (exit code " + code + ")");
++                solveProcess = null;
++                logger.info("Field calibration: solve of " + session + (ok ? " done" : " failed: " + message));
++            }
++        } catch (Exception e) {
++            synchronized (this) {
++                state = State.FAILED;
++                message = "The solve failed: " + e.getMessage();
++                solveProcess = null;
++            }
++            logger.error("Field calibration: solve failed", e);
++        }
++    }
++
++    private String lastLogLine(String fallback) {
++        for (var it = solveLog.descendingIterator(); it.hasNext(); ) {
++            String l = it.next().strip();
++            if (!l.isEmpty() && !l.startsWith("note:")) return l;
++        }
++        return fallback;
++    }
++
++    public synchronized void cancelSolve() {
++        if (solveProcess != null) solveProcess.destroy();
++    }
++
++    /**
++     * The mounts robot code is sending right now, by camera: {x, y, z (m), rollDeg, pitchDeg,
++     * yawDeg}, the format tools/fieldcal's --cad reads.
++     */
++    public synchronized Map<String, Map<String, Double>> robotMounts() {
++        for (String name : CameraSettingsPublisher.snapshots().keySet()) {
++            mountSubs.computeIfAbsent(
++                    name,
++                    n ->
++                            NetworkTablesManager.getInstance()
++                                    .getNTInst()
++                                    .getStructTopic("/photonvision/" + n + "/robotToCamera", Transform3d.struct)
++                                    .subscribe(null));
++        }
++        Map<String, Map<String, Double>> out = new TreeMap<>();
++        for (var e : mountSubs.entrySet()) {
++            Transform3d t = e.getValue().get();
++            if (t == null) continue;
++            Map<String, Double> m = new LinkedHashMap<>();
++            m.put("x", t.getX());
++            m.put("y", t.getY());
++            m.put("z", t.getZ());
++            m.put("rollDeg", Math.toDegrees(t.getRotation().getX()));
++            m.put("pitchDeg", Math.toDegrees(t.getRotation().getY()));
++            m.put("yawDeg", Math.toDegrees(t.getRotation().getZ()));
++            out.put(e.getKey(), m);
++        }
++        return out;
++    }
++
++    /** The solved mounts, for robot code to log or compare (/photonvision/<camera>/fieldcal/robotToCamera). */
++    private void publishSolvedMounts(Path out) {
++        try {
++            JsonNode mounts = json.readTree(out.resolve("mounts.json").toFile());
++            for (var it = mounts.fields(); it.hasNext(); ) {
++                var e = it.next();
++                JsonNode f = e.getValue().get("robotToCamera");
++                if (f == null) continue;
++                var t =
++                        new Transform3d(
++                                new Translation3d(f.get("x").asDouble(), f.get("y").asDouble(), f.get("z").asDouble()),
++                                new Rotation3d(
++                                        Math.toRadians(f.get("rollDeg").asDouble()),
++                                        Math.toRadians(f.get("pitchDeg").asDouble()),
++                                        Math.toRadians(f.get("yawDeg").asDouble())));
++                solvedPubs
++                        .computeIfAbsent(
++                                e.getKey(),
++                                n ->
++                                        NetworkTablesManager.getInstance()
++                                                .getNTInst()
++                                                .getStructTopic("/photonvision/" + n + "/fieldcal/robotToCamera", Transform3d.struct)
++                                                .publish())
++                        .set(t);
++            }
++        } catch (IOException e) {
++            logger.warn("Field calibration: can't publish the solved mounts: " + e.getMessage());
++        }
++    }
++
++    /** Copies the layout in use now to {@link #BACKUPS}; returns the copy. */
++    public Path backupLayout() throws IOException {
++        Files.createDirectories(BACKUPS);
++        String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
++        Path p = BACKUPS.resolve("layout-" + stamp + ".json");
++        ConfigManager.getInstance().getConfig().getApriltagFieldLayout().serialize(p);
++        return p;
++    }
++
++    /** A results file of a solve, or null (only the files in {@link #RESULT_FILES}). */
++    public static Path resultFile(String name, String file) {
++        if (name == null || file == null || name.isEmpty() || !RewindManager.safeName(name).equals(name)) return null;
++        if (!RESULT_FILES.contains(file)) return null;
++        Path p = RUNS.resolve(name).resolve(file);
++        return p.getParent().getParent().equals(RUNS) && Files.isRegularFile(p) ? p : null;
++    }
++
++    public static Path latestBackup() {
++        try (Stream<Path> s = Files.list(BACKUPS)) {
++            return s.filter(p -> p.getFileName().toString().endsWith(".json")).sorted().reduce((a, b) -> b).orElse(null);
++        } catch (IOException e) {
++            return null;
++        }
++    }
++
++    public static boolean toolInstalled() {
++        return Files.isRegularFile(TOOL.resolve("fieldcal").resolve("__main__.py"))
++                && Files.isExecutable(TOOL.resolve("fieldcal_detect"));
++    }
++
++    // ---- live guidance (every camera's pipeline results)
++
++    private synchronized void resetLive() {
++        live.clear();
++        spots.clear();
++        tagSpots.clear();
++        cameraSpots.clear();
++        current = null;
++        lastMotionNs = System.nanoTime();
++        lastStillEvidenceNs = 0;
++    }
++
++    // ---- camera settings tuning
++
++    public synchronized void tune() {
++        if (state == State.RECORDING) throw new IllegalStateException("Stop recording first");
++        tuner.start();
++    }
++
++    public void cancelTune() {
++        tuner.cancel();
++    }
++
++    public List<String> applyTuning() {
++        return tuner.apply();
++    }
++
++    /** Called with every pipeline result of every camera; cheap unless recording or tuning. */
++    public void onResult(String camera, CVPipelineResult result) {
++        if (tuner.running()) tuner.onResult(camera, result);
++        if (state != State.RECORDING) return;
++        long now = System.nanoTime();
++        synchronized (this) {
++            var c = live.computeIfAbsent(camera, k -> new CamLive());
++            // Where the camera is: multi-tag if there is one, else the least ambiguous single tag.
++            double[] pose = null;
++            boolean multi = false;
++            if (result.multiTagResult != null && result.multiTagResult.isPresent()) {
++                var p = new Pose3d().plus(result.multiTagResult.get().estimatedPose.best);
++                pose = new double[] {p.getX(), p.getY(), p.getRotation().getZ()};
++                multi = true;
++            } else {
++                var layout = ConfigManager.getInstance().getConfig().getApriltagFieldLayout();
++                for (var t : result.targets) {
++                    if (t.getPoseAmbiguity() < 0 || t.getPoseAmbiguity() > 0.15) continue;
++                    var tag = layout.getTagPose(t.getFiducialId());
++                    if (tag.isEmpty()) continue;
++                    var p = tag.get().transformBy(t.getBestCameraToTarget3d().inverse());
++                    pose = new double[] {p.getX(), p.getY(), p.getRotation().getZ()};
++                    break;
++                }
++            }
++            if (pose != null) {
++                c.fieldPose = pose;
++                c.fieldPoseNs = now;
++                c.fromMultiTag = multi;
++            }
++            if (now - c.sampleNs < SAMPLE_NS) return;
++
++            Map<Integer, double[]> corners = new HashMap<>();
++            for (var t : result.targets) {
++                var pts = t.getTargetCorners();
++                if (t.getFiducialId() < 0 || pts == null || pts.size() != 4) continue;
++                double[] a = new double[8];
++                for (int i = 0; i < 4; i++) {
++                    a[2 * i] = pts.get(i).x;
++                    a[2 * i + 1] = pts.get(i).y;
++                }
++                corners.put(t.getFiducialId(), a);
++            }
++            // Motion since this camera's last sample.
++            if (!corners.isEmpty() && c.sampleNs > 0 && now - c.sampleNs < MAX_GAP_NS) {
++                double m = -1;
++                for (var e : corners.entrySet()) {
++                    double[] prev = c.corners.get(e.getKey());
++                    if (prev == null) continue;
++                    for (int i = 0; i < 4; i++) {
++                        m = Math.max(m, Math.hypot(e.getValue()[2 * i] - prev[2 * i], e.getValue()[2 * i + 1] - prev[2 * i + 1]));
++                    }
++                }
++                if (m > MOTION_PX || (m < 0 && !c.corners.isEmpty())) {
++                    motion(now);
++                } else if (m >= 0) {
++                    lastStillEvidenceNs = now;
++                }
++            }
++            c.sampleNs = now;
++            c.corners = corners;
++            c.tagsNow = new TreeSet<>(corners.keySet());
++            c.tagsNs = now;
++
++            // A spot counts once everything has been still for STILL_NS.
++            if (lastStillEvidenceNs > lastMotionNs && now - lastMotionNs >= STILL_NS) {
++                if (current == null) {
++                    current = new Spot(spots.size());
++                    spots.add(current);
++                }
++                for (var e : live.entrySet()) {
++                    var cl = e.getValue();
++                    if (now - cl.tagsNs > MAX_GAP_NS || cl.tagsNow.isEmpty()) continue;
++                    var set = current.views.computeIfAbsent(e.getKey(), k -> new TreeSet<>());
++                    if (set.isEmpty()) cameraSpots.merge(e.getKey(), 1, Integer::sum);
++                    for (int id : cl.tagsNow) {
++                        if (set.add(id)) tagSpots.computeIfAbsent(id, k -> new TreeSet<>()).add(current.index);
++                    }
++                    if (cl.fieldPose != null && now - cl.fieldPoseNs < POSE_STALE_NS) {
++                        current.cameraPoses.put(e.getKey(), cl.fieldPose.clone());
++                    }
++                }
++            }
++        }
++    }
++
++    private void motion(long now) {
++        lastMotionNs = now;
++        current = null;
++    }
++
++    // ---- status (GET /api/fieldcal)
++
++    public synchronized Map<String, Object> status() {
++        long now = System.nanoTime();
++        Map<String, Object> m = new LinkedHashMap<>();
++        m.put("state", state.name());
++        m.put("session", session);
++        m.put("message", message);
++        m.put("toolInstalled", toolInstalled());
++        m.put("seconds", state == State.RECORDING ? (now - recordStartNs) / 1e9 : 0);
++        var rewind = RewindManager.getInstance().status();
++        m.put("rewindRecording", rewind.get("recording"));
++        m.put("rewindSession", rewind.get("session"));
++
++        if (state == State.RECORDING) {
++            boolean anyTags = live.values().stream().anyMatch(c -> now - c.tagsNs < MAX_GAP_NS && !c.tagsNow.isEmpty());
++            boolean still = anyTags && lastStillEvidenceNs > lastMotionNs;
++            m.put("still", still);
++            m.put("stillSeconds", still ? (now - lastMotionNs) / 1e9 : 0.0);
++            m.put("holdSeconds", STILL_NS / 1e9);
++            m.put("spotCaptured", current != null);
++            Map<String, Object> cams = new TreeMap<>();
++            for (var e : live.entrySet()) {
++                var c = e.getValue();
++                Map<String, Object> cm = new LinkedHashMap<>();
++                cm.put("tags", now - c.tagsNs < MAX_GAP_NS ? c.tagsNow : List.of());
++                cm.put("pose", c.fieldPose != null && now - c.fieldPoseNs < POSE_STALE_NS ? c.fieldPose : null);
++                cm.put("multiTag", c.fromMultiTag);
++                cams.put(e.getKey(), cm);
++            }
++            m.put("live", cams);
++        }
++        List<Map<String, Object>> sp = new ArrayList<>();
++        for (var s : spots) {
++            Map<String, Object> e = new LinkedHashMap<>();
++            e.put("views", s.views);
++            e.put("cameraPoses", s.cameraPoses);
++            sp.add(e);
++        }
++        m.put("spots", sp);
++        Map<String, Integer> ts = new TreeMap<>();
++        tagSpots.forEach((k, v) -> ts.put(Integer.toString(k), v.size()));
++        m.put("tagSpots", ts);
++        m.put("cameraSpots", cameraSpots);
++        m.put("solveLog", new ArrayList<>(solveLog));
++        m.put("tuning", tuner.status());
++        m.put("robotMounts", robotMounts());
++        m.put("robotConnected", NetworkTablesManager.getInstance().getNTInst().isConnected());
++        m.put("cameras", CameraSettingsPublisher.snapshots());
++        m.put("runs", runs());
++        var b = latestBackup();
++        m.put("latestBackup", b == null ? "" : b.getFileName().toString());
++        return m;
++    }
++
++    /** Recordings with results, newest first. */
++    private static List<String> runs() {
++        List<String> out = new ArrayList<>();
++        try (Stream<Path> s = Files.list(RUNS)) {
++            s.filter(p -> Files.exists(p.resolve("results.json")))
++                    .map(p -> p.getFileName().toString())
++                    .sorted((a, b) -> b.compareTo(a))
++                    .forEach(out::add);
++        } catch (IOException e) {
++            // no runs yet
++        }
++        return out;
++    }
++
++    /** Field-calibration recordings (Rewind sessions labelled fieldcal), newest first. */
++    public static List<String> recordings() {
++        List<String> out = new ArrayList<>();
++        try (Stream<Path> s = Files.list(RewindManager.SESSIONS)) {
++            s.map(p -> p.getFileName().toString())
++                    .filter(n -> n.contains("_" + LABEL + "_"))
++                    .sorted((a, b) -> b.compareTo(a))
++                    .forEach(out::add);
++        } catch (IOException e) {
++            // none
++        }
++        return out;
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
+index 408f0d1c..d5a91082 100644
+--- a/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
++++ b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
+@@ -116,6 +116,7 @@ public class RewindManager {
+     private volatile Settings settings = new Settings();
+     private volatile Session current = null;
+     private volatile boolean manual = false;
++    private volatile String manualLabel = "";
+     private volatile String stopReason = "";
+     private volatile boolean diskLow = false;
+     private volatile long lastRobotRecordTrueUs = 0;
+@@ -194,11 +195,26 @@ public class RewindManager {
+     // ---- control
+ 
+     public synchronized void setManual(boolean on) {
++        setManual(on, "");
++    }
++
++    /**
++     * SpectrumJetson (photonvision-30): a web-UI recording with its own label (field calibration
++     * records as "fieldcal"). The label is read when the recording opens.
++     */
++    public synchronized void setManual(boolean on, String label) {
+         manual = on;
++        if (on) manualLabel = label == null ? "" : label;
+         logger.info("Rewind: bench recording " + (on ? "on" : "off") + " (from the web UI)");
+         tick();
+     }
+ 
++    /** The open recording's name, or "" when not recording. */
++    public String currentSessionName() {
++        var s = current;
++        return s == null ? "" : s.name();
++    }
++
+     public synchronized void updateSettings(Double fps, Double quotaGB, Double minFreeGB) {
+         var s = new Settings();
+         s.fps = fps != null ? Math.max(1, Math.min(120, fps)) : settings.fps;
+@@ -266,7 +282,10 @@ public class RewindManager {
+     }
+ 
+     private void openSession(long now, String reason) {
+-        String label = reason.equals("robot") ? labelSub.get().strip() : "bench";
++        String label =
++                reason.equals("robot")
++                        ? labelSub.get().strip()
++                        : manualLabel.isEmpty() ? "bench" : manualLabel;
+         if (label.isEmpty()) label = matchName();
+         if (label.isEmpty()) label = "robot";
+         String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index c2665718..c7de5e28 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -191,6 +191,11 @@ public class VisionModule {
+         // SpectrumJetson: the camera's mount (height, pitch, roll) from the tags it sees (photonvision-17).
+         addResultConsumer(
+                 new MountEstimatePublisher(() -> visionSource.getSettables().getConfiguration().nickname));
++        // SpectrumJetson: live guidance for field calibration (photonvision-30); a no-op unless recording.
++        addResultConsumer(
++                (result) ->
++                        org.photonvision.fieldcal.FieldCalibration.getInstance()
++                                .onResult(visionSource.getSettables().getConfiguration().nickname, result));
+         // SpectrumJetson: this camera's settings, and the Jetson's, as JSON for the robot log
+         // (photonvision-24).
+         new CameraSettingsPublisher(this);
+@@ -724,6 +729,38 @@ public class VisionModule {
+             HardwareManager.getInstance().visionLED.setState(on);
+     }
+ 
++    // ---- SpectrumJetson (photonvision-30): for the field-calibration settings tuner
++
++    public String getNickname() {
++        return visionSource.getSettables().getConfiguration().nickname;
++    }
++
++    public VisionSourceSettables getCameraSettables() {
++        return visionSource.getSettables();
++    }
++
++    public CVPipelineSettings getCurrentPipelineSettings() {
++        return pipelineManager.getCurrentPipelineSettings();
++    }
++
++    public int getCurrentPipelineIndex() {
++        return pipelineManager.getRequestedIndex();
++    }
++
++    public boolean hasGainControl() {
++        return cameraQuirks.hasQuirk(CameraQuirk.Gain);
++    }
++
++    /** Runs on this camera's vision thread, between frames (as pipeline changes do). */
++    public void runOnVisionThread(Runnable r) {
++        visionRunner.runSynchronously(r);
++    }
++
++    /** Puts the current pipeline's camera settings back on the camera. */
++    public void reapplyPipelineCameraSettings() {
++        setPipeline(pipelineManager.getRequestedIndex());
++    }
++
+     public void saveModule() {
+         ConfigManager.getInstance()
+                 .saveModule(
+diff --git a/photon-core/src/main/java/org/photonvision/vision/target/TrackedTarget.java b/photon-core/src/main/java/org/photonvision/vision/target/TrackedTarget.java
+index 74899398..d6d2618d 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/target/TrackedTarget.java
++++ b/photon-core/src/main/java/org/photonvision/vision/target/TrackedTarget.java
+@@ -64,6 +64,9 @@ public class TrackedTarget implements Releasable {
+ 
+     private int m_fiducialId = -1;
+     private double m_poseAmbiguity = -1;
++    // SpectrumJetson (photonvision-30): the AprilTag detector's decision margin, for the
++    // field-calibration settings tuner. -1 if not a tag.
++    private double m_decisionMargin = -1;
+ 
+     private Mat m_cameraRelativeTvec, m_cameraRelativeRvec;
+ 
+@@ -85,6 +88,7 @@ public class TrackedTarget implements Releasable {
+             AprilTagDetection tagDetection,
+             AprilTagPoseEstimate tagPose,
+             TargetCalculationParameters params) {
++        m_decisionMargin = tagDetection.getDecisionMargin();
+         m_targetOffsetPoint = new Point(tagDetection.getCenterX(), tagDetection.getCenterY());
+         m_robotOffsetPoint = new Point();
+         var yawPitch =
+@@ -259,6 +263,10 @@ public class TrackedTarget implements Releasable {
+         m_poseAmbiguity = ambiguity;
+     }
+ 
++    public double getDecisionMargin() {
++        return m_decisionMargin;
++    }
++
+     public double getPoseAmbiguity() {
+         return m_poseAmbiguity;
+     }
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index 77cf5ff7..1210c880 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -53,6 +53,7 @@ import org.photonvision.common.hardware.Platform;
+ import org.photonvision.common.logging.LogGroup;
+ import org.photonvision.common.logging.Logger;
+ import org.photonvision.common.networking.NetworkManager;
++import org.photonvision.fieldcal.FieldCalibration;
+ import org.photonvision.rewind.RewindManager;
+ import org.photonvision.common.util.ShellExec;
+ import org.photonvision.common.util.TimedTaskManager;
+@@ -595,6 +596,100 @@ public class RequestHandler {
+         }
+     }
+ 
++    // ---- SpectrumJetson (photonvision-30): field calibration page
++
++    private record FieldCalRequest(String action, String session) {}
++
++    /** GET /api/fieldcal: state, live guidance, solve progress, recordings and results. */
++    public static void onFieldCalStatusRequest(Context ctx) {
++        try {
++            var m = new java.util.LinkedHashMap<>(FieldCalibration.getInstance().status());
++            m.put("recordings", FieldCalibration.recordings());
++            ctx.status(200);
++            ctx.contentType("application/json");
++            ctx.result(kObjectMapper.writeValueAsString(m));
++        } catch (Exception e) {
++            ctx.status(500);
++            ctx.result("Field calibration status failed: " + e.getMessage());
++        }
++    }
++
++    /**
++     * POST /api/fieldcal {"action": "start" | "stop" | "solve" | "cancel" | "tune" | "cancelTune" |
++     * "applyTuning" | "apply" | "undo", "session": name}. "tune" steps every camera through its
++     * settings with the robot still; "applyTuning" writes the recommendations into each camera's
++     * pipeline in use. "apply" puts a solve's corrected layout into PhotonVision (after saving the
++     * current one) and restarts; "undo" puts back the layout saved by the last apply.
++     */
++    public static void onFieldCalActionRequest(Context ctx) {
++        var fc = FieldCalibration.getInstance();
++        try {
++            var req = kObjectMapper.readValue(ctx.body(), FieldCalRequest.class);
++            switch (req.action() == null ? "" : req.action()) {
++                case "start" -> fc.start();
++                case "stop" -> fc.stop();
++                case "solve" -> {
++                    if (req.session() != null && !req.session().isEmpty()) fc.solve(req.session());
++                    else fc.stopAndSolve();
++                }
++                case "cancel" -> fc.cancelSolve();
++                case "tune" -> fc.tune();
++                case "cancelTune" -> fc.cancelTune();
++                case "applyTuning" -> fc.applyTuning();
++                case "apply", "undo" -> {
++                    Path layout;
++                    if (req.action().equals("apply")) {
++                        layout = FieldCalibration.resultFile(req.session(), "corrected-layout.json");
++                        if (layout == null) throw new IllegalArgumentException("That recording has no solved layout");
++                        var backup = fc.backupLayout();
++                        logger.info("Field calibration: applying " + layout + " (previous layout saved to " + backup + ")");
++                    } else {
++                        layout = FieldCalibration.latestBackup();
++                        if (layout == null) throw new IllegalArgumentException("No saved layout to go back to");
++                        logger.info("Field calibration: putting back " + layout);
++                    }
++                    if (!ConfigManager.getInstance().saveUploadedAprilTagFieldLayout(layout)) {
++                        throw new IOException("PhotonVision couldn't load " + layout.getFileName());
++                    }
++                    if (req.action().equals("undo")) Files.delete(layout);
++                    ctx.status(200);
++                    ctx.result("Layout saved; restarting PhotonVision");
++                    restartProgram();
++                    return;
++                }
++                default -> throw new IllegalArgumentException("Unknown action " + req.action());
++            }
++            onFieldCalStatusRequest(ctx);
++        } catch (IllegalArgumentException | IllegalStateException e) {
++            ctx.status(400);
++            ctx.result(e.getMessage());
++        } catch (IOException | InterruptedException e) {
++            ctx.status(500);
++            ctx.result("Field calibration: " + e.getMessage());
++        }
++    }
++
++    /** GET /api/fieldcal/file?session=NAME&name=report.md|results.json|corrected-layout.json|mounts.json */
++    public static void onFieldCalFileRequest(Context ctx) {
++        String name = ctx.queryParam("name");
++        var p = FieldCalibration.resultFile(ctx.queryParam("session"), name);
++        if (p == null) {
++            ctx.status(404);
++            ctx.result("No such file");
++            return;
++        }
++        try {
++            ctx.contentType(name.endsWith(".json") ? "application/json" : "text/markdown; charset=utf-8");
++            if (ctx.queryParam("download") != null) {
++                ctx.header("Content-Disposition", "attachment; filename=\"" + ctx.queryParam("session") + "-" + name + "\"");
++            }
++            ctx.result(Files.readAllBytes(p));
++        } catch (IOException e) {
++            ctx.status(500);
++            ctx.result(e.getMessage());
++        }
++    }
++
+     /** GET /api/rewind/download?session=NAME: the recording as a zip of AVIs, built as it streams. */
+     public static void onRewindDownloadRequest(Context ctx) {
+         String name = ctx.queryParam("session");
+diff --git a/photon-server/src/main/java/org/photonvision/server/Server.java b/photon-server/src/main/java/org/photonvision/server/Server.java
+index 294b5c4f..fa3d9d89 100644
+--- a/photon-server/src/main/java/org/photonvision/server/Server.java
++++ b/photon-server/src/main/java/org/photonvision/server/Server.java
+@@ -135,6 +135,9 @@ public class Server {
+         app.get("/api/rewind", RequestHandler::onRewindStatusRequest);
+         app.post("/api/rewind", RequestHandler::onRewindSetRequest);
+         app.get("/api/rewind/download", RequestHandler::onRewindDownloadRequest);
++        app.get("/api/fieldcal", RequestHandler::onFieldCalStatusRequest); // SpectrumJetson
++        app.post("/api/fieldcal", RequestHandler::onFieldCalActionRequest);
++        app.get("/api/fieldcal/file", RequestHandler::onFieldCalFileRequest);
+         app.post("/api/settings/camera", RequestHandler::onCameraSettingsRequest);
+         app.post("/api/settings/camera/setNickname", RequestHandler::onCameraNicknameChangeRequest);
+         app.get("/api/settings/camera/getCalibImages", RequestHandler::onCameraCalibImagesRequest);

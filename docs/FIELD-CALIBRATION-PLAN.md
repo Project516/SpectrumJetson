@@ -1,9 +1,15 @@
 # Field calibration mode (plan)
 
-Agreed 2026-09-24. **The solver is built:** [tools/fieldcal](../tools/fieldcal/README.md). It runs
-on the Jetson, replaying the recording through the 971 GPU detector PhotonVision uses, or on a
-laptop. Tested on synthetic data, including rendered recordings. Not built yet: the settings
-sweep. Next: a shop test on our half field.
+Agreed 2026-09-24. **Built:**
+- **A page in PhotonVision** (`photonvision-30`, Field Calibration in the sidebar) runs the whole
+  thing on the Jetson. It has the settings sweep ("Tune camera settings"), the guided recording,
+  the solve, the results, and applying the layout.
+- **The solver** is [tools/fieldcal](../tools/fieldcal/README.md). It replays the recording
+  through the 971 GPU detector PhotonVision uses.
+- **Camera mounts come from robot code** over NetworkTables (`/photonvision/<camera>/robotToCamera`).
+
+Tested on synthetic data, including rendered recordings, and through PhotonVision's API on the
+bench. Next: a shop test on our half field.
 
 During an event's field calibration time, with the robot
 pushed around **by hand** (it can't be driven then), measure three things from the robot's own

@@ -103,7 +103,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
 | 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance), gray and colour; it uses ~180 MB of memory per camera. Leave it out to decode on the CPU. |
-| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–29. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–30. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 | 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
 | 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
 
@@ -279,6 +279,22 @@ Our replacement for Limelight Rewind. While robot code sets `/photonvision/rewin
 
 Everything else, including the robot-code example and how to line video up with a log, is in [docs/REWIND.md](docs/REWIND.md).
 
+## Field calibration: the event field's real tags, and every camera's mount
+
+A page in PhotonVision's web UI (**Field Calibration** in the sidebar, `photonvision-30`). With the robot on and disabled, pushed by hand:
+
+1. **Tune camera settings** (optional, about a minute). Park the robot where every camera sees tags, near and far. The Jetson steps each camera through exposure, gain, brightness, contrast, gamma and sharpness under the event's lights. It recommends the shortest exposure that still finds every tag (less motion blur), and changes the others only if they clearly help. **Apply** saves them to each camera's pipeline in use.
+2. **Record the spots.** Push the robot to 10–20 spots and hold it still at each until the page says the spot counts (about 2 s, and it beeps). A field map shows which tags need more views, where each camera is, and a suggested next spot.
+3. **Solve.** The Jetson replays the recording through the same 971 GPU detector it uses in matches, then solves every tag's real pose and every camera's mount. It takes about a minute.
+4. **Results:**
+   - **Tags:** each tag marked as drawn or moved, with its offset.
+   - **Cameras:** each mount compared with robot code's, plus a Java snippet.
+   - **Use this layout in PhotonVision:** loads the corrected layout; **Undo** puts the old one back.
+
+Robot code has to publish each camera's `robotToCamera` (a `Transform3d` struct) at `/photonvision/<camera>/robotToCamera`, from CAD or the last calibration. Without it, height, pitch and roll are still found, but x, y and yaw are only relative to one camera. The solved mounts come back at `/photonvision/<camera>/fieldcal/robotToCamera`.
+
+How it works, the tests and the command-line version are in [tools/fieldcal](tools/fieldcal/README.md). The plan and the shop-test checklist are in [docs/FIELD-CALIBRATION-PLAN.md](docs/FIELD-CALIBRATION-PLAN.md).
+
 ## Game-piece detection (TensorRT)
 
 PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU through TensorRT. That's our backend: `photonvision-14` plus `libspectrumtrt.so`, built from `detector/TensorRtYoloJNI.cu`. Robot code gets normal PhotonLib targets, with class and confidence.
@@ -388,8 +404,11 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
 - [ ] Field calibration mode: push the robot by hand to 10–20 spots, then solve for the event's real tag positions, every camera's mount and the best camera settings ([docs/FIELD-CALIBRATION-PLAN.md](docs/FIELD-CALIBRATION-PLAN.md)). Test in the shop first.
   - [x] Solver: [tools/fieldcal](tools/fieldcal/README.md). On synthetic recordings: tags to a few mm, camera height to 4 mm, pitch and roll to 0.03°
-  - [x] Runs on the Jetson, replaying the recording through the 971 GPU detector at ~400 fps (`scripts/jetson/13-build-fieldcal-detect.sh`)
-  - [ ] Shop test on our half field
+  - [x] Runs on the Jetson, replaying the recording through the 971 GPU detector at ~400 fps (`scripts/jetson/13-build-fieldcal-detect.sh --install`)
+  - [x] A Field Calibration page in PhotonVision (`photonvision-30`): tune camera settings, guided recording, solve, results, apply/undo the layout. Tested on the bench through the API (a synthetic recording solved, apply and undo round-trip exact); the page itself not yet looked at
+  - [ ] Robot code publishes each camera's `robotToCamera` at `/photonvision/<camera>/robotToCamera`
+  - [ ] A 3D view of the field with simplified field elements, like Limelight's
+  - [ ] Shop test on our half field, including the settings tuning with real tags
   - [ ] Recalibrate the lenses with board views right into the corners: our calibrations can't model the outer 1–4% of the image
 - [x] The camera controls PhotonVision's UI didn't show (contrast, gamma, sharpness, backlight compensation) are on the Input tab (`photonvision-28`), at the camera's defaults unless set
 - [ ] Measure whether contrast, gamma or sharpness help (decision margin, far-tag range, corner jitter): the field-calibration settings sweep

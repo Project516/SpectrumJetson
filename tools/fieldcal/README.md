@@ -14,18 +14,27 @@ The why and the procedure at an event are in
 **Status (2026-09-24):** tested on synthetic data only, including whole rendered recordings, on
 the laptop and on the Jetson. Next: a shop test on our half field.
 
-## On the Jetson (the easy way)
+## In PhotonVision (the easy way)
 
-Nothing to copy or install: the recording, the lens calibrations and the detector are already
-there. The tags are found by replaying the recording through **the 971 GPU detector PhotonVision
+PhotonVision's **Field Calibration** page (`photonvision-30`) runs all of this on the Jetson:
+camera settings tuning, a guided recording, the solve, the results, and applying the corrected
+layout. See the README's "Field calibration" section. It needs the solver installed once:
+
+```bash
+~/SpectrumJetson/scripts/jetson/13-build-fieldcal-detect.sh --install
+```
+
+That builds the replay tool (about 2.5 min) and installs it with this Python package in
+`/opt/spectrum/fieldcal`. Rerun it after changing anything here. PhotonVision keeps running.
+
+## On the Jetson over SSH
+
+The same thing by hand. The recording, the lens calibrations and the detector are already on the
+Jetson. The tags are found by replaying the recording through **the 971 GPU detector PhotonVision
 uses in matches**, with its settings, at about 400 frames per second. The solve runs on the
 Jetson's own Python (numpy, scipy and OpenCV come with JetPack).
 
-1. **Once:** build the replay tool (about 2.5 min, installs nothing, PhotonVision keeps running):
-
-   ```bash
-   ~/SpectrumJetson/scripts/jetson/13-build-fieldcal-detect.sh
-   ```
+1. **Once:** build the replay tool (`13-build-fieldcal-detect.sh`, as above).
 
 2. **Record** the robot pushed to each spot (below), then over SSH:
 

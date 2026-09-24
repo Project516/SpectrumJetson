@@ -746,6 +746,62 @@ only goes out when it changes.
   frames/s with checks ok, 122 fps each.
 - **Unit tests:** `StuckCameraWatchdogTest` 5/5 and `DirectDecodeTest` 4/4.
 
+### Field calibration page (2026-09-24, `photonvision-30`)
+
+A **Field Calibration** page in the web UI (`/#/fieldcal`) for the whole field calibration, done
+on the Jetson. The user guide is in the README; how the solver works is in
+[tools/fieldcal](../tools/fieldcal/README.md).
+
+- **Backend:** `org.photonvision.fieldcal.FieldCalibration`, a singleton.
+  - **Recording** is a Rewind bench recording labelled `fieldcal`. `RewindManager.setManual` now
+    takes a label.
+  - **Live guidance:** a result consumer on every `VisionModule` (a no-op unless recording).
+    - Samples each camera's tag corners every 100 ms.
+    - More than 1.5 px of motion, or a completely different set of tags, counts as moving.
+    - A spot counts after 1.5 s with no motion from any camera.
+    - Per spot, it records which camera saw which tags, and each camera's field position: from
+      multi-tag, else the least ambiguous single tag (ambiguity < 0.15).
+  - **Solve:** `nice -n 10 python3 -m fieldcal solve` from `/opt/spectrum/fieldcal`, with the
+    current PhotonVision layout, the 971 replay (`FIELDCAL_971_DETECT`), and robot code's mounts
+    as `--cad`.
+    - It inherits PhotonVision's `SPECTRUM_971_*` settings.
+    - Output goes to `/opt/photonvision/fieldcal/runs/<recording>/`.
+    - "Stop and solve" waits 1.5 s so the recorders finish their files.
+  - **Mounts:**
+    - read: `/photonvision/<camera>/robotToCamera` (`Transform3d` struct, from robot code);
+    - published after a solve: `/photonvision/<camera>/fieldcal/robotToCamera`.
+  - **Apply:** saves the layout in use to `/opt/photonvision/fieldcal/layout-backups/`, then loads
+    the corrected layout the way an uploaded layout is loaded, and restarts.
+  - **Undo:** loads the newest backup and deletes it.
+- **Settings tuner:** `CameraSettingsTuner`, run with the robot still.
+  - **Baseline:** the tags each camera finds in at least 60% of frames over 1.5 s.
+  - **Each setting:** 0.4 s to settle, then 0.9 s of frames. It records, for the baseline tags,
+    how often each is found, the mean decision margin (`TrackedTarget.getDecisionMargin()`, new)
+    and the corner jitter, plus the image's mean brightness.
+  - **Order:**
+    - exposure: 8 values, 0.18–2x the current; keep the shortest that finds the baseline tags as
+      well as the best (within 3%) with at least 85% of the best margin;
+    - then gain (if the camera has it), brightness, contrast, gamma, sharpness and backlight
+      compensation, each kept only for a 5% better margin;
+    - a control with no effect on brightness or margin is reported as such.
+  - **End:** the camera goes back to its pipeline's settings. **Apply** writes the
+    recommendations into the pipeline in use and saves.
+  - **Moving robot:** a tag's centre moving more than 3 px from the baseline stops the sweep.
+- **API:**
+  - `GET /api/fieldcal`: state, live guidance, tuning, solve log, mounts, recordings, runs.
+  - `POST /api/fieldcal {"action": ...}`: start, stop, solve, cancel, tune, cancelTune,
+    applyTuning, apply, undo.
+  - `GET /api/fieldcal/file?session=&name=`: report.md, results.json, corrected-layout.json,
+    mounts.json.
+- **Install:** `scripts/jetson/13-build-fieldcal-detect.sh --install`.
+- **Checked on the bench (no tags in view):**
+  - start, live status, stop-and-solve: the replay ran at 560+ fps and reported "nothing to solve";
+  - tuning reported "no tags in view" and read the Thriftiest's control ranges;
+  - a synthetic 4-camera recording solved through the API;
+  - apply then undo: the original layout came back exactly (32 tags, zero difference).
+- **Not yet checked:** the page in a browser, the tuner with real tags, and live guidance with
+  real tags.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,
