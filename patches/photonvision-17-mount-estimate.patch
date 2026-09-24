@@ -1,16 +1,15 @@
 diff --git a/photon-client/src/components/dashboard/tabs/TargetsTab.vue b/photon-client/src/components/dashboard/tabs/TargetsTab.vue
-index 9c5a0794..983c1ffa 100644
+index 9c5a0794..8645ebf4 100644
 --- a/photon-client/src/components/dashboard/tabs/TargetsTab.vue
 +++ b/photon-client/src/components/dashboard/tabs/TargetsTab.vue
-@@ -29,6 +29,23 @@ const calculateStdDev = (values: number[]): number => {
+@@ -29,6 +29,22 @@ const calculateStdDev = (values: number[]): number => {
  
    return Math.sqrt(values.map((x) => Math.pow(angleModulus(x - mean), 2)).reduce((a, b) => a + b) / values.length);
  };
 +
 +// SpectrumJetson: the camera's mount on the robot, from the same multi-tag samples. With the robot
 +// level on the floor, the camera's field height, pitch and roll are its mount's (photonvision-17).
-+const mean = (values: number[]): number =>
-+  values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
++const mean = (values: number[]): number => (values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0);
 +const plainStdDev = (values: number[]): number => {
 +  if (values.length < 2) return 0;
 +  const m = mean(values);
@@ -26,7 +25,7 @@ index 9c5a0794..983c1ffa 100644
  const resetCurrentBuffer = () => {
    // Need to clear the array in place
    if (useStateStore().currentMultitagBuffer) useStateStore().currentMultitagBuffer!.length = 0;
-@@ -277,6 +294,46 @@ const resetCurrentBuffer = () => {
+@@ -277,6 +293,46 @@ const resetCurrentBuffer = () => {
            </template>
          </v-table>
        </v-row>

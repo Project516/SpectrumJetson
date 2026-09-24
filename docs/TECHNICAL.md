@@ -493,7 +493,9 @@ Robot-side use is in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemC
 
 - Topics the hardware doesn't have aren't published.
 - The JPEG topics need the detector library with `nativeJpegStatus` (rebuild with 07, then
-  `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg`).
+  `08-select-detector.sh bos --mwbd 20`).
+- The hardware decoder (`--jpeg nvjpg`) is off for now, because it leaked memory inside
+  PhotonVision (2026-09-24). Until it's back on, `jpegDecoder` reads `libjpeg-turbo`.
 - PhotonVision's own metrics (`/photonvision//metrics/<host>`: CPU temperature and use, RAM,
   disk, uptime) are unchanged.
 
@@ -524,8 +526,16 @@ Robot-side use is in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemC
 - The robot's origin must be on the floor (WPILib's convention) for the height to match
   `robotToCamera`'s z.
 
+**Settings page** (`photonvision-19`):
+- A **GPU Usage** chart under CPU Usage, from the same GPU load file as `gpuLoadPct`.
+- It's shown only where the GPU reports its load.
+- It's added to the metrics record the UI gets (`gpuUtil`), but not to PhotonVision's
+  NetworkTables protobuf. Robot code reads `/photonvision/jetson/gpuLoadPct` instead.
+- Checked on the websocket: 10–13% with 2 cameras.
+
 **Bench check:** `tests/jetson-telemetry/run.sh` runs a NetworkTables server on the Jetson and prints
-every topic above. Set PhotonVision's NT server address to 127.0.0.1 first, and set it back to 8515
+every topic above. Not run yet: the NT topics are published by the running build but haven't been
+read back. Set PhotonVision's NT server address to 127.0.0.1 first, and set it back to 8515
 afterwards.
 
 ## Changes from the handoff

@@ -1,0 +1,179 @@
+diff --git a/photon-client/src/components/settings/DeviceCard.vue b/photon-client/src/components/settings/DeviceCard.vue
+index 5dfe6cde..c2a217a8 100644
+--- a/photon-client/src/components/settings/DeviceCard.vue
++++ b/photon-client/src/components/settings/DeviceCard.vue
+@@ -276,6 +276,9 @@ const platformMetrics = computed<MetricItem[]>(() => {
+ });
+ 
+ const cpuUsageData = ref<{ time: number; value: number }[]>([]);
++// SpectrumJetson: GPU usage (photonvision-19); the chart shows only where the GPU reports it
++const gpuUsageData = ref<{ time: number; value: number }[]>([]);
++const hasGpuUsage = computed(() => (useSettingsStore().metrics.gpuUtil ?? -1) >= 0);
+ const cpuMemoryUsageData = ref<{ time: number; value: number }[]>([]);
+ const cpuTempData = ref<{ time: number; value: number }[]>([]);
+ const networkUsageData = ref<{ time: number; value: number }[]>([]);
+@@ -285,6 +288,10 @@ watch(metricsHistorySnapshot, () => {
+     time: entry.time,
+     value: entry.metrics.cpuUtil ?? 0
+   }));
++  gpuUsageData.value = metricsHistorySnapshot.value.map((entry) => ({
++    time: entry.time,
++    value: Math.max(entry.metrics.gpuUtil ?? 0, 0)
++  }));
+   cpuMemoryUsageData.value = metricsHistorySnapshot.value.map((entry) => ({
+     time: entry.time,
+     value: entry.metrics.ramUtil === -1 ? -1 : ((entry.metrics.ramUtil ?? 0) / (entry.metrics.ramMem ?? -1.0)) * 100
+@@ -454,6 +461,17 @@ watch(metricsHistorySnapshot, () => {
+             <template #fallback> Loading... </template>
+           </Suspense>
+         </v-card-text>
++        <v-card-text v-if="hasGpuUsage" class="pt-0 flex-0-0 pb-2">
++          <div class="d-flex justify-space-between pb-3 pt-3">
++            <span>GPU Usage</span>
++            <span>{{ Math.round(gpuUsageData.at(-1)?.value ?? 0) }}%</span>
++          </div>
++          <Suspense>
++            <!-- Allows us to import echarts when it's actually needed  -->
++            <MetricsChart id="chart" :data="gpuUsageData" type="percentage" :min="0" :max="100" color="orange" />
++            <template #fallback> Loading... </template>
++          </Suspense>
++        </v-card-text>
+         <v-card-text class="pt-0 flex-0-0 pb-2">
+           <div class="d-flex justify-space-between pb-3 pt-3">
+             <span>CPU Memory Usage</span>
+diff --git a/photon-client/src/components/settings/MetricsChart.vue b/photon-client/src/components/settings/MetricsChart.vue
+index 25bb30bb..d2a572d5 100644
+--- a/photon-client/src/components/settings/MetricsChart.vue
++++ b/photon-client/src/components/settings/MetricsChart.vue
+@@ -7,6 +7,7 @@ import { useTheme } from "vuetify";
+ // purple -  154, 100, 180   (r: 167, g: 104, b: 196)
+ // green  -   65, 181, 127   (r:  75, g: 209, b: 147)
+ // red    -  238, 102, 102   (r: 238, g: 102, b: 102)
++// orange -  245, 158,  11   (SpectrumJetson: GPU usage)
+ const colors = {
+   "blue-LightTheme": { r: 255, g: 216, b: 67 },
+   "blue-DarkTheme": { r: 92, g: 154, b: 255 },
+@@ -15,7 +16,9 @@ const colors = {
+   "red-LightTheme": { r: 255, g: 216, b: 67 },
+   "red-DarkTheme": { r: 238, g: 102, b: 102 },
+   "green-LightTheme": { r: 255, g: 216, b: 67 },
+-  "green-DarkTheme": { r: 75, g: 209, b: 147 }
++  "green-DarkTheme": { r: 75, g: 209, b: 147 },
++  "orange-LightTheme": { r: 255, g: 216, b: 67 },
++  "orange-DarkTheme": { r: 245, g: 158, b: 11 }
+ };
+ const DEFAULT_COLOR = "blue";
+ 
+diff --git a/photon-client/src/stores/settings/GeneralSettingsStore.ts b/photon-client/src/stores/settings/GeneralSettingsStore.ts
+index 9c7401ff..c888b379 100644
+--- a/photon-client/src/stores/settings/GeneralSettingsStore.ts
++++ b/photon-client/src/stores/settings/GeneralSettingsStore.ts
+@@ -114,7 +114,8 @@ export const useSettingsStore = defineStore("settings", {
+       ipAddress: undefined,
+       uptime: undefined,
+       sentBitRate: undefined,
+-      recvBitRate: undefined
++      recvBitRate: undefined,
++      gpuUtil: undefined
+     },
+     currentFieldLayout: {
+       field: {
+@@ -148,7 +149,9 @@ export const useSettingsStore = defineStore("settings", {
+         ipAddress: data.ipAddress || undefined,
+         uptime: data.uptime || undefined,
+         sentBitRate: data.sentBitRate || undefined,
+-        recvBitRate: data.recvBitRate || undefined
++        recvBitRate: data.recvBitRate || undefined,
++        // ?? not ||: an idle GPU (0%) is a real reading
++        gpuUtil: data.gpuUtil ?? undefined
+       };
+       if (metricsHistoryBuffer.update({ time: Date.now(), metrics: this.metrics })) {
+         metricsHistorySnapshot.value = metricsHistoryBuffer.getHistory();
+diff --git a/photon-client/src/types/SettingTypes.ts b/photon-client/src/types/SettingTypes.ts
+index 291f812a..5e5d38c0 100644
+--- a/photon-client/src/types/SettingTypes.ts
++++ b/photon-client/src/types/SettingTypes.ts
+@@ -42,6 +42,8 @@ export interface MetricData {
+   uptime?: number;
+   sentBitRate?: number;
+   recvBitRate?: number;
++  // SpectrumJetson: percent, -1 if not available (photonvision-19)
++  gpuUtil?: number;
+ }
+ 
+ export enum NetworkConnectionType {
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/DeviceMetrics.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/DeviceMetrics.java
+index 09593607..4c319a67 100644
+--- a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/DeviceMetrics.java
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/DeviceMetrics.java
+@@ -33,6 +33,9 @@ public record DeviceMetrics(
+         String ipAddress,
+         double uptime,
+         double sentBitRate,
+-        double recvBitRate) {
++        double recvBitRate,
++        // SpectrumJetson: GPU usage in percent, -1 if not available (photonvision-19). Settings page
++        // only: not in the NetworkTables protobuf (robot code reads /photonvision/jetson/gpuLoadPct).
++        double gpuUtil) {
+     public static final DeviceMetricsProto proto = new DeviceMetricsProto();
+ }
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitor.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitor.java
+index a9401649..2aa9a09a 100644
+--- a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitor.java
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/SystemMonitor.java
+@@ -206,7 +206,8 @@ public class SystemMonitor {
+                         this.getIpAddress(),
+                         this.getUptime(),
+                         nt.sentBitRate,
+-                        nt.recvBitRate);
++                        nt.recvBitRate,
++                        this.getGpuUsage());
+ 
+         metricPublisher.set(metrics);
+ 
+@@ -224,6 +225,7 @@ public class SystemMonitor {
+         sb.append(String.format("CPU Usage: %.2f%%, ", metrics.cpuUtil()));
+         sb.append(String.format("CPU Temperature: %.2f °C, ", metrics.cpuTemp()));
+         sb.append(String.format("NPU Usage: %s, ", Arrays.toString(metrics.npuUsage())));
++        sb.append(String.format("GPU Usage: %.1f%%, ", metrics.gpuUtil()));
+         sb.append(String.format("Used Disk: %.2f%%, ", metrics.diskUtilPct()));
+         sb.append(String.format("Usable Disk Space: %.0f MiB, ", metrics.diskUsableSpace() / mebi));
+         sb.append(String.format("Memory: %.0f / %.0f MiB, ", metrics.ramUtil(), metrics.ramMem()));
+@@ -436,6 +438,23 @@ public class SystemMonitor {
+         return new double[0];
+     }
+ 
++    // SpectrumJetson: the Jetson GPU driver's load, per mille, averaged by the kernel over a short
++    // window (the same number tegrastats shows as GR3D_FREQ).
++    private static final Path JETSON_GPU_LOAD = Path.of("/sys/devices/platform/bus@0/17000000.gpu/load");
++
++    /**
++     * SpectrumJetson: returns the GPU usage in percent, if available (Jetson only).
++     *
++     * @return the GPU usage, or -1.0 if not available on this platform.
++     */
++    public double getGpuUsage() {
++        try {
++            return Double.parseDouble(Files.readString(JETSON_GPU_LOAD).strip()) / 10.0;
++        } catch (Exception e) {
++            return -1.0;
++        }
++    }
++
+     /**
+      * Returns a description of the CPU throttle state, if available. Platforms that provide this
+      * information will need to override this method to return a useful value.
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/proto/DeviceMetricsProto.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/proto/DeviceMetricsProto.java
+index b3071db9..59dabcbb 100644
+--- a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/proto/DeviceMetricsProto.java
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/proto/DeviceMetricsProto.java
+@@ -54,7 +54,8 @@ public class DeviceMetricsProto implements Protobuf<DeviceMetrics, ProtobufDevic
+                 msg.getIpAddress(),
+                 msg.getUptime(),
+                 msg.getSentBitRate(),
+-                msg.getRecvBitRate());
++                msg.getRecvBitRate(),
++                -1.0); // gpuUtil isn't in the protobuf
+     }
+ 
+     @Override
