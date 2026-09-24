@@ -386,6 +386,10 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
 - [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
 - [ ] Field calibration mode: push the robot by hand to 10–20 spots, then solve for the event's real tag positions, every camera's mount and the best camera settings ([docs/FIELD-CALIBRATION-PLAN.md](docs/FIELD-CALIBRATION-PLAN.md)). Test in the shop first.
+  - [x] Offline solver on a laptop: [tools/fieldcal](tools/fieldcal/README.md). On synthetic recordings: tags to a few mm, camera height to 4 mm, pitch and roll to 0.03°
+  - [ ] Shop test on our half field
+  - [ ] Run it on the Jetson, replaying recordings through the 971 GPU detector
+  - [ ] Recalibrate the lenses with board views right into the corners: our calibrations can't model the outer 1–4% of the image
 - [x] The camera controls PhotonVision's UI didn't show (contrast, gamma, sharpness, backlight compensation) are on the Input tab (`photonvision-28`), at the camera's defaults unless set
 - [ ] Measure whether contrast, gamma or sharpness help (decision margin, far-tag range, corner jitter): the field-calibration settings sweep
 - [x] A stuck camera recovers by itself (`photonvision-29`): reconnect, then USB reset. Tested on the bench with its test hook

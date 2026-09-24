@@ -1,6 +1,10 @@
 # Field calibration mode (plan)
 
-A plan, not built yet (agreed 2026-09-24). During an event's field calibration time, with the robot
+Agreed 2026-09-24. **The offline solver is built:** [tools/fieldcal](../tools/fieldcal/README.md),
+tested on synthetic data including rendered recordings. Not built yet: running it on the Jetson
+with the 971 GPU detector, and the settings sweep. Next: a shop test on our half field.
+
+During an event's field calibration time, with the robot
 pushed around **by hand** (it can't be driven then), measure three things from the robot's own
 cameras:
 - the real positions of the event field's tags
