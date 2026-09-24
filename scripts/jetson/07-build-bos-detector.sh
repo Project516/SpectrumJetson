@@ -36,7 +36,7 @@ for p in "$REPO_ROOT"/patches/bos-*.patch; do
 done
 
 cmake -S "$REPO_ROOT/detector" -B "$OUT" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBOS_DIR="$SRC"
-cmake --build "$OUT" --parallel 4 --target 971apriltag_jni
+cmake --build "$OUT" --parallel 4 --target 971apriltag_jni spectrumtrt_jni
 
 echo
 ldd "$OUT/lib971apriltag.so" | grep -E "not found|wpiutil|apriltag|cudart" || true

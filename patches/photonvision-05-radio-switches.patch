@@ -1,5 +1,5 @@
 diff --git a/photon-client/src/components/settings/GlobalSettingsCard.vue b/photon-client/src/components/settings/GlobalSettingsCard.vue
-index 6181de48..6ff45052 100644
+index 27cfbb47..343d301e 100644
 --- a/photon-client/src/components/settings/GlobalSettingsCard.vue
 +++ b/photon-client/src/components/settings/GlobalSettingsCard.vue
 @@ -1,6 +1,7 @@
@@ -69,7 +69,7 @@ index 6181de48..6ff45052 100644
    const payload = {
 @@ -295,6 +345,36 @@ watchEffect(() => {
            icon="mdi-information-outline"
-           :variant="theme.global.name.value === 'LightTheme' ? 'elevated' : 'tonal'"
+           :variant="theme.global.current.value.dark ? 'tonal' : 'elevated'"
          />
 +        <template v-if="radios && (radios.wifiSupported || radios.bluetoothSupported)">
 +          <v-card-title class="pl-0 pt-3 pb-10px">Radios</v-card-title>
@@ -89,7 +89,7 @@ index 6181de48..6ff45052 100644
 +            density="compact"
 +            :text="`Wi-Fi is on${radios.wifiConnection ? ' (connected to ' + radios.wifiConnection + ')' : ''}. Turn it off before competition: robot coprocessors may not use radios.`"
 +            icon="mdi-wifi-alert"
-+            :variant="theme.global.name.value === 'LightTheme' ? 'elevated' : 'tonal'"
++            :variant="theme.global.current.value.dark ? 'tonal' : 'elevated'"
 +          />
 +          <pv-switch
 +            v-if="radios.bluetoothSupported"

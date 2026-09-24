@@ -1,0 +1,144 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
+index dac37a65..333dd02c 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
++++ b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
+@@ -39,6 +39,9 @@ public class GenericUSBCameraSettables extends VisionSourceSettables {
+     // auto exposure mode so we can restore it
+     protected double lastExposureRaw = -1;
+ 
++    // SpectrumJetson: whether auto exposure is on (then the exposure time is unknown).
++    protected volatile boolean autoExposureOn = false;
++
+     // Some cameras need logic where we re-apply brightness after
+     // changing exposure
+     protected int lastBrightness = -1;
+@@ -193,6 +196,7 @@ public class GenericUSBCameraSettables extends VisionSourceSettables {
+ 
+     public void setAutoExposureImpl(boolean cameraAutoExposure) {
+         logger.debug("Setting auto exposure to " + cameraAutoExposure);
++        autoExposureOn = cameraAutoExposure;
+ 
+         if (!cameraAutoExposure) {
+             // Pick a bunch of reasonable setting defaults for vision processing
+@@ -215,6 +219,16 @@ public class GenericUSBCameraSettables extends VisionSourceSettables {
+         }
+     }
+ 
++    /**
++     * UVC cameras take exposure_time_absolute in the UVC standard's units of 100 us, so the raw
++     * value x 100 is microseconds (50 -> 5 ms).
++     */
++    @Override
++    public double getExposureTimeUs() {
++        if (autoExposureOn || lastExposureRaw <= 0) return -1;
++        return MathUtil.clamp(lastExposureRaw, minExposure, maxExposure) * 100.0;
++    }
++
+     @Override
+     public double getMinExposureRaw() {
+         return minExposure;
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index ee8d59ee..21e6eec1 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -113,7 +113,8 @@ public class USBFrameProvider extends CpuImageProcessor {
+             // TODO - under the hood, this incurs an extra copy. We should avoid this, if we
+             // can.
+             CvSink sink = activeSink();
+-            long captureTimeNs = sink.grabFrame(mat.getMat(), CSCORE_DEFAULT_FRAME_TIMEOUT) * 1000;
++            long captureTimeNs =
++                    toMidExposureUs(sink.grabFrame(mat.getMat(), CSCORE_DEFAULT_FRAME_TIMEOUT)) * 1000;
+ 
+             if (captureTimeNs == 0) {
+                 var error = sink.getError();
+@@ -157,12 +158,58 @@ public class USBFrameProvider extends CpuImageProcessor {
+                 ret = new CVMat(mat, frame);
+             }
+ 
+-            return new CapturedFrame(ret, settables.getFrameStaticProperties(), captureTimeUs * 1000);
++            return new CapturedFrame(
++                    ret, settables.getFrameStaticProperties(), toMidExposureUs(captureTimeUs) * 1000);
+         }
+     }
+ 
+     private boolean loggedDirectGray = false;
+ 
++    /**
++     * SpectrumJetson: the camera's delay from the end of exposure to its first USB packet
++     * (sensor readout + JPEG start), in microseconds. Not visible from here; measure it on the
++     * robot (spin in front of a tag) and set SPECTRUM_CAMERA_DELAY_US. Default 0.
++     */
++    private static final long CAMERA_DELAY_US = envLong("SPECTRUM_CAMERA_DELAY_US", 0);
++
++    private static long envLong(String name, long fallback) {
++        try {
++            String v = System.getenv(name);
++            return v == null || v.isBlank() ? fallback : Long.parseLong(v.trim());
++        } catch (NumberFormatException e) {
++            return fallback;
++        }
++    }
++
++    private boolean loggedMidExposure = false;
++
++    /**
++     * SpectrumJetson: move a frame's timestamp to mid-exposure. uvcvideo stamps a frame when its
++     * first USB packet arrives, which is after the whole exposure and the camera's internal delay.
++     * Robot code fuses the pose at this time, so a late stamp shows up as error while turning
++     * (2.5 ms at 360 deg/s is ~1 degree). The exposure is known exactly here and changes when
++     * it's retuned, so it's corrected here rather than as a constant on the robot. Only the
++     * published time moves; {@code lastTime} keeps the driver's time for "newest frame" checks.
++     */
++    private long toMidExposureUs(long captureTimeUs) {
++        if (captureTimeUs == 0) return 0;
++        double exposureUs = settables.getExposureTimeUs();
++        if (exposureUs <= 0) return captureTimeUs - CAMERA_DELAY_US;
++        long shift = (long) (exposureUs / 2) + CAMERA_DELAY_US;
++        if (!loggedMidExposure) {
++            loggedMidExposure = true;
++            logger.info(
++                    "Frame timestamps moved "
++                            + shift / 1000.0
++                            + " ms earlier, to mid-exposure (exposure "
++                            + exposureUs / 1000.0
++                            + " ms, camera delay "
++                            + CAMERA_DELAY_US / 1000.0
++                            + " ms)");
++        }
++        return captureTimeUs - shift;
++    }
++
+     /** Off after repeated failures (or no decoder library): back to cscore's own conversion. */
+     private boolean directGray = true;
+ 
+@@ -221,7 +268,9 @@ public class USBFrameProvider extends CpuImageProcessor {
+                 logger.info("Capture format: MJPEG decoded straight to gray (" + gray.cols() + "x" + gray.rows() + ")");
+             }
+             return new CapturedFrame(
+-                    new CVMat(gray), settables.getFrameStaticProperties(), captureTimeUs * 1000);
++                    new CVMat(gray),
++                    settables.getFrameStaticProperties(),
++                    toMidExposureUs(captureTimeUs) * 1000);
+         } finally {
+             frame.close();
+         }
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
+index 331ea10b..6d1076bf 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceSettables.java
+@@ -56,6 +56,15 @@ public abstract class VisionSourceSettables {
+ 
+     public abstract void setExposureRaw(double exposureRaw);
+ 
++    /**
++     * SpectrumJetson: the camera's current exposure time in microseconds, or -1 if unknown (auto
++     * exposure, or a camera type that doesn't report it). Used to move frame timestamps to
++     * mid-exposure.
++     */
++    public double getExposureTimeUs() {
++        return -1;
++    }
++
+     public abstract double getMinExposureRaw();
+ 
+     public abstract double getMaxExposureRaw();

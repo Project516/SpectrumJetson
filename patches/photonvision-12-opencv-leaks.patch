@@ -1,0 +1,656 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/calibration/JsonMatOfDouble.java b/photon-core/src/main/java/org/photonvision/vision/calibration/JsonMatOfDouble.java
+index ff463e19..acb36921 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/calibration/JsonMatOfDouble.java
++++ b/photon-core/src/main/java/org/photonvision/vision/calibration/JsonMatOfDouble.java
+@@ -115,6 +115,9 @@ public class JsonMatOfDouble implements Releasable {
+ 
+     @Override
+     public void release() {
++        if (wrappedMat != null) {
++            wrappedMat.release();
++        }
+         if (wrappedMatOfDouble != null) {
+             wrappedMatOfDouble.release();
+         }
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipe/impl/Draw2dTargetsPipe.java b/photon-core/src/main/java/org/photonvision/vision/pipe/impl/Draw2dTargetsPipe.java
+index fe14c7ca..c7ac857e 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipe/impl/Draw2dTargetsPipe.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipe/impl/Draw2dTargetsPipe.java
+@@ -34,7 +34,8 @@ import org.photonvision.vision.target.TrackedTarget;
+ 
+ public class Draw2dTargetsPipe
+         extends MutatingPipe<Pair<Mat, List<TrackedTarget>>, Draw2dTargetsPipe.Draw2dTargetsParams> {
+-    MatOfPoint tempMat = new MatOfPoint();
++    MatOfPoint boundingRect = new MatOfPoint();
++    MatOfPoint contourMat = new MatOfPoint();
+     private static final Logger logger = new Logger(Draw2dTargetsPipe.class, LogGroup.General);
+ 
+     @Override
+@@ -60,7 +61,6 @@ public class Draw2dTargetsPipe
+ 
+             for (int i = 0; i < Math.min(params.outputMaximumTargets, in.getSecond().size()); i++) {
+                 Point[] vertices = new Point[4];
+-                MatOfPoint contour = new MatOfPoint();
+ 
+                 TrackedTarget target = in.getSecond().get(i);
+                 RotatedRect r = target.getMinAreaRect();
+@@ -69,12 +69,12 @@ public class Draw2dTargetsPipe
+ 
+                 r.points(vertices);
+                 dividePointArray(vertices);
+-                contour.fromArray(vertices);
++                boundingRect.fromArray(vertices);
+ 
+                 if (params.shouldShowRotatedBox(target.getShape())) {
+                     Imgproc.drawContours(
+                             in.getFirst(),
+-                            List.of(contour),
++                            List.of(boundingRect),
+                             0,
+                             rotatedBoxColour,
+                             (int) Math.ceil(imageSize * params.kPixelsToBoxThickness));
+@@ -93,21 +93,18 @@ public class Draw2dTargetsPipe
+                     if (poly == null && target.getShape() != null)
+                         poly = target.getShape().getContour().getApproxPolyDp();
+                     if (poly != null) {
+-                        var mat = new MatOfPoint();
+-                        mat.fromArray(poly.toArray());
+-                        divideMat(mat, mat);
++                        divideMat(poly, contourMat);
+                         Imgproc.drawContours(
+                                 in.getFirst(),
+-                                List.of(mat),
++                                List.of(contourMat),
+                                 -1,
+                                 ColorHelper.colorToScalar(params.rotatedBoxColor),
+                                 2);
+-                        mat.release();
+                     }
+                 }
+ 
+                 if (params.showMaximumBox) {
+-                    Rect box = Imgproc.boundingRect(contour);
++                    Rect box = Imgproc.boundingRect(boundingRect);
+                     Imgproc.rectangle(
+                             in.getFirst(),
+                             new Point(box.x, box.y),
+@@ -117,10 +114,10 @@ public class Draw2dTargetsPipe
+                 }
+ 
+                 if (params.showShape) {
+-                    divideMat(target.m_mainContour.mat, tempMat);
++                    divideMat(target.m_mainContour.mat, contourMat);
+                     Imgproc.drawContours(
+                             in.getFirst(),
+-                            List.of(tempMat),
++                            List.of(contourMat),
+                             -1,
+                             shapeColour,
+                             (int) Math.ceil(imageSize * params.kPixelsToBoxThickness));
+@@ -212,6 +209,13 @@ public class Draw2dTargetsPipe
+         p.y = p.y / (double) params.divisor.value;
+     }
+ 
++    // SpectrumJetson: no @Override; our 2026 CVPipe is not Releasable (that came with #2511's
++    // lifecycle refactor, not ported). The scratch Mats live as long as the pipe.
++    public void release() {
++        boundingRect.release();
++        contourMat.release();
++    }
++
+     public static class Draw2dTargetsParams {
+         public double kPixelsToText = 0.0025;
+         public double kPixelsToThickness = 0.008;
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipe/impl/Draw3dTargetsPipe.java b/photon-core/src/main/java/org/photonvision/vision/pipe/impl/Draw3dTargetsPipe.java
+index c5183b66..b1ea759e 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipe/impl/Draw3dTargetsPipe.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipe/impl/Draw3dTargetsPipe.java
+@@ -36,8 +36,24 @@ import org.photonvision.vision.target.TrackedTarget;
+ 
+ public class Draw3dTargetsPipe
+         extends MutatingPipe<Pair<Mat, List<TrackedTarget>>, Draw3dTargetsPipe.Draw3dContoursParams> {
++    MatOfPoint boundingRect = new MatOfPoint();
++    MatOfPoint2f projectedMat = new MatOfPoint2f();
++    MatOfPoint contourMat = new MatOfPoint();
+     Logger logger = new Logger(Draw3dTargetsPipe.class, LogGroup.VisionModule);
+ 
++    // OpenCV expects coordinates in EDN, but we want to visualize in NWU
++    // NWU | EDN
++    // X: Z
++    // Y: -X
++    // Z: -Y
++    final double AXIS_LEN = 0.2;
++    MatOfPoint3f axesMat =
++            new MatOfPoint3f(
++                    new Point3(0, 0, 0),
++                    new Point3(0, 0, AXIS_LEN), // x-axis
++                    new Point3(-AXIS_LEN, 0, 0), // y-axis
++                    new Point3(0, -AXIS_LEN, 0)); // z-axis
++
+     @Override
+     protected Void process(Pair<Mat, List<TrackedTarget>> in) {
+         if (!params.shouldDraw) return null;
+@@ -50,34 +66,29 @@ public class Draw3dTargetsPipe
+         for (var target : in.getSecond()) {
+             // draw convex hull
+             if (params.shouldDrawHull(target)) {
+-                var pointMat = new MatOfPoint();
+-                divideMat2f(target.m_mainContour.getConvexHull(), pointMat);
+-                if (pointMat.size().empty()) {
++                divideMat2f(target.m_mainContour.getConvexHull(), contourMat);
++                if (contourMat.size().empty()) {
+                     logger.error("Convex hull is empty?");
+                     logger.debug(
+                             "Orig. Convex Hull: " + target.m_mainContour.getConvexHull().size().toString());
+                     continue;
+                 }
+                 Imgproc.drawContours(
+-                        in.getFirst(), List.of(pointMat), -1, ColorHelper.colorToScalar(Color.green), 1);
++                        in.getFirst(), List.of(contourMat), -1, ColorHelper.colorToScalar(Color.green), 1);
+ 
+                 // draw approximate polygon
+                 var poly = target.getApproximateBoundingPolygon();
+                 if (poly != null) {
+-                    divideMat2f(poly, pointMat);
++                    divideMat2f(poly, contourMat);
+                     Imgproc.drawContours(
+-                            in.getFirst(), List.of(pointMat), -1, ColorHelper.colorToScalar(Color.blue), 2);
++                            in.getFirst(), List.of(contourMat), -1, ColorHelper.colorToScalar(Color.blue), 2);
+                 }
+-                pointMat.release();
+             }
+ 
+             // Draw floor and top
+             if (target.getCameraRelativeRvec() != null
+                     && target.getCameraRelativeTvec() != null
+                     && params.shouldDrawBox) {
+-                var tempMat = new MatOfPoint2f();
+-
+-                var jac = new Mat();
+                 var bottomModel = params.targetModel.getVisualizationBoxBottom();
+                 var topModel = params.targetModel.getVisualizationBoxTop();
+ 
+@@ -87,38 +98,37 @@ public class Draw3dTargetsPipe
+                         target.getCameraRelativeTvec(),
+                         params.cameraCalibrationCoefficients.getCameraIntrinsicsMat(),
+                         params.cameraCalibrationCoefficients.getDistCoeffsMat(),
+-                        tempMat,
+-                        jac);
++                        projectedMat);
++
++                var bottomPoints = projectedMat.toList();
+ 
+                 if (params.redistortPoints) {
+                     // Distort the points, so they match the image they're being overlaid on
+-                    tempMat.fromList(
++                    bottomPoints =
+                             OpenCVHelp.distortPoints(
+-                                    tempMat.toList(),
++                                    bottomPoints,
+                                     params.cameraCalibrationCoefficients.getCameraIntrinsicsMat(),
+-                                    params.cameraCalibrationCoefficients.getDistCoeffsMat()));
++                                    params.cameraCalibrationCoefficients.getDistCoeffsMat());
+                 }
+ 
+-                var bottomPoints = tempMat.toList();
+-
+                 Calib3d.projectPoints(
+                         topModel,
+                         target.getCameraRelativeRvec(),
+                         target.getCameraRelativeTvec(),
+                         params.cameraCalibrationCoefficients.getCameraIntrinsicsMat(),
+                         params.cameraCalibrationCoefficients.getDistCoeffsMat(),
+-                        tempMat,
+-                        jac);
++                        projectedMat);
++
++                var topPoints = projectedMat.toList();
+ 
+                 if (params.redistortPoints) {
+                     // Distort the points, so they match the image they're being overlaid on
+-                    tempMat.fromList(
++                    topPoints =
+                             OpenCVHelp.distortPoints(
+-                                    tempMat.toList(),
++                                    topPoints,
+                                     params.cameraCalibrationCoefficients.getCameraIntrinsicsMat(),
+-                                    params.cameraCalibrationCoefficients.getDistCoeffsMat()));
++                                    params.cameraCalibrationCoefficients.getDistCoeffsMat());
+                 }
+-                var topPoints = tempMat.toList();
+ 
+                 dividePointList(bottomPoints);
+                 dividePointList(topPoints);
+@@ -134,34 +144,19 @@ public class Draw3dTargetsPipe
+                 }
+ 
+                 // Draw X, Y and Z axis
+-                MatOfPoint3f pointMat = new MatOfPoint3f();
+-                // OpenCV expects coordinates in EDN, but we want to visualize in NWU
+-                // NWU | EDN
+-                // X: Z
+-                // Y: -X
+-                // Z: -Y
+-                final double AXIS_LEN = 0.2;
+-                var list =
+-                        List.of(
+-                                new Point3(0, 0, 0),
+-                                new Point3(0, 0, AXIS_LEN), // x-axis
+-                                new Point3(-AXIS_LEN, 0, 0), // y-axis
+-                                new Point3(0, -AXIS_LEN, 0)); // z-axis
+-                pointMat.fromList(list);
+ 
+                 // The detected target's rvec and tvec perform a rotation-translation transformation which
+                 // converts points in the target's coordinate system to the camera's. This means applying
+                 // the transformation to the target point (0,0,0) for example would give the target's center
+                 // relative to the camera.
+                 Calib3d.projectPoints(
+-                        pointMat,
++                        axesMat,
+                         target.getCameraRelativeRvec(),
+                         target.getCameraRelativeTvec(),
+                         params.cameraCalibrationCoefficients.getCameraIntrinsicsMat(),
+                         params.cameraCalibrationCoefficients.getDistCoeffsMat(),
+-                        tempMat,
+-                        jac);
+-                var axisPoints = tempMat.toList();
++                        projectedMat);
++                var axisPoints = projectedMat.toList();
+                 dividePointList(axisPoints);
+ 
+                 // XYZ is RGB
+@@ -205,10 +200,6 @@ public class Draw3dTargetsPipe
+                             ColorHelper.colorToScalar(Color.orange),
+                             3);
+                 }
+-
+-                tempMat.release();
+-                jac.release();
+-                pointMat.release();
+             }
+ 
+             // draw corners
+@@ -251,6 +242,15 @@ public class Draw3dTargetsPipe
+         }
+     }
+ 
++    // SpectrumJetson: no @Override; our 2026 CVPipe is not Releasable (that came with #2511's
++    // lifecycle refactor, not ported). The scratch Mats live as long as the pipe.
++    public void release() {
++        boundingRect.release();
++        projectedMat.release();
++        contourMat.release();
++        axesMat.release();
++    }
++
+     public static class Draw3dContoursParams {
+         public int radius = 2;
+         public Color color = Color.RED;
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagCudaPipeline.java b/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagCudaPipeline.java
+index 79eb39ae..2dec97ec 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagCudaPipeline.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagCudaPipeline.java
+@@ -165,7 +165,9 @@ public class AprilTagCudaPipeline extends CVPipeline<CVPipelineResult, AprilTagC
+ 
+         // Do single-tag pose estimation
+         if (settings.solvePNPEnabled) {
+-            // Clear target list that was used for multitag so we can add target transforms
++            // Clear target list that was used for multitag so we can add target transforms.
++            // SpectrumJetson: release them first; their contour Mats were left for the GC.
++            targetList.forEach(TrackedTarget::release);
+             targetList.clear();
+             // TODO global state again ew
+             var atfl = ConfigManager.getInstance().getConfig().getApriltagFieldLayout();
+@@ -228,6 +230,7 @@ public class AprilTagCudaPipeline extends CVPipeline<CVPipelineResult, AprilTagC
+         if (targetList.size() > Packet.MAX_ARRAY_LEN) {
+             logger.error(
+                     "We have " + targetList.size() + " targets! Arbitrarily dropping some on the floor");
++            targetList.subList(Packet.MAX_ARRAY_LEN, targetList.size()).forEach(TrackedTarget::release);
+             targetList = targetList.subList(0, Packet.MAX_ARRAY_LEN);
+         }
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagPipeline.java b/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagPipeline.java
+index 941e16cf..5409859f 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagPipeline.java
++++ b/photon-core/src/main/java/org/photonvision/vision/pipeline/AprilTagPipeline.java
+@@ -178,7 +178,9 @@ public class AprilTagPipeline extends CVPipeline<CVPipelineResult, AprilTagPipel
+ 
+         // Do single-tag pose estimation
+         if (settings.solvePNPEnabled) {
+-            // Clear target list that was used for multitag so we can add target transforms
++            // Clear target list that was used for multitag so we can add target transforms.
++            // SpectrumJetson: release them first; their contour Mats were left for the GC.
++            targetList.forEach(TrackedTarget::release);
+             targetList.clear();
+             // TODO global state again ew
+             var atfl = ConfigManager.getInstance().getConfig().getApriltagFieldLayout();
+@@ -240,6 +242,7 @@ public class AprilTagPipeline extends CVPipeline<CVPipelineResult, AprilTagPipel
+         if (targetList.size() > Packet.MAX_ARRAY_LEN) {
+             logger.error(
+                     "We have " + targetList.size() + " targets! Arbitrarily dropping some on the floor");
++            targetList.subList(Packet.MAX_ARRAY_LEN, targetList.size()).forEach(TrackedTarget::release);
+             targetList = targetList.subList(0, Packet.MAX_ARRAY_LEN);
+         }
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 7e2f238a..38ed86fd 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -314,6 +314,10 @@ public class VisionModule {
+                 if (shouldRun && this.latestFrame != null) {
+                     logger.trace("Fell behind; releasing last unused Mats");
+                     this.latestFrame.release();
++                    // #2511: the targets' contour/pose Mats were never released
++                    if (this.targets != null) {
++                        this.targets.forEach(TrackedTarget::release);
++                    }
+                 }
+ 
+                 this.latestFrame = inputOutputFrame;
+@@ -349,15 +353,20 @@ public class VisionModule {
+                     try {
+                         CVPipelineResult osr = outputStreamPipeline.process(m_frame, settings, targets);
+                         consumeResults(m_frame, targets);
+-
+                     } catch (Exception e) {
+                         // Never die
+                         logger.error("Exception while running stream runnable!", e);
+-                    }
+-                    try {
+-                        m_frame.release();
+-                    } catch (Exception e) {
+-                        logger.error("Exception freeing frames", e);
++                    } finally {
++                        // #2511: this is the last user of the targets (NT and the UI have already
++                        // consumed them on the VisionRunner thread), so free their native Mats here.
++                        if (targets != null) {
++                            targets.forEach(TrackedTarget::release);
++                        }
++                        try {
++                            m_frame.release();
++                        } catch (Exception e) {
++                            logger.error("Exception freeing frames", e);
++                        }
+                     }
+                 } else {
+                     // busy wait! hurray!
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java
+index 4a6d470b..ca318db7 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java
+@@ -261,11 +261,22 @@ public class VisionRunner {
+ 
+                 try {
+                     var pipelineResult = pipeline.run(frame, cameraQuirks);
+-                    pipelineResultConsumer.accept(pipelineResult);
++                    try {
++                        pipelineResultConsumer.accept(pipelineResult);
++                    } catch (Exception ex) {
++                        logger.error("Exception on loop " + loopCount, ex);
++                        pipelineResult.release();
++                    }
+                 } catch (Exception ex) {
+-                    logger.error("Exception on loop " + loopCount, ex);
++                    // #2511: the frame (and its Mats) was dropped on the floor here
++                    logger.error("Pipeline exception on loop " + loopCount, ex);
++                    frame.release();
+                 }
+                 loopCount++;
++            } else {
++                // SpectrumJetson: the pipeline changed while we grabbed this frame; it is thrown away,
++                // so free it (upstream leaks it, once per pipeline switch).
++                frame.release();
+             }
+             // SpectrumJetson: FPS limit sleep after processing, as before #2484 (which moved it
+             // between the frame grab and the pipeline, adding up to a frame period of latency).
+diff --git a/photon-core/src/main/java/org/photonvision/vision/target/TargetCalculations.java b/photon-core/src/main/java/org/photonvision/vision/target/TargetCalculations.java
+index 1cdcd31f..7f986acf 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/target/TargetCalculations.java
++++ b/photon-core/src/main/java/org/photonvision/vision/target/TargetCalculations.java
+@@ -51,25 +51,28 @@ public class TargetCalculations {
+             CameraCalibrationCoefficients cameraCal) {
+         if (cameraCal != null) {
+             // undistort
+-            MatOfPoint2f temp = new MatOfPoint2f(new Point(targetCenterX, targetCenterY));
+-            // Tighten up termination criteria
+-            var termCriteria = new TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 30, 1e-6);
+-            Calib3d.undistortImagePoints(
+-                    temp,
+-                    temp,
+-                    cameraCal.getCameraIntrinsicsMat(),
+-                    cameraCal.getDistCoeffsMat(),
+-                    termCriteria);
+-            float buff[] = new float[2];
+-            temp.get(0, 0, buff);
+-            temp.release();
+-
+-            // if outside of the imager, convergence fails, or really really bad user camera cal,
+-            // undistort will fail by giving us nans. at some point we should log this failure
+-            // if we can't undistort, don't change the center location
+-            if (Float.isFinite(buff[0]) && Float.isFinite(buff[1])) {
+-                targetCenterX = buff[0];
+-                targetCenterY = buff[1];
++            MatOfPoint2f targetPoint = new MatOfPoint2f(new Point(targetCenterX, targetCenterY));
++            try {
++                // Tighten up termination criteria
++                var termCriteria = new TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 30, 1e-6);
++                Calib3d.undistortImagePoints(
++                        targetPoint,
++                        targetPoint,
++                        cameraCal.getCameraIntrinsicsMat(),
++                        cameraCal.getDistCoeffsMat(),
++                        termCriteria);
++                float[] buff = new float[2];
++                targetPoint.get(0, 0, buff);
++
++                // if outside of the imager, convergence fails, or really really bad user camera cal,
++                // undistort will fail by giving us nans. at some point we should log this failure
++                // if we can't undistort, don't change the center location
++                if (Float.isFinite(buff[0]) && Float.isFinite(buff[1])) {
++                    targetCenterX = buff[0];
++                    targetCenterY = buff[1];
++                }
++            } finally {
++                targetPoint.release();
+             }
+         }
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/target/TrackedTarget.java b/photon-core/src/main/java/org/photonvision/vision/target/TrackedTarget.java
+index 1c5e22c0..74899398 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/target/TrackedTarget.java
++++ b/photon-core/src/main/java/org/photonvision/vision/target/TrackedTarget.java
+@@ -126,11 +126,13 @@ public class TrackedTarget implements Releasable {
+                     bestPose.getTranslation().getY(),
+                     bestPose.getTranslation().getZ());
+             setCameraRelativeTvec(tvec);
++            tvec.release();
+ 
+             // Opencv expects a 3d vector with norm = angle and direction = axis
+             var rvec = new Mat(3, 1, CvType.CV_64FC1);
+             MathUtils.rotationToOpencvRvec(bestPose.getRotation(), rvec);
+             setCameraRelativeRvec(rvec);
++            rvec.release();
+         }
+ 
+         double[] corners = tagDetection.getCorners();
+@@ -236,10 +238,12 @@ public class TrackedTarget implements Releasable {
+                     bestPose.getTranslation().getY(),
+                     bestPose.getTranslation().getZ());
+             setCameraRelativeTvec(tvec);
++            tvec.release();
+ 
+             var rvec = new Mat(3, 1, CvType.CV_64FC1);
+             MathUtils.rotationToOpencvRvec(bestPose.getRotation(), rvec);
+             setCameraRelativeRvec(rvec);
++            rvec.release();
+         }
+     }
+ 
+@@ -344,6 +348,7 @@ public class TrackedTarget implements Releasable {
+ 
+         if (m_cameraRelativeTvec != null) m_cameraRelativeTvec.release();
+         if (m_cameraRelativeRvec != null) m_cameraRelativeRvec.release();
++        if (m_approximateBoundingPolygon != null) m_approximateBoundingPolygon.release();
+     }
+ 
+     public void setTargetCorners(List<Point> targetCorners) {
+diff --git a/photon-targeting/src/main/java/org/photonvision/estimation/OpenCVHelp.java b/photon-targeting/src/main/java/org/photonvision/estimation/OpenCVHelp.java
+index 4b239f67..7a1843c1 100644
+--- a/photon-targeting/src/main/java/org/photonvision/estimation/OpenCVHelp.java
++++ b/photon-targeting/src/main/java/org/photonvision/estimation/OpenCVHelp.java
+@@ -414,16 +414,14 @@ public final class OpenCVHelp {
+      */
+     public static Point[] undistortPoints(
+             Matrix<N3, N3> cameraMatrix, Matrix<N8, N1> distCoeffs, Point[] points) {
+-        var distMat = new MatOfPoint2f(points);
+-        var undistMat = new MatOfPoint2f();
++        var pointsMat = new MatOfPoint2f(points);
+         var cameraMatrixMat = matrixToMat(cameraMatrix.getStorage());
+         var distCoeffsMat = matrixToMat(distCoeffs.getStorage());
+ 
+-        Calib3d.undistortImagePoints(distMat, undistMat, cameraMatrixMat, distCoeffsMat);
+-        var undistPoints = undistMat.toArray();
++        Calib3d.undistortImagePoints(pointsMat, pointsMat, cameraMatrixMat, distCoeffsMat);
++        var undistPoints = pointsMat.toArray();
+ 
+-        distMat.release();
+-        undistMat.release();
++        pointsMat.release();
+         cameraMatrixMat.release();
+         distCoeffsMat.release();
+ 
+@@ -518,26 +516,23 @@ public final class OpenCVHelp {
+             Matrix<N8, N1> distCoeffs,
+             List<Translation3d> modelTrls,
+             Point[] imagePoints) {
+-        // solvepnp inputs
+-        MatOfPoint3f objectMat = new MatOfPoint3f();
++        // IPPE_SQUARE expects our corners in a specific order
++        modelTrls = reorderCircular(modelTrls, true, -1);
++        imagePoints = reorderCircular(Arrays.asList(imagePoints), true, -1).toArray(Point[]::new);
++
++        // translate to OpenCV classes
++        MatOfPoint3f objectMat = translationToTvec(modelTrls.toArray(new Translation3d[0]));
+         MatOfPoint2f imageMat = new MatOfPoint2f();
+-        MatOfDouble cameraMatrixMat = new MatOfDouble();
+-        MatOfDouble distCoeffsMat = new MatOfDouble();
++        imageMat.fromArray(imagePoints);
++        Mat cameraMatrixMat = matrixToMat(cameraMatrix.getStorage());
++        Mat distCoeffsMat = matrixToMat(distCoeffs.getStorage());
+         var rvecs = new ArrayList<Mat>();
+         var tvecs = new ArrayList<Mat>();
+         Mat rvec = Mat.zeros(3, 1, CvType.CV_32F);
+         Mat tvec = Mat.zeros(3, 1, CvType.CV_32F);
+         Mat reprojectionError = Mat.zeros(2, 1, CvType.CV_32F);
+-        try {
+-            // IPPE_SQUARE expects our corners in a specific order
+-            modelTrls = reorderCircular(modelTrls, true, -1);
+-            imagePoints = reorderCircular(Arrays.asList(imagePoints), true, -1).toArray(Point[]::new);
+-            // translate to OpenCV classes
+-            translationToTvec(modelTrls.toArray(new Translation3d[0])).assignTo(objectMat);
+-            imageMat.fromArray(imagePoints);
+-            matrixToMat(cameraMatrix.getStorage()).assignTo(cameraMatrixMat);
+-            matrixToMat(distCoeffs.getStorage()).assignTo(distCoeffsMat);
+ 
++        try {
+             float[] errors = new float[2];
+             Transform3d best = null;
+             Transform3d alt = null;
+@@ -626,17 +621,18 @@ public final class OpenCVHelp {
+             Matrix<N8, N1> distCoeffs,
+             List<Translation3d> objectTrls,
+             Point[] imagePoints) {
++        // translate to OpenCV classes
++        MatOfPoint3f objectMat = translationToTvec(objectTrls.toArray(new Translation3d[0]));
++        MatOfPoint2f imageMat = new MatOfPoint2f(imagePoints);
++        Mat cameraMatrixMat = matrixToMat(cameraMatrix.getStorage());
++        Mat distCoeffsMat = matrixToMat(distCoeffs.getStorage());
++        var rvecs = new ArrayList<Mat>();
++        var tvecs = new ArrayList<Mat>();
++        Mat rvec = Mat.zeros(3, 1, CvType.CV_32F);
++        Mat tvec = Mat.zeros(3, 1, CvType.CV_32F);
++        Mat reprojectionError = new Mat();
++
+         try {
+-            // translate to OpenCV classes
+-            MatOfPoint3f objectMat = translationToTvec(objectTrls.toArray(new Translation3d[0]));
+-            MatOfPoint2f imageMat = new MatOfPoint2f(imagePoints);
+-            Mat cameraMatrixMat = matrixToMat(cameraMatrix.getStorage());
+-            Mat distCoeffsMat = matrixToMat(distCoeffs.getStorage());
+-            var rvecs = new ArrayList<Mat>();
+-            var tvecs = new ArrayList<Mat>();
+-            Mat rvec = Mat.zeros(3, 1, CvType.CV_32F);
+-            Mat tvec = Mat.zeros(3, 1, CvType.CV_32F);
+-            Mat reprojectionError = new Mat();
+             // calc rvec/tvec from image points
+             Calib3d.solvePnPGeneric(
+                     objectMat,
+@@ -656,6 +652,15 @@ public final class OpenCVHelp {
+             // convert to wpilib coordinates
+             var best = new Transform3d(tvecToTranslation(tvecs.get(0)), rvecToRotation(rvecs.get(0)));
+ 
++            // check if solvePnP failed with NaN results
++            if (Double.isNaN(error[0])) throw new Exception("SolvePNP_SQPNP NaN result");
++
++            return Optional.of(new PnpResult(best, error[0]));
++        } catch (Exception e) {
++            System.err.println("SolvePNP_SQPNP failed!");
++            e.printStackTrace();
++            return Optional.empty();
++        } finally {
+             // release our Mats from native memory
+             objectMat.release();
+             imageMat.release();
+@@ -666,15 +671,6 @@ public final class OpenCVHelp {
+             rvec.release();
+             tvec.release();
+             reprojectionError.release();
+-
+-            // check if solvePnP failed with NaN results
+-            if (Double.isNaN(error[0])) throw new Exception("SolvePNP_SQPNP NaN result");
+-
+-            return Optional.of(new PnpResult(best, error[0]));
+-        } catch (Exception e) {
+-            System.err.println("SolvePNP_SQPNP failed!");
+-            e.printStackTrace();
+-            return Optional.empty();
+         }
+     }
+ }
+diff --git a/photon-targeting/src/main/java/org/photonvision/estimation/VisionEstimation.java b/photon-targeting/src/main/java/org/photonvision/estimation/VisionEstimation.java
+index 98229ac6..bd1abfde 100644
+--- a/photon-targeting/src/main/java/org/photonvision/estimation/VisionEstimation.java
++++ b/photon-targeting/src/main/java/org/photonvision/estimation/VisionEstimation.java
+@@ -35,9 +35,6 @@ import java.util.Objects;
+ import java.util.Optional;
+ import java.util.stream.Collectors;
+ import org.ejml.simple.SimpleMatrix;
+-import org.opencv.calib3d.Calib3d;
+-import org.opencv.core.MatOfDouble;
+-import org.opencv.core.MatOfPoint2f;
+ import org.opencv.core.Point;
+ import org.photonvision.jni.ConstrainedSolvepnpJni;
+ import org.photonvision.targeting.PhotonTrackedTarget;
+@@ -217,21 +214,7 @@ public class VisionEstimation {
+         Point[] points = OpenCVHelp.cornersToPoints(corners);
+ 
+         // Undistort
+-        {
+-            MatOfPoint2f temp = new MatOfPoint2f();
+-            MatOfDouble cameraMatrixMat = new MatOfDouble();
+-            MatOfDouble distCoeffsMat = new MatOfDouble();
+-            OpenCVHelp.matrixToMat(cameraMatrix.getStorage()).assignTo(cameraMatrixMat);
+-            OpenCVHelp.matrixToMat(distCoeffs.getStorage()).assignTo(distCoeffsMat);
+-
+-            temp.fromArray(points);
+-            Calib3d.undistortImagePoints(temp, temp, cameraMatrixMat, distCoeffsMat);
+-            points = temp.toArray();
+-
+-            temp.release();
+-            cameraMatrixMat.release();
+-            distCoeffsMat.release();
+-        }
++        points = OpenCVHelp.undistortPoints(cameraMatrix, distCoeffs, points);
+ 
+         // Rotate from wpilib to opencv camera CS
+         var robot2cameraBase =

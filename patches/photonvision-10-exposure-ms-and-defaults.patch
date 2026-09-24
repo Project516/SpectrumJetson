@@ -1,5 +1,5 @@
 diff --git a/photon-client/src/components/dashboard/tabs/InputTab.vue b/photon-client/src/components/dashboard/tabs/InputTab.vue
-index 6e683308..380fac71 100644
+index 5a0b4359..e49b9f13 100644
 --- a/photon-client/src/components/dashboard/tabs/InputTab.vue
 +++ b/photon-client/src/components/dashboard/tabs/InputTab.vue
 @@ -10,6 +10,20 @@ import { getResolutionString } from "@/lib/PhotonUtils";

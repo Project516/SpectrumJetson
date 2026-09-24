@@ -1,6 +1,6 @@
 diff --git a/photon-client/src/components/settings/RewindCard.vue b/photon-client/src/components/settings/RewindCard.vue
 new file mode 100644
-index 00000000..df500a41
+index 00000000..9fd9ee91
 --- /dev/null
 +++ b/photon-client/src/components/settings/RewindCard.vue
 @@ -0,0 +1,169 @@
@@ -83,7 +83,7 @@ index 00000000..df500a41
 +        density="compact"
 +        :color="status.recording ? 'error' : 'buttonActive'"
 +        :icon="status.recording ? 'mdi-record-rec' : 'mdi-information-outline'"
-+        :variant="theme.global.name.value === 'LightTheme' ? 'elevated' : 'tonal'"
++        :variant="theme.global.current.value.dark ? 'tonal' : 'elevated'"
 +      >
 +        <template v-if="status.recording">
 +          Recording <b>{{ status.session }}</b> ({{ status.reason === "robot" ? "robot code asked" : "bench" }},

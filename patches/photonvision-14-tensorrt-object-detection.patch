@@ -1,0 +1,447 @@
+diff --git a/photon-client/src/components/settings/ObjectDetectionCard.vue b/photon-client/src/components/settings/ObjectDetectionCard.vue
+index 384f42da..d7f6bc53 100644
+--- a/photon-client/src/components/settings/ObjectDetectionCard.vue
++++ b/photon-client/src/components/settings/ObjectDetectionCard.vue
+@@ -193,6 +193,11 @@ const handleBulkImport = async () => {
+                   640x640 YOLOv5, YOLOv8, and YOLOv11 models trained and converted to `.rknn` format for RK3588 SOCs are
+                   currently supporter!</span
+                 >
++                <span v-else-if="useSettingsStore().general.supportedBackends?.includes('TENSORRT')"
++                  >Upload a YOLOv8/YOLO11/YOLO26 model as a TensorRT `.engine` built on THIS Jetson (engines only run
++                  on the GPU and TensorRT version they were built with). Easier: copy the ONNX to the Jetson and run
++                  SpectrumJetson's `scripts/jetson/12-install-yolo-model.sh`, which builds and installs it.</span
++                >
+                 <span v-else-if="useSettingsStore().general.supportedBackends?.includes('RUBIK')"
+                   >Upload a new object detection model to this device that can be used in a pipeline. Note that ONLY
+                   640x640 YOLOv8 and YOLOv11 models trained and converted to `.tflite` format for QCS6490 compatible
+@@ -212,7 +217,9 @@ const handleBulkImport = async () => {
+                         ? '.rknn'
+                         : useSettingsStore().general.supportedBackends?.includes('RUBIK')
+                           ? '.tflite'
+-                          : ''
++                          : useSettingsStore().general.supportedBackends?.includes('TENSORRT')
++                            ? '.engine'
++                            : ''
+                     "
+                   />
+                   <v-text-field
+diff --git a/photon-core/src/main/java/org/photonvision/common/configuration/NeuralNetworkModelManager.java b/photon-core/src/main/java/org/photonvision/common/configuration/NeuralNetworkModelManager.java
+index b1df50fa..a3d7f499 100644
+--- a/photon-core/src/main/java/org/photonvision/common/configuration/NeuralNetworkModelManager.java
++++ b/photon-core/src/main/java/org/photonvision/common/configuration/NeuralNetworkModelManager.java
+@@ -41,6 +41,7 @@ import org.photonvision.common.logging.Logger;
+ import org.photonvision.vision.objects.Model;
+ import org.photonvision.vision.objects.RknnModel;
+ import org.photonvision.vision.objects.RubikModel;
++import org.photonvision.vision.objects.TensorRtModel;
+ 
+ /**
+  * Manages the loading of neural network models.
+@@ -201,13 +202,19 @@ public class NeuralNetworkModelManager {
+         switch (Platform.getCurrentPlatform()) {
+             case LINUX_QCS6490 -> supportedBackends.add(Family.RUBIK);
+             case LINUX_RK3588_64 -> supportedBackends.add(Family.RKNN);
+-            default -> {
+-                logger.warn(
+-                        "No supported neural network backends found for this platform: "
+-                                + Platform.getCurrentPlatform());
+-                // No supported backends, so we won't load any models
+-                return;
+-            }
++            default -> {}
++        }
++        // SpectrumJetson: TensorRT on the Jetson, when libspectrumtrt.so is installed. TensorRT
++        // itself loads only when a model is first used.
++        if (Platform.isJetson() && org.photonvision.jni.TensorRtJNI.isInstalled()) {
++            supportedBackends.add(Family.TENSORRT);
++        }
++        if (supportedBackends.isEmpty()) {
++            logger.warn(
++                    "No supported neural network backends found for this platform: "
++                            + Platform.getCurrentPlatform());
++            // No supported backends, so we won't load any models
++            return;
+         }
+     }
+ 
+@@ -239,7 +246,8 @@ public class NeuralNetworkModelManager {
+ 
+     public enum Family {
+         RKNN(".rknn"),
+-        RUBIK(".tflite");
++        RUBIK(".tflite"),
++        TENSORRT(".engine"); // SpectrumJetson: Jetson GPU
+ 
+         private final String fileExtension;
+ 
+@@ -320,6 +328,20 @@ public class NeuralNetworkModelManager {
+         ModelProperties properties =
+                 ConfigManager.getInstance().getConfig().neuralNetworkPropertyManager().getModel(path);
+ 
++        // SpectrumJetson: a TensorRT engine copied in by 12-install-yolo-model.sh carries its
++        // labels/size in a sidecar <model>.json.
++        if (properties == null && path.toString().endsWith(Family.TENSORRT.extension())) {
++            properties = TensorRtModel.propertiesFromSidecar(path);
++            if (properties == null) {
++                logger.warn("TensorRT engine " + path + " has no <name>.json sidecar; skipping it");
++                return;
++            }
++            ConfigManager.getInstance()
++                    .getConfig()
++                    .neuralNetworkPropertyManager()
++                    .addModelProperties(properties);
++        }
++
+         if (properties == null) {
+             logger.warn(
+                     "Model properties are null. This could mean the config for model "
+@@ -362,6 +384,9 @@ public class NeuralNetworkModelManager {
+                 case RUBIK -> {
+                     models.get(properties.family()).add(new RubikModel(properties));
+                 }
++                case TENSORRT -> {
++                    models.get(properties.family()).add(new TensorRtModel(properties));
++                }
+             }
+             logger.info(
+                     "Loaded model "
+diff --git a/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtJNI.java b/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtJNI.java
+new file mode 100644
+index 00000000..70c3502c
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtJNI.java
+@@ -0,0 +1,67 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.jni;
++
++import java.io.File;
++
++/**
++ * SpectrumJetson: TensorRT YOLO object detection on the Jetson (libspectrumtrt.so, built from
++ * SpectrumJetson's detector/TensorRtYoloJNI.cu and installed to /usr/lib).
++ *
++ * <p>Loaded lazily, the first time a TensorRT model is used: TensorRT is a very large library,
++ * and most cameras never run object detection.
++ */
++public class TensorRtJNI {
++    private static final String LIB_PATH = "/usr/lib/libspectrumtrt.so";
++    private static boolean loaded = false;
++
++    /** Whether the TensorRT backend is installed (without loading it). */
++    public static boolean isInstalled() {
++        return new File(LIB_PATH).isFile();
++    }
++
++    /** Loads the native library; true if it's usable. */
++    public static synchronized boolean load() {
++        if (!loaded) {
++            try {
++                System.load(LIB_PATH);
++                loaded = true;
++            } catch (Throwable t) {
++                System.err.println("Could not load " + LIB_PATH + ": " + t);
++            }
++        }
++        return loaded;
++    }
++
++    /** Loads a TensorRT engine; 0 if it couldn't. */
++    public static native long create(String enginePath);
++
++    /** {width, height} of the engine's input tensor. */
++    public static native int[] inputSize(long ptr);
++
++    /**
++     * Runs the engine on a letterboxed BGR image (CV_8UC3, exactly the input size).
++     *
++     * @return flat [x, y, w, h, classId, confidence] per detection in letterboxed pixels, best
++     *     first; null on error
++     */
++    public static native float[] detect(
++            long ptr, long bgrMatPtr, double boxThresh, double nmsThresh, int numClasses);
++
++    public static native void destroy(long ptr);
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtModel.java b/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtModel.java
+new file mode 100644
+index 00000000..1ce0cc7e
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtModel.java
+@@ -0,0 +1,109 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.objects;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
++import java.io.File;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import org.opencv.core.Size;
++import org.photonvision.common.configuration.NeuralNetworkModelManager.Family;
++import org.photonvision.common.configuration.NeuralNetworkModelManager.Version;
++import org.photonvision.common.configuration.NeuralNetworkModelsSettings.ModelProperties;
++
++/**
++ * SpectrumJetson: a YOLO model as a TensorRT engine (.engine), built on the Jetson itself with
++ * trtexec (engines only run on the GPU and TensorRT version they were built for). See
++ * SpectrumJetson's scripts/jetson/12-install-yolo-model.sh.
++ */
++public class TensorRtModel implements Model {
++    public final File modelFile;
++    public final ModelProperties properties;
++
++    public TensorRtModel(ModelProperties properties) throws IllegalArgumentException {
++        modelFile = new File(properties.modelPath().toString());
++        if (!modelFile.exists()) {
++            throw new IllegalArgumentException("Model file does not exist: " + modelFile);
++        }
++        if (properties.labels() == null || properties.labels().isEmpty()) {
++            throw new IllegalArgumentException("Labels must be provided");
++        }
++        if (properties.resolutionWidth() <= 0 || properties.resolutionHeight() <= 0) {
++            throw new IllegalArgumentException("Resolution must be greater than 0");
++        }
++        if (properties.family() != Family.TENSORRT) {
++            throw new IllegalArgumentException("Model family must be TENSORRT");
++        }
++        this.properties = properties;
++    }
++
++    /**
++     * Properties from a sidecar {@code <model>.json} next to an engine copied into the models
++     * folder (written by 12-install-yolo-model.sh): {"nickname", "labels": [...], "width",
++     * "height", "version" ("YOLOV8" | "YOLOV11")}. Null if there's no sidecar.
++     */
++    public static ModelProperties propertiesFromSidecar(Path enginePath) {
++        String p = enginePath.toString();
++        File sidecar = new File(p.substring(0, p.length() - Family.TENSORRT.extension().length()) + ".json");
++        if (!sidecar.isFile()) return null;
++        try {
++            JsonNode j = new ObjectMapper().readTree(sidecar);
++            List<String> labels = new ArrayList<>();
++            j.get("labels").forEach(l -> labels.add(l.asText()));
++            Version version = Version.valueOf(j.path("version").asText("YOLOV11"));
++            return new ModelProperties(
++                    enginePath,
++                    j.path("nickname").asText(enginePath.getFileName().toString()),
++                    labels,
++                    j.path("width").asInt(640),
++                    j.path("height").asInt(640),
++                    Family.TENSORRT,
++                    version);
++        } catch (Exception e) {
++            return null;
++        }
++    }
++
++    /** The unique identifier for the model: its path. */
++    public String getUID() {
++        return properties.modelPath().toString();
++    }
++
++    public String getNickname() {
++        return properties.nickname();
++    }
++
++    public Family getFamily() {
++        return properties.family();
++    }
++
++    public ModelProperties getProperties() {
++        return properties;
++    }
++
++    public ObjectDetector load() {
++        return new TensorRtObjectDetector(
++                this, new Size(properties.resolutionWidth(), properties.resolutionHeight()));
++    }
++
++    public String toString() {
++        return "TensorRtModel{modelFile=" + modelFile + ", properties=" + properties + '}';
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtObjectDetector.java b/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtObjectDetector.java
+new file mode 100644
+index 00000000..a2f3dad2
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/objects/TensorRtObjectDetector.java
+@@ -0,0 +1,121 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.objects;
++
++import java.awt.Color;
++import java.lang.ref.Cleaner;
++import java.lang.ref.Cleaner.Cleanable;
++import java.util.ArrayList;
++import java.util.List;
++import org.opencv.core.Mat;
++import org.opencv.core.Rect2d;
++import org.opencv.core.Size;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.common.util.ColorHelper;
++import org.photonvision.jni.TensorRtJNI;
++import org.photonvision.vision.pipe.impl.NeuralNetworkPipeResult;
++
++/**
++ * SpectrumJetson: runs a YOLO TensorRT engine on the Jetson's GPU. The frame is letterboxed here
++ * (as the other backends do); the native side converts it to the network input on the GPU, runs
++ * the engine, and decodes raw ([1, 4+nc, N], NMS here) or end-to-end ([1, K, 6]) outputs.
++ */
++public class TensorRtObjectDetector implements ObjectDetector {
++    private static final Logger logger = new Logger(TensorRtObjectDetector.class, LogGroup.General);
++
++    private final Cleaner cleaner = Cleaner.create();
++    private final Cleanable cleanable;
++
++    // Captures only the pointer, not this object, so the cleaner can run.
++    private static Runnable cleanupAction(long ptr) {
++        return () -> TensorRtJNI.destroy(ptr);
++    }
++
++    private final long ptr;
++    private final TensorRtModel model;
++    private final Size inputSize;
++
++    public TensorRtObjectDetector(TensorRtModel model, Size requestedSize) {
++        this.model = model;
++        if (!TensorRtJNI.load()) {
++            throw new RuntimeException("The TensorRT backend (libspectrumtrt.so) could not be loaded");
++        }
++        ptr = TensorRtJNI.create(model.modelFile.getPath());
++        if (ptr == 0) {
++            throw new RuntimeException(
++                    "Failed to load TensorRT engine "
++                            + model.modelFile.getPath()
++                            + " (build it on this Jetson with trtexec; see the log above)");
++        }
++        int[] s = TensorRtJNI.inputSize(ptr);
++        inputSize = new Size(s[0], s[1]);
++        if (inputSize.width != requestedSize.width || inputSize.height != requestedSize.height) {
++            logger.warn(
++                    "Model "
++                            + model.getNickname()
++                            + " says "
++                            + requestedSize
++                            + " but the engine's input is "
++                            + inputSize
++                            + "; using the engine's");
++        }
++        cleanable = cleaner.register(this, cleanupAction(ptr));
++        logger.info("Loaded TensorRT model " + model.getNickname() + " (" + inputSize + ")");
++    }
++
++    @Override
++    public TensorRtModel getModel() {
++        return model;
++    }
++
++    @Override
++    public List<String> getClasses() {
++        return model.properties.labels();
++    }
++
++    @Override
++    public List<NeuralNetworkPipeResult> detect(Mat in, double nmsThresh, double boxThresh) {
++        Mat letterboxed = new Mat();
++        Letterbox scale =
++                Letterbox.letterbox(in, letterboxed, inputSize, ColorHelper.colorToScalar(Color.GRAY));
++        float[] r;
++        try {
++            if (letterboxed.channels() != 3) {
++                logger.error("TensorRT models need a colour (BGR) image");
++                return List.of();
++            }
++            r = TensorRtJNI.detect(ptr, letterboxed.getNativeObjAddr(), boxThresh, nmsThresh, getClasses().size());
++        } finally {
++            letterboxed.release();
++        }
++        if (r == null || r.length == 0) return List.of();
++        var unscaled = new ArrayList<NeuralNetworkPipeResult>(r.length / 6);
++        for (int i = 0; i + 5 < r.length; i += 6) {
++            unscaled.add(
++                    new NeuralNetworkPipeResult(
++                            new Rect2d(r[i], r[i + 1], r[i + 2], r[i + 3]), (int) r[i + 4], r[i + 5]));
++        }
++        return scale.resizeDetections(unscaled);
++    }
++
++    @Override
++    public void release() {
++        cleanable.clean();
++    }
++}
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index 9349d0cc..7740872a 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -755,6 +755,11 @@ public class RequestHandler {
+                     family = NeuralNetworkModelManager.Family.RKNN;
+                     break;
+                 default:
++                    // SpectrumJetson: TensorRT engines (.engine) on the Jetson
++                    if (Platform.isJetson()) {
++                        family = NeuralNetworkModelManager.Family.TENSORRT;
++                        break;
++                    }
+                     ctx.status(400);
+                     ctx.result("The current platform does not support object detection models");
+                     logger.error("The current platform does not support object detection models");
+@@ -810,6 +815,8 @@ public class RequestHandler {
+                             switch (family) {
+                                 case RUBIK -> new RubikModel(modelProperties).load();
+                                 case RKNN -> new RknnModel(modelProperties).load();
++                                case TENSORRT ->
++                                        new org.photonvision.vision.objects.TensorRtModel(modelProperties).load();
+                             };
+                 } catch (RuntimeException e) {
+                     ctx.status(400);

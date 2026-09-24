@@ -177,7 +177,7 @@ index 00000000..fac72e8b
 +    }
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
-index b57b01d9..9ee317e4 100644
+index e0843e39..2ae23b76 100644
 --- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
 +++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
 @@ -164,6 +164,64 @@ public class VisionModule {

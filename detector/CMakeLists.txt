@@ -49,3 +49,16 @@ target_link_libraries(971apriltag_jni PRIVATE 971apriltag absl::flags wpiutil CU
                                               ${JNI_LIBRARIES})
 # Fail at link time, not in the JVM, if a symbol is missing.
 target_link_options(971apriltag_jni PRIVATE -Wl,--no-undefined)
+
+# SpectrumJetson: TensorRT YOLO object detection (libspectrumtrt.so) for PhotonVision's
+# object-detection pipeline (TensorRtYoloJNI.cu; Java side in the photonvision-13 patch).
+find_library(NVINFER_LIB nvinfer)
+if(NVINFER_LIB)
+  add_library(spectrumtrt_jni SHARED TensorRtYoloJNI.cu)
+  set_target_properties(spectrumtrt_jni PROPERTIES OUTPUT_NAME spectrumtrt)
+  target_include_directories(spectrumtrt_jni PRIVATE ${JNI_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(spectrumtrt_jni PRIVATE ${NVINFER_LIB} CUDA::cudart ${JNI_LIBRARIES})
+  target_link_options(spectrumtrt_jni PRIVATE -Wl,--no-undefined)
+else()
+  message(STATUS "TensorRT (libnvinfer) not found: skipping libspectrumtrt.so")
+endif()

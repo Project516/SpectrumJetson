@@ -90,7 +90,9 @@ PhotonVision 2027.
 - **Their numbers:** about 2x on their 2026 robot, 50–60+ fps at 1280x800.
 - **Same reason as EagleEye: little gain for us,** because we already detect on the GPU.
 
-### Game-piece detection on the Jetson (if we want it later)
+### Game-piece detection on the Jetson
+
+**Built and working (2026-09-24):** see the README's game-piece section. Background research below.
 
 - **[frc971/bos](https://github.com/frc971/bos)** has TensorRT YOLO (`src/yolo/yolo.cc`) and a
   **grayscale** model (`gray.engine`, 2025 game pieces). It projects detections to the floor and

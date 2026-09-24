@@ -1,8 +1,8 @@
 diff --git a/photon-client/src/components/settings/DeviceCard.vue b/photon-client/src/components/settings/DeviceCard.vue
-index 71fdc2f2..5b198580 100644
+index 89260bdb..5dfe6cde 100644
 --- a/photon-client/src/components/settings/DeviceCard.vue
 +++ b/photon-client/src/components/settings/DeviceCard.vue
-@@ -146,8 +146,23 @@ const generalMetrics = computed<MetricItem[]>(() => {
+@@ -203,8 +203,23 @@ const generalMetrics = computed<MetricItem[]>(() => {
    return stats;
  });
  
