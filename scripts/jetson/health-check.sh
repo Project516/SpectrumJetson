@@ -140,10 +140,33 @@ avail=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
 [[ $avail -ge 1500 ]] && pass "memory available ${avail} MB" || warn "memory available only ${avail} MB"
 disk=$(df -P / | awk 'NR == 2 {print int($5)}')
 [[ $disk -lt 85 ]] && pass "disk ${disk}% used" || warn "disk ${disk}% used"
+# Fan: pwm1 is only what the fan was told to do. The real speed comes from the tachometer, so a
+# jammed, dead or unplugged fan (0 rpm at pwm 255) can't pass. Full speed measured 5,586-6,234 rpm.
 fan=$(cat /sys/devices/platform/pwm-fan*/hwmon/hwmon*/pwm1 2>/dev/null | head -1)
-rpm=$(cat /sys/class/hwmon/hwmon*/rpm 2>/dev/null | head -1)
-if [[ ${fan:-0} -ge 250 ]]; then pass "fan at full speed (${rpm:-?} rpm)"
-else warn "fan not at full speed (pwm ${fan:-?}/255, ${rpm:-?} rpm): run 09-robot-tuning.sh"; fi
+tach=$(grep -lx pwm_tach /sys/class/hwmon/hwmon*/name 2>/dev/null | head -1)
+rpm=""
+if [[ -n $tach ]]; then
+  rpm=0
+  for _ in 1 2 3; do   # highest of 3 reads, so one slow tach sample isn't a false alarm
+    r=$(cat "${tach%/name}/rpm" 2>/dev/null || echo 0)
+    [[ $r -gt $rpm ]] && rpm=$r
+    sleep 0.3
+  done
+fi
+if systemctl is-active --quiet nvfancontrol; then fanmode="NVIDIA fan control (nvfancontrol), pwm ${fan:-?}/255"
+elif [[ ${fan:-0} -ge 250 ]]; then fanmode="full speed (jetson_clocks)"
+else fanmode="fixed at pwm ${fan:-?}/255"; fi
+if [[ -z $rpm ]]; then
+  warn "fan speed unknown (no tachometer found); mode: $fanmode"
+elif [[ ${fan:-0} -ge 100 && $rpm -lt 1000 ]]; then
+  fail "fan not spinning: $rpm rpm at pwm ${fan}/255 (unplugged, jammed or dead: check its cable)"
+elif [[ $fanmode != "full speed (jetson_clocks)" ]]; then
+  warn "fan not at full speed: $fanmode, $rpm rpm (run 09-robot-tuning.sh)"
+elif [[ $rpm -lt 4500 ]]; then
+  warn "fan slow: $rpm rpm at full speed, normally ~5,600-6,200 (dust or a worn bearing?)"
+else
+  pass "fan at full speed: $rpm rpm (jetson_clocks)"
+fi
 year=$(date -u +%Y)
 if [[ $year -ge 2026 ]]; then pass "clock: $(date -u '+%Y-%m-%d %H:%M UTC')"
 else warn "clock says $year: not set yet (no internet, and robot code hasn't published /photonvision/clock/unixMs)"; fi

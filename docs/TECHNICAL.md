@@ -357,7 +357,7 @@ The robot is switched off, never shut down, so every power-off is a power cut.
 
 ### Match readiness: fan, watchdog, camera unplug, backups (2026-09-24)
 
-- **Fan.** NVIDIA's `quiet` profile ran the fan at ~2,000 rpm at 56 °C. The profile tables in `/etc/nvfancontrol.conf` are inverted (PWM 255 = off) and it's hard to tell which profile cools harder at a given temperature, so instead `jetson-clocks.service` runs `jetson_clocks --fan`: it stops nvfancontrol and sets `pwm1=255`. It's ordered `After=nvfancontrol.service`, so nvfancontrol can't take the fan back at boot. After a reboot: pwm 255, 5,586 rpm, hottest sensor **56 → 43 °C** (2 cameras, bench).
+- **Fan.** NVIDIA's `quiet` profile ran the fan at ~2,000 rpm at 56 °C. The profile tables in `/etc/nvfancontrol.conf` are inverted (PWM 255 = off) and it's hard to tell which profile cools harder at a given temperature, so instead `jetson-clocks.service` runs `jetson_clocks --fan`: it stops nvfancontrol and sets `pwm1=255`. It's ordered `After=nvfancontrol.service`, so nvfancontrol can't take the fan back at boot. After a reboot: pwm 255, 5,586 rpm, hottest sensor **56 → 43 °C** (2 cameras, bench). `health-check.sh` reads the real speed from the tachometer (the `pwm_tach` hwmon), not just `pwm1`, which is only what the fan was told: FAIL under 1,000 rpm while the fan is told to spin (unplugged, jammed or dead), WARN under 4,500 rpm at full speed (5,586–6,327 rpm seen), WARN if nvfancontrol is running or `pwm1` isn't full.
 - **Hangs.**
   - `RuntimeWatchdogSec=30s` in `/etc/systemd/system.conf.d/zz-spectrum-watchdog.conf`. NVIDIA's own `watchdog.conf` sets 120; systemd reads the files in name order and the last one wins, so ours is named `zz-`.
   - `kernel.panic=3`. NVIDIA already sets `panic_on_oops=1`, but the default `panic=0` means a panic hung until the watchdog fired.
@@ -373,6 +373,17 @@ The robot is switched off, never shut down, so every power-off is a power cut.
   - `05-restore-ssd.sh` checks the checksums and asks you to type `restore`. It *moves* the backup into `tools/backup_restore/images` for the restore (a symlink wouldn't resolve over NFS on the Jetson) and moves it back afterwards.
   - Both need the same host tweaks as flashing (NetworkManager, ufw) plus udisks2 stopped.
   - A restore can target a blank spare SSD. The QSPI bootloader isn't in the backup, so a replacement *module* needs `02-flash-nvme.sh` first. **Not run yet.**
+
+### Fanless: stock heatsink with the fan off (2026-09-24)
+
+Question: can a sealed, fanless Jetson survive matches? Both tests used the stock devkit heatsink on the bench with `pwm1=0` (0 rpm), MAXN SUPER, clocks locked, each stopped by a safety cutoff. Throttling starts at **99 °C** (CPU/GPU `passive` trips), shutdown at 104.5 °C. The 70 °C trip is only `hot-surface-alert`.
+
+- **Power** (`VDD_IN`): 8.6–9.5 W with 2 cameras detecting, 6.8 W with PhotonVision stopped, 5.7 W with the clocks unlocked too (all at ~40 °C; each rises ~0.5 W by 80 °C). Idle is 60–70% of full power, so throttling while disabled helps less than you'd expect.
+- **Full power, fan off:** 42 → 85 °C in 9.7 min, still rising 2.3 °C/min. No throttling.
+- **Match cycle, fan off:** 15 min with PhotonVision stopped (7.2 W), then full power: 40 → 63.5 °C at 5 min, 73.7 at 10, 80.5 at 15, then **88 °C after 2 min 39 s** of full power (cutoff).
+- **Model** (one RC node fitted to both runs, within 0.8 °C): 6.2 °C/W, time constant 6.6 min, steady state **99 °C at full power**, 85 °C at 7.2 W. Peak at the end of a 4-minute full-power match after being on disabled at 7.2 W: 67 °C (0 min), 80 (5 min), 86 (10 min), ~90 (20+ min). It ran ~1.5 °C under the measured peak.
+- **Takeaway:** the stock heatsink alone isn't enough; the duty cycle only helps if the robot isn't on long before the match. A fanless design needs roughly **4 °C/W or better** (by the same model: ≤ 73 °C worst case), and should be tested with this match cycle in its real enclosure. A dead fan isn't fatal: the Jetson slowly climbs to its throttle point instead of shutting down.
+- **Throttling while disabled** already works from robot code: `PhotonCamera.setEnabled(false)` (patch 11) or a robot-set FPS limit. If Rewind is used, keep full rate until its 10 s tail ends.
 
 ### Decode speedup (2026-09-24)
 
