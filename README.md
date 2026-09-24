@@ -237,7 +237,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Calibrate both cameras at 1280x800 (done on the bench; redo on the robot)
 - [x] Deploy the jar with the Device Control and 8-coefficient fixes
 - [x] Robot tuning: no auto-updates, headless boot, clocks locked, USB autosuspend off, power-cut safety (data on the SSD within 3 s, system log kept across power cuts)
-- [ ] Power-cut test: pull the plug mid-recording (`tests/power-cut/run.sh`)
+- [x] Power-cut test: pulled the plug mid-recording. No filesystem errors, the log survived, PhotonVision came back healthy, 1.4 s of video lost (`tests/power-cut/run.sh`)
 - [x] Reboot test: tuning survives a reboot; boot 57 s → 16.5 s, first detection ~20 s after power-on
 - [x] Name the cameras after their ports (TopLeft, TopRight; BottomLeft/BottomRight when added)
 - [x] Wi-Fi / Bluetooth switches in PhotonVision (Bluetooth off; Wi-Fi off before events)

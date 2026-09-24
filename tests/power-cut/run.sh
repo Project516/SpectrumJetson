@@ -61,14 +61,14 @@ sleep 10 # let the detectors start
 
 echo
 echo "== Filesystem"
-"${SSH[@]}" "
-  dev=\$(basename \$(findmnt -no SOURCE /))
-  echo \"  ext4 errors recorded: \$(cat /sys/fs/ext4/\$dev/errors_count)\"
-  journalctl -k -b --no-pager -o cat | grep -E 'EXT4-fs \\(\$dev\\)' | sed 's/^/  kernel: /'
-"
-echo "== Log from before the cut"
-"${SSH[@]}" "journalctl -b -1 --no-pager -o short-monotonic -n 3 2>&1 | sed 's/^/  /'" \
-  || echo "  (no previous boot in the log: the journal is not persistent)"
+"${SSH[@]}" 'bash -s' <<'REMOTE'
+dev=$(basename "$(findmnt -no SOURCE /)")
+echo "  ext4 errors recorded: $(cat /sys/fs/ext4/$dev/errors_count)"
+journalctl -k -b 0 --no-pager -o cat | grep -F "EXT4-fs ($dev)" | sed 's/^/  kernel: /'
+REMOTE
+echo "== Log from before the cut (the last lines the old boot saved)"
+# By boot id: -b -1 is unreliable here, since the clock restarts at 1970 after a cut (no RTC battery).
+"${SSH[@]}" "journalctl _BOOT_ID=${boot_before//-/} --no-pager -o short-iso -n 3 2>&1 | sed 's/^/  /'"
 echo "== PhotonVision"
 "${SSH[@]}" '~/SpectrumJetson/scripts/jetson/health-check.sh' | sed -n '/== PhotonVision/,/== Cameras/p' | grep -v '== Cameras'
 echo "== The recording"

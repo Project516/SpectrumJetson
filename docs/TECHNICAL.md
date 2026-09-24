@@ -339,7 +339,8 @@ The robot is switched off, never shut down, so every power-off is a power cut.
 - **System log.** It was RAM-only (`/var/log/journal` didn't exist), so every cut erased it, including the log of a brownout. Now `Storage=persistent`, `SyncIntervalSec=5s`, `SystemMaxUse=300M`.
 - **Rewind.** The video file, then the index, are forced to the SSD every 2 s and on close; `session.json` is synced too. Cost: ~0.7% of the recording's frames come late (5 of 704) when a sync blocks the recorder thread. Detector fps is unchanged.
 - **Test.** `tests/power-cut/run.sh` (laptop): records, you pull the plug, then after boot it checks the ext4 errors and journal replay, the log from before the cut, PhotonVision's health, and the seconds of video lost.
-- **Clock.** No RTC battery on the devkit: after a cut, the clock starts from the last saved time until NTP (Wi-Fi) corrects it. Rewind names carry that clock; their leading number is what orders them.
+- **Clock.** No RTC battery on the devkit: after a cut the clock restarts at **1970** until NTP (Wi-Fi) corrects it. That confuses `journalctl -b -1` (use `_BOOT_ID=`), and Rewind names made before NTP carry a 1970 date; their leading number is what orders them.
+- **Result (2026-09-24, power pulled 21.4 s into a bench recording):** 0 ext4 errors; the kernel logged `1 orphan inode deleted` / `recovery complete` (the journal replayed, normal after a cut). The old boot's log survived up to 3 s before the cut, including PhotonVision's lines. PhotonVision came back healthy (90 / 105 fps, both calibrations with 8 coefficients). The recording kept 20.0 s of 21.4 s: **1.4 s lost**, every saved frame a complete JPEG. `session.json` has no end, as expected.
 
 ### CUDA error handling (bos build)
 
