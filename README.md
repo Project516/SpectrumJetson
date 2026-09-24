@@ -337,4 +337,4 @@ We don't redistribute either; see [docs/GAME-PIECE-MODELS.md](docs/GAME-PIECE-MO
 - Mechanical Advantage 6328's Northstar.
 - Many Chief Delphi threads, linked in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md).
 
-**This repo:** the scripts, tests, docs and our own code (`detector/`, and the new files in our patches) were written by Spectrum 3847 with help from Claude (Anthropic). Our patches to PhotonVision are GPL-3.0, like PhotonVision itself, and the kernel patch is GPL-2.0.
+**This repo** is licensed under the [GPL-3.0](LICENSE), following PhotonVision. The kernel patch in `kernel/` is GPL-2.0, like the Linux driver it changes. The scripts, tests, docs and our own code (`detector/`, and the new files in our patches) were written by Spectrum 3847 with help from Claude (Anthropic).
