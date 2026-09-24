@@ -223,8 +223,9 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
   Then give the camera a pipeline of type **Object Detection** and pick the model.
 - **The 2026 FUEL model** we started with is Team 2826 Wave Robotics' YOLO11n, the same one PhotonVision ships for other hardware.
 - **Measured on the bench** (mono camera, 1280x800 in): **62 fps, 31 ms latency**, while another camera kept detecting AprilTags at 122 fps.
-  - It shares the GPU: AprilTag detect time went from 1.6 to 3.5 ms, and the GPU sat at ~70%.
-  - **Cap the game-piece camera at ~30 fps** once there are 4 AprilTag cameras.
+  - It shares the GPU. Unthrottled (62 fps), the GPU sat at ~70% and AprilTag detect time went from 1.6 to 3.5 ms.
+  - **Object Detection pipelines are now capped at 30 fps by default** (`SPECTRUM_OD_FPS_LIMIT`; a robot-set FPS limit takes precedence). At 30 fps: GPU 12–31%, PhotonVision CPU 118–128%, and the AprilTag camera at 118–119 fps with ~3.2 ms detect. While the model runs it fills the GPU, so AprilTag frames take ~1.6 ms longer.
+  - We tried GPU stream priorities (AprilTag highest, TensorRT lowest): no change (3.25 vs 3.2 ms), so it was reverted. The contention is the model occupying the GPU's compute units and memory bandwidth, not scheduling order.
 - **Use a colour camera** for game pieces (FUEL is yellow). With 4 Thriftiest Cams on USB-A, put it on the USB-C port, or use a USB 3 camera.
 
 ## Troubleshooting quick reference
@@ -283,7 +284,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Upstream PhotonVision v2026.3.4 fixes, `setEnabled()` support, OpenCV leak fixes (`docs/UPSTREAM-PORT.md`)
 - [x] Frame timestamps moved to mid-exposure (`photonvision-13`); the camera's own delay is still to be measured with the robot spin test
 - [x] Game-piece detection: TensorRT backend, FUEL model working (62 fps)
-- [ ] Game-piece colour camera on the robot; cap it at ~30 fps
+- [x] Game-piece pipelines capped at 30 fps by default (GPU 12–31% alongside AprilTags)
+- [ ] Game-piece colour camera on the robot
 - [x] USB bandwidth: capped camera driver so 4 cameras fit on USB-A (alt 7, tested with 2: 122 fps, no bad frames)
 - [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights

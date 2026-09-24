@@ -420,6 +420,69 @@ index 00000000..a2f3dad2
 +        cleanable.clean();
 +    }
 +}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
+index a57554ea..db8a9603 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
+@@ -66,6 +66,23 @@ public final class TeamCameraDefaults {
+      */
+     public static final boolean MULTI_TAG = true;
+ 
++    /**
++     * Object Detection pipelines run at most this fast unless robot code sets its own limit
++     * (PhotonLib's fpsLimitRequest). They share the GPU with the AprilTag cameras: unthrottled
++     * (62 fps on the bench) a YOLO11n took the GPU from ~18% to ~70% and doubled the AprilTag
++     * detect time. 30 fps is plenty for intaking. Override with SPECTRUM_OD_FPS_LIMIT (0 = none).
++     */
++    public static final int OBJECT_DETECTION_FPS_LIMIT = envInt("SPECTRUM_OD_FPS_LIMIT", 30);
++
++    private static int envInt(String name, int fallback) {
++        try {
++            String v = System.getenv(name);
++            return v == null || v.isBlank() ? fallback : Integer.parseInt(v.trim());
++        } catch (NumberFormatException e) {
++            return fallback;
++        }
++    }
++
+     public static final int PREFERRED_WIDTH = 1280;
+     public static final int PREFERRED_HEIGHT = 800;
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 38ed86fd..6935c73c 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -140,7 +140,7 @@ public class VisionModule {
+                         this::consumeResult,
+                         this.cameraQuirks,
+                         getChangeSubscriber(),
+-                        this::getFPSLimit,
++                        this::getEffectiveFPSLimit,
+                         this::getEnabled);
+         this.streamRunnable = new StreamRunnable(new OutputStreamPipeline());
+         changeSubscriberHandle = DataChangeService.getInstance().addSubscriber(changeSubscriber);
+@@ -719,6 +719,21 @@ public class VisionModule {
+         return fpsLimit;
+     }
+ 
++    /**
++     * SpectrumJetson: the limit the processing thread actually uses: the robot's (fpsLimitRequest)
++     * if it set one, otherwise TeamCameraDefaults.OBJECT_DETECTION_FPS_LIMIT for Object Detection
++     * pipelines (they share the GPU with the AprilTag cameras), otherwise none.
++     */
++    public int getEffectiveFPSLimit() {
++        if (fpsLimit > 0) return fpsLimit;
++        var pipeline = pipelineManager.getCurrentPipelineSettings();
++        if (pipeline != null
++                && pipeline.pipelineType == org.photonvision.vision.pipeline.PipelineType.ObjectDetection) {
++            return TeamCameraDefaults.OBJECT_DETECTION_FPS_LIMIT;
++        }
++        return -1;
++    }
++
+     /**
+      * Sets whether the camera is enabled/disabled, disabling the camera allows you to reduce util
+      * while keeping the vision runner up for fast toggling.
 diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 index 9349d0cc..7740872a 100644
 --- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
