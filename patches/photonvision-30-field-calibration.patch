@@ -14,10 +14,10 @@ index deb43d6b..5af91ef1 100644
        </v-list-item>
 diff --git a/photon-client/src/components/fieldcal/CameraTuneCard.vue b/photon-client/src/components/fieldcal/CameraTuneCard.vue
 new file mode 100644
-index 00000000..6368f3bd
+index 00000000..cecf8bb9
 --- /dev/null
 +++ b/photon-client/src/components/fieldcal/CameraTuneCard.vue
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,258 @@
 +<script setup lang="ts">
 +// SpectrumJetson (photonvision-30): one camera in the field-calibration settings step. Its stream,
 +// the tags it sees right now, sliders to set each control by hand (saved to the pipeline in use,
@@ -32,6 +32,7 @@ index 00000000..6368f3bd
 +  controls?: Record<string, Control | number | boolean>;
 +  preview?: { margins: Record<string, number>; ageMs: number };
 +  tune?: TuneCamera;
++  locks?: string[];
 +  tuningRunning: boolean;
 +  phase: string;
 +  progress: number;
@@ -76,29 +77,11 @@ index 00000000..6368f3bd
 +);
 +const fresh = computed(() => !!props.preview && props.preview.ageMs < 2000);
 +
-+// Locks, remembered in this browser.
-+const lockKey = `fieldcal-locked-${props.name}`;
-+const readLocks = () => {
-+  try {
-+    return new Set<string>(JSON.parse(localStorage.getItem(lockKey) ?? "[]"));
-+  } catch {
-+    return new Set<string>();
-+  }
-+};
-+const locked = ref(readLocks());
-+const toggleLock = (k: string) => {
-+  const s = new Set(locked.value);
-+  if (s.has(k)) s.delete(k);
-+  else s.add(k);
-+  locked.value = s;
-+  try {
-+    localStorage.setItem(lockKey, JSON.stringify([...s]));
-+  } catch {
-+    // private window: the lock just isn't remembered
-+  }
-+};
++// Locks live on the Jetson (every browser sees the same ones, and the tuner uses them).
++const locked = computed(() => new Set(props.locks ?? []));
++const toggleLock = (k: string) =>
++  props.act({ action: "setLock", camera: props.name, control: k, on: !locked.value.has(k) });
 +
-+// Sliders: a local copy while dragging; exposure on a log scale (it spans 1 to thousands).
 +// A control keeps its dragged value until the change has been saved (the status poll mustn't
 +// snap the slider back mid-drag).
 +const drag = ref<Record<string, number>>({});
@@ -139,7 +122,7 @@ index 00000000..6368f3bd
 +    Object.entries(props.tune.recommended).some(([k, v]) => v !== props.tune!.startValues[k])
 +);
 +const tried = (k: string) => (props.tune?.results ?? []).filter((r) => r.control === k);
-+const startTune = () => props.act({ action: "tune", camera: props.name, locked: { [props.name]: [...locked.value] } });
++const startTune = () => props.act({ action: "tune", camera: props.name });
 +
 +const cameraSettings = computed(() =>
 +  Object.values(useCameraSettingsStore().cameras).find((c) => c.nickname === props.name)
@@ -264,7 +247,7 @@ index 00000000..6368f3bd
 +              }}</b>
 +              <span v-else>keep</span>
 +            </template>
-+            <span v-else-if="tune?.locked?.includes(c.key)">locked</span>
++            <span v-else-if="tune?.locked?.includes(c.key)">locked when tuned</span>
 +            <span v-if="tune?.notes[c.key]"> ({{ tune.notes[c.key] }})</span>
 +            <div v-if="tried(c.key).length" class="tried">
 +              {{
@@ -295,10 +278,10 @@ index 00000000..6368f3bd
 +</style>
 diff --git a/photon-client/src/components/fieldcal/FieldCal3D.vue b/photon-client/src/components/fieldcal/FieldCal3D.vue
 new file mode 100644
-index 00000000..30304375
+index 00000000..6d31f124
 --- /dev/null
 +++ b/photon-client/src/components/fieldcal/FieldCal3D.vue
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,353 @@
 +<script setup lang="ts">
 +// SpectrumJetson (photonvision-30): the field in 3D for the field-calibration page, with simplified
 +// field elements placed by their tags (lib/FieldElements.ts). Tags are coloured like the 2D map;
@@ -536,6 +519,7 @@ index 00000000..30304375
 +  controls.mouseButtons = { LEFT: T.MOUSE.ROTATE, MIDDLE: T.MOUSE.PAN, RIGHT: T.MOUSE.ROTATE };
 +  controls.zoomToCursor = true;
 +  controls.screenSpacePanning = true;
++  controls.maxPolarAngle = Math.PI / 2 - 0.03; // stay above the carpet
 +  scene.add(new T.HemisphereLight(0xffffff, 0x444444, 1.2));
 +  scene.add(new T.AmbientLight(0xffffff, 0.8));
 +  const sun = new T.DirectionalLight(0xffffff, 1.4);
@@ -1230,10 +1214,10 @@ index 00000000..35ac2260
 +};
 diff --git a/photon-client/src/views/FieldCalibrationView.vue b/photon-client/src/views/FieldCalibrationView.vue
 new file mode 100644
-index 00000000..d56ca125
+index 00000000..5d1b869f
 --- /dev/null
 +++ b/photon-client/src/views/FieldCalibrationView.vue
-@@ -0,0 +1,756 @@
+@@ -0,0 +1,746 @@
 +<script setup lang="ts">
 +// SpectrumJetson (photonvision-30): field calibration. Tune the camera settings at one spot, then
 +// push the robot by hand to still spots while every camera records; the Jetson then solves every
@@ -1275,6 +1259,7 @@ index 00000000..d56ca125
 +  };
 +  controls: Record<string, Record<string, Control | number | boolean>>;
 +  preview: Record<string, { margins: Record<string, number>; ageMs: number }>;
++  locks: Record<string, string[]>;
 +  robotMounts: Record<string, Mount>;
 +  robotConnected: boolean;
 +  cameras: Record<string, { calibration: { resolution: string } | null; videoMode?: string }>;
@@ -1483,18 +1468,6 @@ index 00000000..d56ca125
 +    return p && p.ageMs < 2000 && Object.keys(p.margins).length > 0;
 +  })
 +);
-+const lockedAll = () => {
-+  const out: Record<string, string[]> = {};
-+  for (const c of cameraNames.value) {
-+    try {
-+      out[c] = JSON.parse(localStorage.getItem(`fieldcal-locked-${c}`) ?? "[]");
-+    } catch {
-+      out[c] = [];
-+    }
-+  }
-+  return out;
-+};
-+
 +// ---- results
 +const loadResults = async (run: string) => {
 +  resultsRun.value = run;
@@ -1656,7 +1629,7 @@ index 00000000..d56ca125
 +            :disabled="
 +              busy || recording || status.state === 'SOLVING' || tuning?.running || camerasSeeingTags.length < 2
 +            "
-+            @click="act({ action: 'tune', locked: lockedAll() })"
++            @click="act({ action: 'tune' })"
 +            >Tune every camera that sees tags ({{ camerasSeeingTags.length }})</v-btn
 +          >
 +          <span v-if="tuning?.result && !tuning.running" class="text-caption">Last tuning: {{ tuning.result }}</span>
@@ -1668,6 +1641,7 @@ index 00000000..d56ca125
 +              :controls="status.controls[c]"
 +              :preview="status.preview[c]"
 +              :tune="tuning?.cameras[c]"
++              :locks="status.locks?.[c]"
 +              :tuning-running="!!tuning?.running"
 +              :phase="tuning?.phase ?? ''"
 +              :progress="tuneProgress"
@@ -2590,10 +2564,10 @@ index 00000000..dafd75be
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java b/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java
 new file mode 100644
-index 00000000..1f53509a
+index 00000000..3e442f4f
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,650 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -2676,6 +2650,8 @@ index 00000000..1f53509a
 +    public static final Path ROOT = Path.of("/opt/photonvision/fieldcal");
 +    public static final Path RUNS = ROOT.resolve("runs");
 +    public static final Path BACKUPS = ROOT.resolve("layout-backups");
++    /** The settings each camera's tuning leaves alone (the page's lock boxes), kept across restarts. */
++    public static final Path LOCKS = ROOT.resolve("locks.json");
 +    public static final Path TOOL = Path.of("/opt/spectrum/fieldcal");
 +    public static final String LABEL = "fieldcal";
 +    /** Results files the web UI may download. */
@@ -2971,7 +2947,31 @@ index 00000000..1f53509a
 +    public synchronized void tune(String camera, Map<String, List<String>> locked) {
 +        if (state == State.RECORDING) throw new IllegalStateException("Stop recording first");
 +        if (state == State.SOLVING) throw new IllegalStateException("A solve is running");
-+        tuner.start(camera, locked);
++        tuner.start(camera, locked != null ? locked : locks());
++    }
++
++    /** Locks or unlocks one setting of one camera for tuning. */
++    public synchronized void setLock(String camera, String control, boolean on) throws IOException {
++        var all = locks();
++        var set = new TreeSet<>(all.getOrDefault(camera, List.of()));
++        if (on) set.add(control);
++        else set.remove(control);
++        all.put(camera, new ArrayList<>(set));
++        Files.createDirectories(ROOT);
++        json.writeValue(LOCKS.toFile(), all);
++    }
++
++    /** {camera: [locked controls]}. */
++    public synchronized Map<String, List<String>> locks() {
++        try {
++            if (Files.exists(LOCKS)) {
++                return new TreeMap<>(json.readValue(LOCKS.toFile(),
++                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, List<String>>>() {}));
++            }
++        } catch (IOException e) {
++            logger.warn("Field calibration: bad " + LOCKS + ": " + e.getMessage());
++        }
++        return new TreeMap<>();
 +    }
 +
 +    /** A manual change from the page: one control of one camera's pipeline in use. */
@@ -3180,6 +3180,7 @@ index 00000000..1f53509a
 +        }
 +        m.put("controls", controls);
 +        m.put("preview", pv);
++        m.put("locks", locks());
 +        m.put("robotMounts", robotMounts());
 +        m.put("robotConnected", NetworkTablesManager.getInstance().getNTInst().isConnected());
 +        m.put("cameras", CameraSettingsPublisher.snapshots());
@@ -3357,7 +3358,7 @@ index 74899398..d6d2618d 100644
          return m_poseAmbiguity;
      }
 diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
-index 77cf5ff7..c8e67084 100644
+index 77cf5ff7..a721f00b 100644
 --- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 +++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 @@ -53,6 +53,7 @@ import org.photonvision.common.hardware.Platform;
@@ -3368,7 +3369,7 @@ index 77cf5ff7..c8e67084 100644
  import org.photonvision.rewind.RewindManager;
  import org.photonvision.common.util.ShellExec;
  import org.photonvision.common.util.TimedTaskManager;
-@@ -595,6 +596,114 @@ public class RequestHandler {
+@@ -595,6 +596,122 @@ public class RequestHandler {
          }
      }
  
@@ -3380,7 +3381,8 @@ index 77cf5ff7..c8e67084 100644
 +            String camera,
 +            String control,
 +            Double value,
-+            Map<String, List<String>> locked) {}
++            Map<String, List<String>> locked,
++            Boolean on) {}
 +
 +    /** GET /api/fieldcal: state, live guidance, solve progress, recordings and results. */
 +    public static void onFieldCalStatusRequest(Context ctx) {
@@ -3400,7 +3402,8 @@ index 77cf5ff7..c8e67084 100644
 +     * POST /api/fieldcal {"action": "start" | "stop" | "solve" | "cancel" | "tune" | "cancelTune" |
 +     * "applyTuning" | "setControl" | "apply" | "undo", "session": name, "camera": nickname, "control",
 +     * "value", "locked": {camera: [control]}}. "tune" steps one camera ("camera"), or every camera,
-+     * through its settings with the robot still, leaving the "locked" controls alone; "applyTuning"
++     * through its settings with the robot still, leaving the locked controls alone ("setLock" with
++     * "camera", "control", "on"; kept on the Jetson, or "locked" for this run only); "applyTuning"
 +     * writes that camera's (or every camera's) recommendations into its pipeline in use;
 +     * "setControl" sets one control by hand. "apply" puts a solve's corrected layout into PhotonVision (after saving the
 +     * current one) and restarts; "undo" puts back the layout saved by the last apply.
@@ -3418,6 +3421,12 @@ index 77cf5ff7..c8e67084 100644
 +                }
 +                case "cancel" -> fc.cancelSolve();
 +                case "tune" -> fc.tune(req.camera(), req.locked());
++                case "setLock" -> {
++                    if (req.camera() == null || req.control() == null || req.on() == null) {
++                        throw new IllegalArgumentException("setLock needs camera, control and on");
++                    }
++                    fc.setLock(req.camera(), req.control(), req.on());
++                }
 +                case "setControl" -> {
 +                    if (req.camera() == null || req.control() == null || req.value() == null) {
 +                        throw new IllegalArgumentException("setControl needs camera, control and value");

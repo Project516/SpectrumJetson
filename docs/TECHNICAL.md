@@ -776,8 +776,9 @@ on the Jetson. The user guide is in the README; how the solver works is in
 - **Settings tuner:** `CameraSettingsTuner`, run with the robot still, on one camera or on all.
   - **Per camera:** each camera's last results are kept until it's tuned again, and **apply**
     works per camera, so the robot can be turned so each camera faces tags in turn.
-  - **Locks:** locked controls (`"locked": {camera: [control]}` in the tune request) are skipped
-    and left as they are. The page remembers the ticks in the browser.
+  - **Locks:** locked controls are skipped and left as they are. They're stored on the Jetson in
+    `/opt/photonvision/fieldcal/locks.json` (`setLock`), so every browser shows the same locks
+    and the tuner uses them. A `"locked"` map in the tune request overrides them for that run.
   - **By hand:** `setControl` writes one control into the pipeline in use, applies it and saves,
     as the Input tab does. -1 restores the camera's default for contrast, gamma, sharpness and
     backlight. It's refused while that camera is being tuned.
@@ -823,7 +824,7 @@ on the Jetson. The user guide is in the README; how the solver works is in
     - towers: tags 31/32 and 15/16;
     - outposts: tags 29/30 and 13/14.
   - **Mouse:** Onshape's defaults (right-drag turns, middle or Ctrl + right-drag pans, the wheel
-    zooms toward the cursor); left-drag also turns.
+    zooms toward the cursor); left-drag also turns. The view can't tilt below the carpet.
 - **Install:** `scripts/jetson/13-build-fieldcal-detect.sh --install`.
 - **Checked on the bench (no tags in view):**
   - start, live status, stop-and-solve: the replay ran at 560+ fps and reported "nothing to solve";
