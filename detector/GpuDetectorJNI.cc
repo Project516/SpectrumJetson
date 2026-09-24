@@ -6,6 +6,7 @@
 //   long createGpuDetector(int width, int height)
 //   void destroyGpuDetector(long handle)
 //   void setparams(long handle, fx, cx, fy, cy, k1, k2, p1, p2, k3)
+//   void setparams8(long handle, fx, cx, fy, cy, k1, k2, p1, p2, k3, k4, k5, k6)   // ours
 //   AprilTagDetection[] processimage(long handle, long cvMatPtr)   // 8-bit mono Mat
 //
 // Differences from the 4143 JNI (see SpectrumJetson patches/gpudetector-0*.patch for the
@@ -311,9 +312,14 @@ JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_destroyGpuDetect
   std::cout << "destroygpudetector handle " << handle << std::endl;
 }
 
-JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setparams(
-    JNIEnv *, jclass, jlong handle, jdouble fx, jdouble cx, jdouble fy, jdouble cy, jdouble k1,
-    jdouble k2, jdouble p1, jdouble p2, jdouble k3) {
+namespace {
+
+// Stores new intrinsics; the detector is rebuilt with them on the next frame.
+// num_params 5 = k1 k2 p1 p2 k3 (k4..k6 zero); 8 = OpenCV rational model, which is what
+// PhotonVision's (mrcal) calibration produces.
+void SetParams(jlong handle, double fx, double cx, double fy, double cy, double k1, double k2,
+               double p1, double p2, double k3, double k4, double k5, double k6,
+               int num_params) {
   DetectorSlot *s = Slot(handle);
   if (!s) {
     std::cout << "setparams: bad handle " << handle << std::endl;
@@ -327,11 +333,31 @@ JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setparams(
   s->dist_coeffs.p1 = p1;
   s->dist_coeffs.p2 = p2;
   s->dist_coeffs.k3 = k3;
-  std::cout << "setparams handle " << handle << ": fx " << fx << " cx " << cx << " fy " << fy
-            << " cy " << cy << " k1 " << k1 << " k2 " << k2 << " p1 " << p1 << " p2 " << p2
-            << " k3 " << k3 << std::endl;
+  s->dist_coeffs.k4 = k4;
+  s->dist_coeffs.k5 = k5;
+  s->dist_coeffs.k6 = k6;
+  s->dist_coeffs.num_params = num_params;
+  std::cout << "setparams handle " << handle << " (" << num_params << " dist coeffs): fx " << fx
+            << " cx " << cx << " fy " << fy << " cy " << cy << " k1 " << k1 << " k2 " << k2
+            << " p1 " << p1 << " p2 " << p2 << " k3 " << k3;
+  if (num_params == 8) std::cout << " k4 " << k4 << " k5 " << k5 << " k6 " << k6;
+  std::cout << std::endl;
   // Takes effect on the next frame (processimage rebuilds at the frame's size).
   s->needs_rebuild = true;
+}
+
+}  // namespace
+
+JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setparams(
+    JNIEnv *, jclass, jlong handle, jdouble fx, jdouble cx, jdouble fy, jdouble cy, jdouble k1,
+    jdouble k2, jdouble p1, jdouble p2, jdouble k3) {
+  SetParams(handle, fx, cx, fy, cy, k1, k2, p1, p2, k3, 0, 0, 0, 5);
+}
+
+JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setparams8(
+    JNIEnv *, jclass, jlong handle, jdouble fx, jdouble cx, jdouble fy, jdouble cy, jdouble k1,
+    jdouble k2, jdouble p1, jdouble p2, jdouble k3, jdouble k4, jdouble k5, jdouble k6) {
+  SetParams(handle, fx, cx, fy, cy, k1, k2, p1, p2, k3, k4, k5, k6, 8);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processimage(
