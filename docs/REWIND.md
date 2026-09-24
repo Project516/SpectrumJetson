@@ -50,8 +50,22 @@ var rewind = NetworkTableInstance.getDefault().getTable("photonvision").getSubTa
 BooleanPublisher record = rewind.getBooleanTopic("record").publish();
 StringPublisher label = rewind.getStringTopic("label").publish();
 
-// Real matches: record while enabled with the FMS attached.
-record.set(DriverStation.isFMSAttached() && DriverStation.isEnabled());
+// Real matches: record from enable until 10 s after disable, with the FMS attached. Recording
+// only while enabled would split each match in two (the robot is disabled between auto and
+// teleop, and recording stops as soon as record goes false). Name it by event and match.
+double now = Timer.getTimestamp();
+if (DriverStation.isEnabled()) lastEnabledSec = now; // field, starts at NEGATIVE_INFINITY
+if (DriverStation.isFMSAttached()) {
+    String type = switch (DriverStation.getMatchType()) {
+        case Practice -> "P";
+        case Qualification -> "Q";
+        case Elimination -> "E";
+        default -> "M";
+    };
+    label.set(String.format("%s-%s%d-r%d", DriverStation.getEventName(), type,
+            DriverStation.getMatchNumber(), DriverStation.getReplayNumber()));
+    record.set(now - lastEnabledSec < 10.0);
+}
 
 // A specific test: set the label first, then record.
 label.set("shooter-test-3");
