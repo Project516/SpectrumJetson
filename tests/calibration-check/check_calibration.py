@@ -84,7 +84,11 @@ def summarize(label, d, w, h):
     mean = statistics.mean(errs)
     corners = [grid[(0, 0)], grid[(3, 0)], grid[(0, 2)], grid[(3, 2)]]
     verdict = []
-    verdict.append("error OK" if mean < 0.5 else ("error acceptable" if mean < 0.8 else "error HIGH"))
+    # Handheld calibrations of these MJPEG USB cameras land around 0.8-0.9 px with clean
+    # data (few outliers); under ~1 px is fine for FRC. Outliers are the better quality flag.
+    outlier_pct = 100 * (detected - kept) / max(detected, 1)
+    verdict.append("error good" if mean < 0.5 else ("error OK" if mean < 1.0 else "error HIGH"))
+    verdict.append(f"outliers {outlier_pct:.0f}%" + (" (clean)" if outlier_pct < 10 else " (check blur/partial boards)"))
     verdict.append("corners covered" if min(corners) >= 100 else f"corners thin ({min(corners)} min)")
     print("verdict:", "; ".join(verdict))
     print()
