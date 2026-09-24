@@ -209,7 +209,7 @@ We couldn't get the error below 0.5 px handheld, and that's okay. With so few ou
 
 ## Where everything lives, and what's left
 
-The detailed technical reference, with exact versions, commits and measurements, is [docs/TECHNICAL.md](docs/TECHNICAL.md). This README is the overview.
+The detailed technical reference, with exact versions, commits and measurements, is [docs/TECHNICAL.md](docs/TECHNICAL.md). This README is the overview. What this setup lacks compared with Limelight 4, and what the robot code has to do about it (MegaTag 1/2, gyro heading), is in [docs/LIMELIGHT-COMPARISON.md](docs/LIMELIGHT-COMPARISON.md).
 
 | Folder | What's in it |
 | --- | --- |
@@ -218,7 +218,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector |
 | `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check |
-| `docs/` | The technical reference and the original handoff document that started the project |
+| `docs/` | The technical reference, the Limelight 4 comparison, and the original handoff document that started the project |
 
 **Still to do before the October event:**
 
