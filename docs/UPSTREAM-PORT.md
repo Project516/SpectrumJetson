@@ -93,6 +93,42 @@ Plus two that upstream still has:
 Skipped: the lifecycle refactor, the calibration rework (tangled with 2027 changes) and pipelines
 we don't use.
 
+## Patch 21: Thriftiest Cam support (#2478)
+
+Upstream [#2478](https://github.com/PhotonVision/photonvision/pull/2478) (merged 2026-09-13, after
+v2026.3.4) teaches PhotonVision about our camera (USB `1bcf:28c5`):
+- **Three new quirks:** `ThriftyOV9281Controls`, `Gain`, `MJPEGOnly`.
+- **`ThriftyOV9281CameraSettables`:** exposure range 1–2400 (0.1–240 ms) and continuous autofocus
+  off. The lens is fixed-focus anyway.
+- **Ported to our 2026 base:** `edu.wpi.first.cscore` names instead of 2027's `org.wpilib`
+  (`PixelFormat.kMJPEG`).
+- **Upstream's test:** `QuirkyCameraTest.thriftyOv9281Test` passes (3/3).
+
+**Our addition: saved cameras get the new quirks too.**
+- PhotonVision detects quirks only when a camera is first seen, so TopLeft and TopRight, saved with
+  no quirks, would never get them.
+- `USBCameraSource.addNewlyKnownQuirks` adds whatever the table now lists for a saved camera,
+  except `MJPEGOnly`.
+- **Why not `MJPEGOnly`:** it removes the YUYV modes, which would renumber the video-mode list.
+  Every saved pipeline stores its resolution as an index into that list (ours: 13, 1280x800 MJPEG
+  120 fps).
+- **New cameras** (the ones on order) get all three quirks, with fresh indices.
+- Existing quirks are never removed.
+
+**Deployed 2026-09-24:**
+- Both cameras logged "Added camera quirks [Gain, ThriftyOV9281Controls]" and use the Thrifty
+  settables.
+- `focus_automatic_continuous` went from 1 to 0.
+- Exposure 50, brightness 64 and the 1280x800 MJPEG mode are unchanged.
+- Still 122 fps with the MJPEG straight-to-gray hardware decode.
+
+**Gain, to test:**
+- The `Gain` quirk makes the Input tab show a **Camera Gain** slider (the pipelines got the
+  default, 75).
+- Our cameras' firmware reports no `gain` control (`v4l2-ctl -l`), so setting it is skipped
+  (`softSet`) and the slider probably does nothing.
+- Check by moving it and watching the image and the decision margin.
+
 ## Upstream changes to test on the robot
 
 - **Gateway (#2364):** static mode now uses `x.x.x.4` as the gateway (10.85.15.4, the VH-109

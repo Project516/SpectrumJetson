@@ -61,7 +61,8 @@ itself (camera poses and gyro not changing).
 - **In PhotonVision's UI:** exposure, auto exposure, brightness, white balance.
 - **Not in the UI:** contrast (0–95, default 32), gamma (100–300, 150), sharpness (1–10, 5),
   backlight compensation (on).
-- **Not on this camera:** gain.
+- **Gain:** not reported by our cameras' firmware. The UI shows a slider since `photonvision-21`;
+  test whether it does anything.
 - **Doesn't matter on a mono camera:** saturation and hue.
 - UVC cameras don't save settings, so whatever we choose has to be applied on every connect. The
   hidden controls need a small patch adding them to the Input tab.

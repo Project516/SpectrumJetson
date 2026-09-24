@@ -1,0 +1,208 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/camera/CameraQuirk.java b/photon-core/src/main/java/org/photonvision/vision/camera/CameraQuirk.java
+index 191c2ca9..6cdb4540 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/camera/CameraQuirk.java
++++ b/photon-core/src/main/java/org/photonvision/vision/camera/CameraQuirk.java
+@@ -52,4 +52,8 @@ public enum CameraQuirk {
+     ArduOV9782,
+     /** Camera has odd exposure range, and supports gain control */
+     See3Cam_24CUG,
++    /** Thrifty OV9281 has 1-2400 in V4L2 exposure_absolute units (100 μs each). */
++    ThriftyOV9281Controls,
++    /** Only MJPEG video modes are usable. */
++    MJPEGOnly,
+ }
+diff --git a/photon-core/src/main/java/org/photonvision/vision/camera/QuirkyCamera.java b/photon-core/src/main/java/org/photonvision/vision/camera/QuirkyCamera.java
+index a35625d6..8bbb977e 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/camera/QuirkyCamera.java
++++ b/photon-core/src/main/java/org/photonvision/vision/camera/QuirkyCamera.java
+@@ -94,7 +94,14 @@ public class QuirkyCamera {
+                     new QuirkyCamera(
+                             -1, -1, "vi-output, ov9281 9-0060", CameraQuirk.InnoOV9281Controls, CameraQuirk.StickyFPS),
+                     new QuirkyCamera(
+-                            -1, -1, "vi-output, ov9281 10-0060", CameraQuirk.InnoOV9281Controls, CameraQuirk.StickyFPS));
++                            -1, -1, "vi-output, ov9281 10-0060", CameraQuirk.InnoOV9281Controls, CameraQuirk.StickyFPS),
++                    // Thrifty OV9281 (upstream PhotonVision #2478)
++                    new QuirkyCamera(
++                            0x1BCF,
++                            0x28C5,
++                            CameraQuirk.ThriftyOV9281Controls,
++                            CameraQuirk.Gain,
++                            CameraQuirk.MJPEGOnly));
+ 
+     public static final QuirkyCamera DefaultCamera = new QuirkyCamera(0, 0, "");
+     public static final QuirkyCamera ZeroCopyPiCamera =
+diff --git a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
+index 333dd02c..57429ca5 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
++++ b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/GenericUSBCameraSettables.java
+@@ -316,6 +316,11 @@ public class GenericUSBCameraSettables extends VisionSourceSettables {
+                     continue;
+                 }
+ 
++                if (configuration.cameraQuirks.hasQuirk(CameraQuirk.MJPEGOnly)
++                        && videoMode.pixelFormat != PixelFormat.kMJPEG) {
++                    continue;
++                }
++
+                 videoModesList.add(videoMode);
+             }
+         } catch (Exception e) {
+diff --git a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/ThriftyOV9281CameraSettables.java b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/ThriftyOV9281CameraSettables.java
+new file mode 100644
+index 00000000..45f6834e
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/ThriftyOV9281CameraSettables.java
+@@ -0,0 +1,49 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.camera.USBCameras;
++
++import org.photonvision.common.configuration.CameraConfiguration;
++import edu.wpi.first.cscore.UsbCamera;
++
++public class ThriftyOV9281CameraSettables extends GenericUSBCameraSettables {
++    // V4L2 exposure_absolute units (100 μs each). Range 1-2400 is 0.1 ms-240 ms.
++    private static final double MIN_EXPOSURE_RAW = 1;
++    private static final double MAX_EXPOSURE_RAW = 2400;
++    // 80 = 8 ms;
++    public static final double DEFAULT_EXPOSURE_RAW = 80;
++
++    public ThriftyOV9281CameraSettables(CameraConfiguration configuration, UsbCamera camera) {
++        super(configuration, camera);
++    }
++
++    @Override
++    protected void setUpExposureProperties() {
++        super.setUpExposureProperties();
++
++        this.minExposure = MIN_EXPOSURE_RAW;
++        this.maxExposure = MAX_EXPOSURE_RAW;
++    }
++
++    @Override
++    public void setAllCamDefaults() {
++        // Disable continuous autofocus BEFORE super tries to set focus_absolute
++        softSet("focus_automatic_continuous", 0);
++        super.setAllCamDefaults();
++        logger.info("Setting All Cam Defaults :: ThriftyOV9281");
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/USBCameraSource.java b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/USBCameraSource.java
+index ae6b22ce..c8c0c2c8 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/USBCameraSource.java
++++ b/photon-core/src/main/java/org/photonvision/vision/camera/USBCameras/USBCameraSource.java
+@@ -69,18 +69,19 @@ public class USBCameraSource extends VisionSource {
+         // TODO - why do we delegate this to USBCameraSource? Quirks are part of the CameraConfig??
+         // also TODO - is the config's saved usb info a reasonable guess for quirk detection? seems like
+         // yes to me...
++        int vid =
++                (config.matchedCameraInfo instanceof PVUsbCameraInfo cameraInfo)
++                        ? cameraInfo.vendorId
++                        : -1;
++        int pid =
++                (config.matchedCameraInfo instanceof PVUsbCameraInfo cameraInfo)
++                        ? cameraInfo.productId
++                        : -1;
+         if (getCameraConfiguration().cameraQuirks == null) {
+-            int vid =
+-                    (config.matchedCameraInfo instanceof PVUsbCameraInfo cameraInfo)
+-                            ? cameraInfo.vendorId
+-                            : -1;
+-            int pid =
+-                    (config.matchedCameraInfo instanceof PVUsbCameraInfo cameraInfo)
+-                            ? cameraInfo.productId
+-                            : -1;
+-
+             getCameraConfiguration().cameraQuirks =
+                     QuirkyCamera.getQuirkyCamera(vid, pid, config.matchedCameraInfo.name());
++        } else {
++            addNewlyKnownQuirks(vid, pid, config);
+         }
+ 
+         if (getCameraConfiguration().cameraQuirks.hasQuirks()) {
+@@ -152,6 +153,9 @@ public class USBCameraSource extends VisionSource {
+             settables = new InnoOV9281CameraSettables(config, camera);
+         } else if (quirks.hasQuirk(CameraQuirk.See3Cam_24CUG)) {
+             settables = new See3Cam24CUGSettables(config, camera);
++        } else if (quirks.hasQuirk(CameraQuirk.ThriftyOV9281Controls)) {
++            logger.debug("Using Thrifty OV9281 Settables");
++            settables = new ThriftyOV9281CameraSettables(config, camera);
+         } else {
+             logger.debug("Using Generic USB Cam Settables");
+             settables = new GenericUSBCameraSettables(config, camera);
+@@ -160,6 +164,37 @@ public class USBCameraSource extends VisionSource {
+         return settables;
+     }
+ 
++    /**
++     * SpectrumJetson (photonvision-21): quirks are detected only when a camera is first seen, so a
++     * camera saved before PhotonVision's table knew about it (our Thriftiest Cams, before upstream
++     * #2478) never gets them. This adds whatever the table now lists for the camera, except
++     * MJPEGOnly: that removes video modes, which would shift the video-mode index every saved
++     * pipeline stores. Cameras added from now on get all of them. Existing quirks are never removed.
++     */
++    private void addNewlyKnownQuirks(int vid, int pid, CameraConfiguration config) {
++        var saved = getCameraConfiguration().cameraQuirks;
++        var known = QuirkyCamera.getQuirkyCamera(vid, pid, config.matchedCameraInfo.name());
++        var added = new java.util.ArrayList<CameraQuirk>();
++        for (var e : known.quirks.entrySet()) {
++            if (e.getValue() && e.getKey() != CameraQuirk.MJPEGOnly && !saved.hasQuirk(e.getKey())) {
++                added.add(e.getKey());
++            }
++        }
++        if (added.isEmpty()) return;
++        // A fresh object: never modify a QuirkyCamera that might be shared.
++        var merged = new java.util.EnumMap<CameraQuirk, Boolean>(CameraQuirk.class);
++        merged.putAll(saved.quirks);
++        for (var q : added) merged.put(q, true);
++        getCameraConfiguration().cameraQuirks =
++                new QuirkyCamera(saved.baseName, saved.usbVid, saved.usbPid, saved.displayName, merged);
++        logger.info(
++                "Added camera quirks "
++                        + added
++                        + " to saved camera "
++                        + config.nickname
++                        + " (known for this camera now; MJPEGOnly applies only to newly added cameras)");
++    }
++
+     /**
+      * Must be called after createSettables Using the current config/camera and modified quirks, make
+      * a new settables
+diff --git a/photon-core/src/test/java/org/photonvision/vision/QuirkyCameraTest.java b/photon-core/src/test/java/org/photonvision/vision/QuirkyCameraTest.java
+index e9126bf2..12e4951b 100644
+--- a/photon-core/src/test/java/org/photonvision/vision/QuirkyCameraTest.java
++++ b/photon-core/src/test/java/org/photonvision/vision/QuirkyCameraTest.java
+@@ -49,4 +49,18 @@ public class QuirkyCameraTest {
+         QuirkyCamera quirkless = QuirkyCamera.getQuirkyCamera(1234, 8888);
+         assertEquals(quirkless.quirks, noQuirks);
+     }
++
++    @Test
++    public void thriftyOv9281Test() {
++        HashMap<CameraQuirk, Boolean> thriftyQuirks = new HashMap<>();
++        thriftyQuirks.put(CameraQuirk.ThriftyOV9281Controls, true);
++        thriftyQuirks.put(CameraQuirk.Gain, true);
++        thriftyQuirks.put(CameraQuirk.MJPEGOnly, true);
++        for (var q : CameraQuirk.values()) {
++            thriftyQuirks.putIfAbsent(q, false);
++        }
++
++        QuirkyCamera thrifty = QuirkyCamera.getQuirkyCamera(0x1BCF, 0x28C5);
++        assertEquals(thrifty.quirks, thriftyQuirks);
++    }
+ }

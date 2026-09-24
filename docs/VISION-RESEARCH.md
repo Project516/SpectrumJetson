@@ -230,6 +230,9 @@ PhotonVision 2027.
     cameras facing downfield, or only in a band around the horizon, where far tags appear.
 - **CSI cameras:** the devkit has 2 connectors; Arducam's OV9281 does 80 fps at 1280x800 (slower
   than our USB 120 fps). No JPEG step, and hardware timestamps. A next-season option.
+  - The 4143 fork's camera table already lists Innomaker OV9281 MIPI cameras on the Orin (the
+    `vi-output, ov9281` V4L2 devices), and it re-enabled gray video modes for them.
+  - So PhotonVision may run them through plain V4L2. Untested by us.
 - **Lower-jitter options (971's approach):** pin USB interrupts to one core, run the capture
   threads at real-time priority, and disable the deepest CPU idle state. This helps worst-case
   latency, not the average. Low effort.
