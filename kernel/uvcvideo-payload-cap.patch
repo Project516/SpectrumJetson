@@ -1,24 +1,15 @@
---- a/drivers/media/usb/uvc/uvcvideo.h	2026-09-24 01:44:55.093719873 -0500
-+++ b/drivers/media/usb/uvc/uvcvideo.h	2026-09-24 01:44:55.109719513 -0500
-@@ -760,6 +760,7 @@
- extern unsigned int uvc_no_drop_param;
- extern unsigned int uvc_dbg_param;
- extern unsigned int uvc_timeout_param;
-+extern char *uvc_payload_cap_param;
- extern unsigned int uvc_hw_timestamps_param;
- 
- #define uvc_dbg(_dev, flag, fmt, ...)					\
---- a/drivers/media/usb/uvc/uvc_driver.c	2026-09-24 01:44:55.092719896 -0500
-+++ b/drivers/media/usb/uvc/uvc_driver.c	2026-09-24 01:44:55.110719491 -0500
+diff -ru a/drivers/media/usb/uvc/uvc_driver.c b/drivers/media/usb/uvc/uvc_driver.c
+--- a/drivers/media/usb/uvc/uvc_driver.c	2026-09-24 18:27:28.694786805 -0500
++++ b/drivers/media/usb/uvc/uvc_driver.c	2026-09-24 18:28:19.053693207 -0500
 @@ -34,6 +34,7 @@
  static unsigned int uvc_quirks_param = -1;
  unsigned int uvc_dbg_param;
  unsigned int uvc_timeout_param = UVC_CTRL_STREAMING_TIMEOUT;
-+char *uvc_payload_cap_param;
++char uvc_payload_cap_param[512];
  
  /* ------------------------------------------------------------------------
   * Video formats
-@@ -2675,6 +2676,16 @@
+@@ -2675,6 +2676,21 @@
  MODULE_PARM_DESC(trace, "Trace level bitmask");
  module_param_named(timeout, uvc_timeout_param, uint, S_IRUGO|S_IWUSR);
  MODULE_PARM_DESC(timeout, "Streaming control requests timeout");
@@ -26,39 +17,57 @@
 + * SpectrumJetson: cap the isochronous bandwidth specific cameras reserve.
 + * Some MJPEG cameras request the largest alternate setting in every mode
 + * (e.g. 1bcf:28c5, the Thriftiest Cam: 3 x 1020 bytes per microframe, about
-+ * 196 Mbps) while sending a fraction of it, so a USB 2.0 root port only fits
-+ * two. Capping dwMaxPayloadTransferSize makes the driver pick a smaller
-+ * alternate setting. Format: vid:pid:bytes[,vid:pid:bytes...], ids in hex.
++ * 196 Mbps) while sending a fraction of it, and every USB 2.0 port on a Jetson
++ * shares one budget, so only two fit. Capping dwMaxPayloadTransferSize makes
++ * the driver pick a smaller alternate setting. Entries, comma separated:
++ *   vid:pid:bytes   every camera of that model (ids in hex)
++ *   port:bytes      the camera on that USB port, e.g. 1-2.4:944 (wins over
++ *                   vid:pid; 0 means uncapped)
++ * Writable at run time (root): a change applies when a camera next starts
++ * streaming, e.g. when PhotonVision reconnects it.
 + */
-+module_param_named(payload_cap, uvc_payload_cap_param, charp, 0444);
-+MODULE_PARM_DESC(payload_cap, "Cap the max payload per interval: vid:pid:bytes[,...] (hex ids)");
++module_param_string(payload_cap, uvc_payload_cap_param, sizeof(uvc_payload_cap_param), 0644);
++MODULE_PARM_DESC(payload_cap, "Cap the max payload per interval: vid:pid:bytes or port:bytes, comma separated");
  
  /* ------------------------------------------------------------------------
   * Driver initialization and cleanup
---- a/drivers/media/usb/uvc/uvc_video.c	2026-09-24 01:44:55.093719873 -0500
-+++ b/drivers/media/usb/uvc/uvc_video.c	2026-09-24 01:44:55.110719491 -0500
-@@ -129,9 +129,30 @@
+diff -ru a/drivers/media/usb/uvc/uvc_video.c b/drivers/media/usb/uvc/uvc_video.c
+--- a/drivers/media/usb/uvc/uvc_video.c	2026-09-24 18:27:28.792784665 -0500
++++ b/drivers/media/usb/uvc/uvc_video.c	2026-09-24 18:28:19.054693186 -0500
+@@ -129,9 +129,42 @@
  	return -EPIPE;
  }
  
-+/* SpectrumJetson: the payload_cap module parameter's cap for this camera, or 0. */
++/*
++ * SpectrumJetson: the payload_cap module parameter's cap for this camera, or 0:
++ * its USB port's entry (e.g. "1-2.4:944") if there is one, else its model's.
++ */
 +static u32 uvc_payload_cap(struct uvc_streaming *stream)
 +{
-+	const char *p = uvc_payload_cap_param;
++	const char *p, *port = dev_name(&stream->dev->udev->dev);
++	size_t n = strlen(port);
 +	u16 vid = le16_to_cpu(stream->dev->udev->descriptor.idVendor);
 +	u16 pid = le16_to_cpu(stream->dev->udev->descriptor.idProduct);
++	long by_port = -1;
++	u32 by_id = 0;
 +
-+	while (p && *p) {
++	kernel_param_lock(THIS_MODULE);
++	for (p = uvc_payload_cap_param; *p; ) {
 +		unsigned int v, d, cap;
 +
-+		if (sscanf(p, "%x:%x:%u", &v, &d, &cap) == 3 && v == vid &&
-+		    d == pid)
-+			return cap;
++		if (!strncmp(p, port, n) && p[n] == ':' &&
++		    sscanf(p + n + 1, "%u", &cap) == 1)
++			by_port = cap;
++		else if (sscanf(p, "%x:%x:%u", &v, &d, &cap) == 3 &&
++			 v == vid && d == pid)
++			by_id = cap;
 +		p = strchr(p, ',');
-+		if (p)
-+			p++;
++		if (!p)
++			break;
++		p++;
 +	}
-+	return 0;
++	kernel_param_unlock(THIS_MODULE);
++	return by_port >= 0 ? by_port : by_id;
 +}
 +
  static void uvc_fixup_video_ctrl(struct uvc_streaming *stream,
@@ -68,7 +77,7 @@
  	static const struct usb_device_id elgato_cam_link_4k = {
  		USB_DEVICE(0x0fd9, 0x0066)
  	};
-@@ -240,6 +261,14 @@
+@@ -240,6 +273,14 @@
  				     stream->maxpsize);
  		ctrl->dwMaxPayloadTransferSize = stream->maxpsize;
  	}
@@ -83,3 +92,63 @@
  }
  
  static size_t uvc_video_ctrl_size(struct uvc_streaming *stream)
+@@ -934,6 +975,7 @@
+ 
+ 	/* Update the frame size. */
+ 	stream->stats.frame.size += len - header_size;
++	stream->stats.stream.nb_bytes += len; /* SpectrumJetson */
+ 
+ 	/* Update the packets counters. */
+ 	stream->stats.frame.nb_packets++;
+@@ -975,6 +1017,14 @@
+ 	if (frame->nb_scr_diffs + 1 == frame->nb_scr)
+ 		stream->stats.stream.nb_scr_diffs_ok++;
+ 
++	/* SpectrumJetson: the largest frames, overall and recently. */
++	stream->stats.stream.max_frame = max(stream->stats.stream.max_frame, frame->size);
++	stream->stats.stream.win_max[0] = max(stream->stats.stream.win_max[0], frame->size);
++	if ((stream->stats.stream.nb_frames & 255) == 0) {
++		stream->stats.stream.win_max[1] = stream->stats.stream.win_max[0];
++		stream->stats.stream.win_max[0] = 0;
++	}
++
+ 	memset(&stream->stats.frame, 0, sizeof(stream->stats.frame));
+ }
+ 
+@@ -1018,6 +1068,13 @@
+ 			   stream->stats.stream.min_sof,
+ 			   stream->stats.stream.max_sof,
+ 			   scr_sof_freq / 1000, scr_sof_freq % 1000);
++	/* SpectrumJetson: bytes sent, and the largest frames (for PhotonVision). */
++	count += scnprintf(buf + count, size - count,
++			   "bytes: %llu\nframe bytes: max %u, recent max %u\n",
++			   stream->stats.stream.nb_bytes,
++			   stream->stats.stream.max_frame,
++			   max(stream->stats.stream.win_max[0],
++			       stream->stats.stream.win_max[1]));
+ 
+ 	return count;
+ }
+diff -ru a/drivers/media/usb/uvc/uvcvideo.h b/drivers/media/usb/uvc/uvcvideo.h
+--- a/drivers/media/usb/uvc/uvcvideo.h	2026-09-24 18:27:28.445792242 -0500
++++ b/drivers/media/usb/uvc/uvcvideo.h	2026-09-24 18:28:19.053693207 -0500
+@@ -526,6 +526,11 @@
+ 	unsigned int scr_sof;		/* STC.SOF of the last packet */
+ 	unsigned int min_sof;		/* Minimum STC.SOF value */
+ 	unsigned int max_sof;		/* Maximum STC.SOF value */
++
++	/* SpectrumJetson: what the camera really sends (debugfs "stats") */
++	u64 nb_bytes;			/* USB payload bytes, headers included */
++	unsigned int max_frame;		/* Largest frame since the stream started */
++	unsigned int win_max[2];	/* Largest frame, this and the last 256 frames */
+ };
+ 
+ #define UVC_METADATA_BUF_SIZE 1024
+@@ -760,6 +765,7 @@
+ extern unsigned int uvc_no_drop_param;
+ extern unsigned int uvc_dbg_param;
+ extern unsigned int uvc_timeout_param;
++extern char uvc_payload_cap_param[];
+ extern unsigned int uvc_hw_timestamps_param;
+ 
+ #define uvc_dbg(_dev, flag, fmt, ...)					\

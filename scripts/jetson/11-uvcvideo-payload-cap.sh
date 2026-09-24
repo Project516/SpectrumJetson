@@ -24,6 +24,8 @@
 # settings go 800 / 1600 / 2400 / 3072). The driver picks the smallest alternate setting at least as
 # big as the cap. A camera with no small alternate setting (the Razer Kiyo has only 3 x 1020) can't
 # be capped, and another port doesn't help: all USB 2.0 ports share the budget.
+# Per-camera caps ("port:bytes", e.g. 1-2.4:944) are set on PhotonVision's Camera Matching page
+# (the driver's payload_cap is writable at run time); reinstalling keeps them.
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 KVER=$(uname -r)
@@ -88,7 +90,10 @@ echo "==> Built $W/patched/uvcvideo.ko (vermagic $(modinfo -F vermagic "$W/patch
 
 [[ ${1:-} == --install ]] || { echo "Build only. Install with: $0 --install"; exit 0; }
 
-# 4. Install next to the stock driver (updates/ wins), with the cap as a module option.
+# 4. Install next to the stock driver (updates/ wins), with the cap as a module option. Keep any
+#    per-port caps set on the Camera Matching page (entries like 1-2.4:944).
+ports=$(sed -n 's/^options uvcvideo payload_cap=//p' "$CONF" 2>/dev/null | tr ',' '\n' | grep -E '^[0-9]+-[0-9.]+:[0-9]+$' | paste -sd, - || true)
+[[ -n $ports ]] && CAP="$CAP,$ports" && echo "==> Keeping the per-camera caps: $ports"
 sudo install -D -m 644 "$W/patched/uvcvideo.ko" "$DEST"
 printf '# SpectrumJetson: cap USB bandwidth reservations (scripts/jetson/11-uvcvideo-payload-cap.sh)\noptions uvcvideo payload_cap=%s\n' "$CAP" \
   | sudo tee "$CONF" >/dev/null

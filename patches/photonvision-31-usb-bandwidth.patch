@@ -1,0 +1,281 @@
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/UsbTrouble.java b/photon-core/src/main/java/org/photonvision/common/hardware/UsbTrouble.java
+new file mode 100644
+index 00000000..04b7e763
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/UsbTrouble.java
+@@ -0,0 +1,73 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.hardware;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.regex.Pattern;
++
++/**
++ * SpectrumJetson (photonvision-31): USB trouble the kernel reports, by USB port (e.g. "1-2.4"), for
++ * the cameras to explain why they get no frames. Fed every kernel log line by KernelLogLogger.
++ *
++ * <ul>
++ *   <li><b>Not enough bandwidth:</b> the camera asked to reserve more USB 2.0 bandwidth than its root
++ *       port has left, so it can't stream. A reset won't fix it; capping it (payload_cap) or moving
++ *       it to another root port will. scripts/jetson/usb-bandwidth.py says which.
++ *   <li><b>Couldn't be connected:</b> something plugged into a port couldn't be read or addressed (a
++ *       bad cable or adapter, a plug not fully in, not enough power), or the port hit over-current.
++ * </ul>
++ */
++public final class UsbTrouble {
++    private static final Pattern BANDWIDTH = Pattern.compile("usb (\\d+-[\\d.]+): Not enough bandwidth");
++    private static final Pattern CONNECT =
++            Pattern.compile(
++                    "usb (\\d+-[\\d.]+)(?:-port(\\d+))?: (device descriptor read|device not accepting address|"
++                            + "Device not responding to setup address|unable to enumerate USB device|over-current)");
++    private static final Map<String, Long> bandwidthNs = new ConcurrentHashMap<>();
++    private static final Map<String, Long> connectNs = new ConcurrentHashMap<>();
++
++    private UsbTrouble() {}
++
++    /** One kernel log line. */
++    public static void noteKernelLine(String line) {
++        if (line == null || !line.contains("usb ")) return;
++        var m = BANDWIDTH.matcher(line);
++        if (m.find()) {
++            bandwidthNs.put(m.group(1), System.nanoTime());
++            return;
++        }
++        m = CONNECT.matcher(line);
++        if (m.find()) {
++            String port = m.group(2) != null ? m.group(1) + "." + m.group(2) : m.group(1);
++            connectNs.put(port, System.nanoTime());
++        }
++    }
++
++    /** Whether the kernel refused this USB port bandwidth within the last {@code withinNs}. */
++    public static boolean bandwidthFailed(String port, long withinNs) {
++        Long t = port == null ? null : bandwidthNs.get(port);
++        return t != null && System.nanoTime() - t < withinNs;
++    }
++
++    /** Whether something on this USB port failed to connect within the last {@code withinNs}. */
++    public static boolean connectFailed(String port, long withinNs) {
++        Long t = port == null ? null : connectNs.get(port);
++        return t != null && System.nanoTime() - t < withinNs;
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/common/logging/KernelLogLogger.java b/photon-core/src/main/java/org/photonvision/common/logging/KernelLogLogger.java
+index f3e319ef..c2823c99 100644
+--- a/photon-core/src/main/java/org/photonvision/common/logging/KernelLogLogger.java
++++ b/photon-core/src/main/java/org/photonvision/common/logging/KernelLogLogger.java
+@@ -58,6 +58,8 @@ public class KernelLogLogger {
+         for (var msg : listener.getNewlines()) {
+             // We currently set all logs to debug regardless of their actual level
+             logger.log(msg, LogLevel.DEBUG);
++            // SpectrumJetson (photonvision-31): USB bandwidth and connection trouble, by port.
++            org.photonvision.common.hardware.UsbTrouble.noteKernelLine(msg);
+         }
+     }
+ }
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/StuckCameraWatchdog.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/StuckCameraWatchdog.java
+index b66a86ad..2ed8271e 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/StuckCameraWatchdog.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/StuckCameraWatchdog.java
+@@ -48,6 +48,10 @@ final class StuckCameraWatchdog {
+     static final long STUCK_NS = 3_000_000_000L;
+     static final long AFTER_RECONNECT_NS = 5_000_000_000L;
+     static final long USB_RESET_EVERY_NS = 30_000_000_000L;
++    // SpectrumJetson (photonvision-31): with the kernel refusing the camera USB bandwidth, a reset
++    // can't help (the camera asks for the same reservation again): just retry now and then, in case
++    // another camera has gone and freed some.
++    static final long BANDWIDTH_RETRY_NS = 60_000_000_000L;
+ 
+     private final LongSupplier clockNs;
+     private long lastGoodNs;
+@@ -79,6 +83,16 @@ final class StuckCameraWatchdog {
+         lastReconnectNs = clockNs.getAsLong();
+     }
+ 
++    /** No usable frame this time, and the kernel is refusing the camera USB bandwidth. */
++    Action noFrameNoBandwidth() {
++        long now = clockNs.getAsLong();
++        if (now - lastGoodNs < STUCK_NS) return Action.NONE;
++        if (now - lastReconnectNs < BANDWIDTH_RETRY_NS) return Action.NONE;
++        lastReconnectNs = now;
++        stage = 1;
++        return Action.RECONNECT;
++    }
++
+     /** No usable frame this time. What to do now. */
+     Action noFrame() {
+         long now = clockNs.getAsLong();
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index 1020c43b..fcdf1776 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -111,8 +111,25 @@ public class USBFrameProvider extends CpuImageProcessor {
+         if (usable) {
+             String fixedBy = stuckWatchdog.good();
+             if (!fixedBy.isEmpty()) logger.info("The camera is delivering frames again, after " + fixedBy);
++            if (!problem.isEmpty()) logger.info("The camera has USB bandwidth again");
++            problem = "";
+         } else if (!camera.isConnected()) {
+             stuckWatchdog.notConnected();
++        } else if (org.photonvision.common.hardware.UsbTrouble.bandwidthFailed(usbPort(), BANDWIDTH_WINDOW_NS)) {
++            // SpectrumJetson (photonvision-31): the kernel refuses this camera USB bandwidth. Say so,
++            // and don't reset it (that can't help); retry once a minute in case some frees up.
++            if (problem.isEmpty()) {
++                problem = "not enough USB bandwidth (USB port " + usbPort() + ")";
++                logger.error(
++                        "Not enough USB bandwidth for this camera on USB port "
++                                + usbPort()
++                                + ": other cameras on the same root port have reserved it. Run "
++                                + "~/SpectrumJetson/scripts/jetson/usb-bandwidth.py on the Jetson to see what to change "
++                                + "(cap the camera, or move it to the USB-C port).");
++            }
++            if (stuckWatchdog.noFrameNoBandwidth() == StuckCameraWatchdog.Action.RECONNECT) {
++                reconnectCamera("retrying: not enough USB bandwidth a minute ago");
++            }
+         } else {
+             switch (stuckWatchdog.noFrame()) {
+                 case RECONNECT ->
+@@ -132,6 +149,37 @@ public class USBFrameProvider extends CpuImageProcessor {
+         return stuckWatchdog.recoveries();
+     }
+ 
++    // SpectrumJetson (photonvision-31): why the camera gets no frames, when we know ("" if fine).
++    private static final long BANDWIDTH_WINDOW_NS = 90_000_000_000L;
++    private volatile String problem = "";
++    private String usbPortCache = null;
++    private long usbPortCheckedNs = 0;
++
++    /** Why this camera gets no frames, if known: e.g. "not enough USB bandwidth (USB port 1-2.2)". */
++    public String getProblem() {
++        return problem;
++    }
++
++    /** The camera's USB port (sysfs name, e.g. "1-2.4"), or null; looked up at most every 5 s. */
++    private String usbPort() {
++        long now = System.nanoTime();
++        if (usbPortCache == null || now - usbPortCheckedNs > 5_000_000_000L) {
++            usbPortCheckedNs = now;
++            try {
++                var dev = java.nio.file.Path.of(camera.getPath()).toRealPath();
++                usbPortCache =
++                        java.nio.file.Path.of("/sys/class/video4linux", dev.getFileName().toString(), "device")
++                                .toRealPath()
++                                .getParent()
++                                .getFileName()
++                                .toString();
++            } catch (Exception e) {
++                // not there right now (unplugged, mid-reset): keep the last answer
++            }
++        }
++        return usbPortCache;
++    }
++
+     /** Test hook: /tmp/spectrum-camera-stuck-test lists camera names to treat as stuck. */
+     private boolean stuckTestActive() {
+         long now = System.nanoTime();
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java b/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
+index 1d0f2ad8..a5fdfd7e 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
+@@ -20,6 +20,7 @@ package org.photonvision.vision.processes;
+ import edu.wpi.first.networktables.DoublePublisher;
+ import edu.wpi.first.networktables.IntegerPublisher;
+ import edu.wpi.first.networktables.NetworkTable;
++import edu.wpi.first.networktables.StringPublisher;
+ import java.util.function.LongSupplier;
+ import java.util.function.Supplier;
+ import org.photonvision.common.dataflow.CVPipelineResultConsumer;
+@@ -38,6 +39,8 @@ public class CameraHealthPublisher implements CVPipelineResultConsumer {
+     private final Supplier<String> nickname;
+     private final LongSupplier decodeFailures;
+     private final LongSupplier recoveries;
++    private final Supplier<String> problem;
++    private StringPublisher problemPub;
+ 
+     private String publishedName = null;
+     private DoublePublisher fps, pipelineMs, pipelineMsMax, latencyMs;
+@@ -53,9 +56,32 @@ public class CameraHealthPublisher implements CVPipelineResultConsumer {
+ 
+     public CameraHealthPublisher(
+             Supplier<String> nickname, LongSupplier decodeFailures, LongSupplier recoveries) {
++        this(nickname, decodeFailures, recoveries, () -> "");
++    }
++
++    /** SpectrumJetson (photonvision-31): also {@code problem}, why the camera gets no frames ("" if fine). */
++    public CameraHealthPublisher(
++            Supplier<String> nickname,
++            LongSupplier decodeFailures,
++            LongSupplier recoveries,
++            Supplier<String> problem) {
++        this.problem = problem;
+         this.nickname = nickname;
+         this.decodeFailures = decodeFailures;
+         this.recoveries = recoveries;
++        // A camera with a problem often has no frames, so no results to publish on: its own timer.
++        org.photonvision.common.util.TimedTaskManager.getInstance()
++                .addTask("CameraHealthProblem-" + System.identityHashCode(this), this::publishProblem, 1000);
++    }
++
++    private synchronized void publishProblem() {
++        try {
++            ensurePublishers();
++            problemPub.set(problem.get());
++            recoveryCount.set(recoveries.getAsLong());
++        } catch (Exception e) {
++            // NetworkTables not up yet: next second
++        }
+     }
+ 
+     @Override
+@@ -85,7 +111,7 @@ public class CameraHealthPublisher implements CVPipelineResultConsumer {
+     }
+ 
+     /** (Re)creates the topics when the camera is first seen or renamed. */
+-    private void ensurePublishers() {
++    private synchronized void ensurePublishers() {
+         String name = nickname.get();
+         if (name.equals(publishedName)) return;
+         if (publishedName != null) {
+@@ -110,6 +136,7 @@ public class CameraHealthPublisher implements CVPipelineResultConsumer {
+         frames = t.getIntegerTopic("frames").publish();
+         failures = t.getIntegerTopic("decodeFailures").publish();
+         recoveryCount = t.getIntegerTopic("recoveries").publish();
++        problemPub = t.getStringTopic("problem").publish();
+         publishedName = name;
+     }
+ }
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index c7de5e28..da58a5e7 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -186,7 +186,12 @@ public class VisionModule {
+                         () ->
+                                 visionSource.getFrameProvider() instanceof USBFrameProvider usb
+                                         ? usb.getRecoveries()
+-                                        : 0));
++                                        : 0,
++                        // SpectrumJetson (photonvision-31): e.g. "not enough USB bandwidth (USB port 1-2.2)".
++                        () ->
++                                visionSource.getFrameProvider() instanceof USBFrameProvider usb
++                                        ? usb.getProblem()
++                                        : ""));
+         JetsonTelemetry.start();
+         // SpectrumJetson: the camera's mount (height, pitch, roll) from the tags it sees (photonvision-17).
+         addResultConsumer(

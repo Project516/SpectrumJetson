@@ -834,6 +834,77 @@ on the Jetson. The user guide is in the README; how the solver works is in
 - **Not yet checked:** the page in a browser, the tuner with real tags, and live guidance with
   real tags.
 
+### USB bandwidth: one shared budget, trouble detection, the Camera Matching card (2026-09-24, `photonvision-31`, `-32`)
+
+**The budget.** Measured by setting cameras' alternate settings directly over usbfs, with PhotonVision
+stopped (`USBDEVFS_SETINTERFACE`; the host controller answers ENOSPC when a reservation doesn't fit).
+The Jetson has one xHCI controller (`3610000.usb`): one USB 2.0 bus, one USB 3 bus.
+- **Shared:** its USB 2.0 root ports are USB-C (1-1), the USB-A hub (1-2) and M.2 Key E
+  (1-3, the Bluetooth). They share one budget.
+- **The numbers:** 3072 on USB-C plus 3060 on USB-A fit, but then a second 3060 on USB-A was
+  refused, although USB-A alone takes two.
+  - Fit: 6120, 6132, 6240, 6720.
+  - Refused: 7400, 7520.
+  - So the budget is about 6700–7400 bytes per microframe, above USB 2.0's nominal 80% (6000).
+- **Consequences:** moving a camera to USB-C doesn't help.
+  - **A second USB 2.0 bus:** only a PCIe USB controller in the empty M.2 Key M 2230 (x2) slot. The
+    kernel has `xhci-pci` as a module.
+  - **Or avoid USB 2.0:** USB 3 cameras or CSI.
+
+**The driver** (`kernel/uvcvideo-payload-cap.patch`, rebuilt by `11-uvcvideo-payload-cap.sh`):
+- **Writable cap:** `payload_cap` is now `module_param_string`, 0644, and parsed under
+  `kernel_param_lock`.
+- **Per-port entries:** entries can be `port:bytes` (e.g. `1-2.4:944`), matched against
+  `dev_name(udev)`. A port entry wins over `vid:pid:bytes`; 0 means uncapped.
+- **Byte counters:** the debugfs `stats` file gains `bytes:` (USB payload, headers included) and
+  `frame bytes: max N, recent max N` (the largest in this and the last 256-frame window). These are
+  counted in `uvc_video_stats_decode` / `_update`, which run for every packet and frame anyway.
+- **Applying a change:** the cap applies at the next probe.
+  - A cscore reconnect (`kForceClose`, then `kAutoManage`) did **not** apply it: the camera was still
+    at 1600 bytes 4 s after a change to 256.
+  - A USB reset (sysfs `authorized` 0/1) does, in 1.5–2 s.
+- **Reinstalling:** `11-uvcvideo-payload-cap.sh` keeps port entries from
+  `/etc/modprobe.d/90-spectrum-uvcvideo.conf`.
+
+**`photonvision-31` (trouble):**
+- **Detection:** `UsbTrouble` reads every kernel line (via `KernelLogLogger`) for "Not enough
+  bandwidth" and enumeration failures, by port.
+- **Recovery:** a camera with no frames and a bandwidth failure on its port in the last 90 s
+  reconnects at most every 60 s, with no USB reset (a reset can't add bandwidth).
+- **Reporting:** the reason is published as `/photonvision/<cam>/health/problem` (a 1 s timer, so
+  cameras without frames report too).
+- **Not yet checked live:** the `problem` topic, and that no resets happen during a real bandwidth
+  failure (all 5 cameras have fit since).
+
+**`photonvision-32` (the Camera Matching card):**
+- **Backend:** `UsbBandwidth` (photon-core `common/hardware`) serves
+  `GET /api/usb/bandwidth`. PhotonVision runs as root, so it can read debugfs and write the
+  parameter.
+  - **Survey:** every high-speed USB video device's alternate settings (parsed from sysfs
+    `descriptors`), its current reservation (`bAlternateSetting`), and its cap.
+  - **Usage:** fps and bytes/s from the driver's counters, as deltas between polls at least 0.5 s
+    apart.
+- **Changing an allocation:** `POST {port, bytes}` checks the new total against the budget, then
+  writes the parameter and the modprobe conf. It then calls `USBFrameProvider.applyUsbBandwidth`,
+  which does a USB reset and confirms the new reservation within 6 s.
+- **UI:** `components/app/usb-bandwidth-card.vue`, fed by `lib/UsbBandwidth.ts`, a shared 1.5 s
+  poller. It shows the budget bar, a table per camera, and a select per camera (settings over the
+  budget are disabled), plus a "USB bandwidth" row on each camera card.
+- **Checked:**
+  - all 5 cameras shown;
+  - allocation changes from the page (Allen's: the colour camera to 256, both Global Shutters to
+    512) survived a PhotonVision restart;
+  - 256 → 800 → 256 applied in 2.2 s and 1.5 s;
+  - `tests/jpeg-hw/run.sh` passed afterwards.
+- **Starved cameras** (README table): the Thriftiest (1bcf:28c5) at 640 bytes and the colour camera
+  (32e4:62f0) at 128 bytes both kept their frame rate. They compressed harder instead: frames 14%
+  smaller, 96–97% of microframes busy, no errors.
+- **Measured before the card**, over 5 s with the kernel's `v4l2_dqbuf` trace event:
+  - TopLeft: 121 fps, 58.6 KB frames, 7.1 MB/s of 10.2;
+  - TopRight: 47.5 KB, 5.8 MB/s;
+  - the Global Shutters: 60 fps, 39–57 KB, 2.4–3.4 MB/s;
+  - the colour camera: 30 fps, 36.6 KB, 1.1 MB/s of 12.8.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,

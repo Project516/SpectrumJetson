@@ -73,11 +73,16 @@ def alt_settings(dev: Path) -> dict[int, dict[int, int]]:
 
 
 def caps() -> dict[str, int]:
+    """The driver's caps: "vid:pid" -> bytes for a camera model, "port" (e.g. "1-2.4") -> bytes for
+    one camera (set on PhotonVision's Camera Matching page; wins over its model's; 0 = uncapped)."""
     out = {}
     for part in read(CAP_FILE).split(","):
         m = re.match(r"^([0-9a-fA-F]{4}):([0-9a-fA-F]{4}):(\d+)$", part.strip())
         if m:
             out[f"{m.group(1).lower()}:{m.group(2).lower()}"] = int(m.group(3))
+        m = re.match(r"^(\d+-[\d.]+):(\d+)$", part.strip())
+        if m:
+            out[m.group(1)] = int(m.group(2))
     return out
 
 
@@ -195,7 +200,7 @@ def survey() -> dict:
             "reservedBytes": reserved,
             "streaming": reserved > 0,
             "altBytes": sizes,
-            "capped": cap.get(key),
+            "capped": cap.get(port, cap.get(key)) or None,
             "cappable": len(sizes) > 1 and sizes[0] <= CAP_DEFAULT,
             "bandwidthFailures": fails.get(port, 0),
         })

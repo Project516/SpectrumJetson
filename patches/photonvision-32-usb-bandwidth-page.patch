@@ -1,0 +1,913 @@
+diff --git a/photon-client/src/components/app/usb-bandwidth-card.vue b/photon-client/src/components/app/usb-bandwidth-card.vue
+new file mode 100644
+index 00000000..0ad69c38
+--- /dev/null
++++ b/photon-client/src/components/app/usb-bandwidth-card.vue
+@@ -0,0 +1,222 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-32): the USB bandwidth every camera reserves and really uses, against
++// the one budget all the Jetson's USB 2.0 ports share, with a setting per camera for what it may
++// reserve.
++import axios from "axios";
++import { computed, onBeforeUnmount, ref } from "vue";
++import { useStateStore } from "@/stores/StateStore";
++import {
++  frameFits,
++  mbPerSec,
++  refreshUsbBandwidth,
++  usbSurvey,
++  watchUsbBandwidth,
++  type UsbCamera
++} from "@/lib/UsbBandwidth";
++
++const stop = watchUsbBandwidth();
++onBeforeUnmount(stop);
++
++const COLOURS = ["#4caf50", "#2196f3", "#ff9800", "#ab47bc", "#26c6da", "#ec407a", "#9ccc65", "#ffca28"];
++const s = computed(() => usbSurvey.value);
++const cams = computed(() => s.value?.cameras ?? []);
++const name = (c: UsbCamera) => c.camera ?? c.product;
++const colour = (i: number) => COLOURS[i % COLOURS.length];
++const pct = (bytes: number) => (s.value ? (100 * bytes) / s.value.budgetBytes : 0);
++const used = (c: UsbCamera) => (c.usedBytesPerSec ?? 0) / 8000; // bytes per microframe
++const free = computed(() => (s.value ? s.value.budgetBytes - s.value.wantBytes : 0));
++const canChange = computed(() => s.value?.driver === "capped");
++
++const fmtMB = (bps: number | null) => (bps === null ? "…" : `${(bps / 1e6).toFixed(1)} MB/s`);
++const fitClass = (x: number | null) => (x === null ? "" : x < 1.15 ? "text-error" : x < 1.3 ? "text-warning" : "");
++// A camera that needs more than its allocation can't take it: it squeezes its JPEGs to fit.
++const share = (c: UsbCamera) => used(c) / Math.max(1, c.wantBytes);
++const squeezed = (c: UsbCamera) => c.usedBytesPerSec !== null && share(c) >= 0.9;
++
++// The allocation choices: the camera's alternate settings, each with what it means here.
++const choices = (c: UsbCamera) => {
++  if (!s.value) return [];
++  const others = s.value.wantBytes - c.wantBytes;
++  const out: { title: string; value: number | null; props: { disabled: boolean; subtitle: string } }[] = c.altBytes.map(
++    (b) => {
++      const fits = frameFits(c, b);
++      const over = others + b > s.value!.budgetBytes;
++      const notes = [
++        fits !== null ? `largest frame fits ${fits.toFixed(1)}x` : "",
++        fits !== null && c.recentMaxFrameBytes
++          ? `${((1000 * c.recentMaxFrameBytes) / (b * 8000)).toFixed(1)} ms on USB`
++          : "",
++        over ? "over the budget" : ""
++      ].filter(Boolean);
++      return {
++        title: `${b} B · ${mbPerSec(b).toFixed(1)} MB/s`,
++        value: b,
++        props: { disabled: over, subtitle: notes.join(", ") }
++      };
++    }
++  );
++  if (c.capFrom === "port") {
++    out.push({
++      title: "Back to this model's default",
++      value: null,
++      props: { disabled: false, subtitle: "the cap set for every camera of this model" }
++    });
++  }
++  return out;
++};
++
++const busy = ref<string | null>(null);
++const setAllocation = async (c: UsbCamera, bytes: number | null) => {
++  busy.value = c.port;
++  try {
++    const r = await axios.post("/usb/bandwidth", { port: c.port, bytes });
++    useStateStore().showSnackbarMessage({ message: r.data, color: "success" });
++  } catch (e: any) {
++    useStateStore().showSnackbarMessage({ message: e?.response?.data || "Request failed", color: "error" });
++  } finally {
++    busy.value = null;
++    refreshUsbBandwidth();
++  }
++};
++</script>
++
++<template>
++  <v-card color="surface" class="rounded-12">
++    <v-card-title>USB bandwidth</v-card-title>
++    <v-card-subtitle class="text-wrap">
++      Every USB 2.0 port (the four USB-A ports, USB-C, and hubs on them) shares one budget. A camera reserves its
++      allocation whatever it sends, and one that doesn't fit can't start.
++    </v-card-subtitle>
++    <v-card-text v-if="!s" class="pt-3">Reading the USB cameras…</v-card-text>
++    <v-card-text v-else class="pt-3">
++      <div class="budget">
++        <div
++          v-for="(c, i) in cams"
++          :key="c.port"
++          class="seg"
++          :style="{ width: `${pct(c.wantBytes)}%`, background: colour(i) + '55', borderColor: colour(i) }"
++          :title="`${name(c)}: ${c.wantBytes} B allocated, ${used(c).toFixed(0)} B used`"
++        >
++          <div
++            class="seg-used"
++            :style="{ width: `${c.wantBytes ? (100 * used(c)) / c.wantBytes : 0}%`, background: colour(i) }"
++          />
++        </div>
++      </div>
++      <div class="text-body-2 mt-2">
++        Allocated <b>{{ s.wantBytes }}</b> of ~{{ s.budgetBytes }} bytes per 125 µs ({{
++          mbPerSec(s.wantBytes).toFixed(1)
++        }}
++        of {{ mbPerSec(s.budgetBytes).toFixed(1) }} MB/s), using <b>{{ fmtMB(s.usedBytesPerSec) }}</b
++        >.
++        <span v-if="free > 0">{{ free }} bytes free.</span>
++        <span v-else-if="free === 0">Full: to give a camera more, lower another first.</span>
++        <span v-else class="text-error">Over the budget by {{ -free }} bytes: a camera won't start.</span>
++      </div>
++      <v-alert v-if="s.driver !== 'capped'" density="compact" variant="tonal" color="warning" class="mt-2">
++        {{
++          s.driver === "stock"
++            ? "The stock camera driver is loaded: allocations can't be capped. Install ours:"
++            : "This build of our camera driver can't change allocations while running. Reinstall it:"
++        }}
++        <code>scripts/jetson/11-uvcvideo-payload-cap.sh --install</code>
++      </v-alert>
++
++      <v-table density="compact" class="mt-2">
++        <thead>
++          <tr>
++            <th></th>
++            <th>Camera</th>
++            <th>FPS</th>
++            <th>Using</th>
++            <th>Largest frame</th>
++            <th style="min-width: 250px">Allocation</th>
++          </tr>
++        </thead>
++        <tbody>
++          <tr v-for="(c, i) in cams" :key="c.port">
++            <td><span class="dot" :style="{ background: colour(i) }" /></td>
++            <td>
++              {{ name(c) }}
++              <div class="text-caption">port {{ c.port }} · {{ c.id }}</div>
++              <div v-if="c.problem" class="text-caption text-error">{{ c.problem }}</div>
++              <div v-else-if="!c.streaming" class="text-caption text-warning">not streaming</div>
++            </td>
++            <td>{{ c.fps === null ? "" : c.fps.toFixed(0) }}</td>
++            <td>
++              <template v-if="c.usedBytesPerSec !== null">
++                {{ fmtMB(c.usedBytesPerSec) }}
++                <div class="text-caption" :class="squeezed(c) ? 'text-warning' : ''">
++                  {{ Math.round(100 * share(c)) }}% of its allocation{{ squeezed(c) ? ": squeezed" : "" }}
++                </div>
++              </template>
++            </td>
++            <td>
++              <template v-if="c.recentMaxFrameBytes">
++                {{ (c.recentMaxFrameBytes / 1000).toFixed(1) }} KB
++                <div class="text-caption" :class="fitClass(frameFits(c, c.wantBytes))">
++                  <template v-if="frameFits(c, c.wantBytes) !== null"
++                    >fits {{ frameFits(c, c.wantBytes)!.toFixed(1) }}x,
++                  </template>
++                  {{ ((1000 * c.recentMaxFrameBytes) / (c.wantBytes * 8000)).toFixed(1) }} ms on USB
++                </div>
++              </template>
++            </td>
++            <td>
++              <v-select
++                :model-value="c.wantBytes"
++                :items="choices(c)"
++                density="compact"
++                variant="outlined"
++                hide-details
++                :disabled="!canChange || busy !== null"
++                :loading="busy === c.port"
++                @update:model-value="(v: number | null) => setAllocation(c, v)"
++              >
++                <template #selection>
++                  {{ c.wantBytes }} B · {{ mbPerSec(c.wantBytes).toFixed(1) }} MB/s
++                  <span class="text-caption ml-1"
++                    >({{
++                      c.capFrom === "port" ? "set here" : c.capFrom === "model" ? "model default" : "uncapped"
++                    }})</span
++                  >
++                </template>
++              </v-select>
++            </td>
++          </tr>
++        </tbody>
++      </v-table>
++      <div class="text-caption mt-2">
++        A camera can't send more than its allocation, and never takes another camera's. When its frames don't fit, the
++        cameras we tested keep their frame rate and compress harder: smaller, lower-quality JPEGs, each taking longer to
++        cross USB. "Squeezed" (using 90% or more) means that's happening. "Fits" is how many times the largest recent
++        frame fits in one frame time; the ms is how long a frame takes to cross USB. Changes are saved for the next
++        boot, and the camera is reset to apply them (a second or two without frames).
++      </div>
++    </v-card-text>
++  </v-card>
++</template>
++
++<style scoped>
++.budget {
++  display: flex;
++  height: 22px;
++  border-radius: 6px;
++  overflow: hidden;
++  background: rgba(128, 128, 128, 0.15);
++}
++.seg {
++  height: 100%;
++  border-right: 2px solid;
++  position: relative;
++}
++.seg-used {
++  height: 100%;
++}
++.dot {
++  display: inline-block;
++  width: 10px;
++  height: 10px;
++  border-radius: 50%;
++}
++</style>
+diff --git a/photon-client/src/lib/UsbBandwidth.ts b/photon-client/src/lib/UsbBandwidth.ts
+new file mode 100644
+index 00000000..71aa8558
+--- /dev/null
++++ b/photon-client/src/lib/UsbBandwidth.ts
+@@ -0,0 +1,65 @@
++// SpectrumJetson (photonvision-32): every USB camera's bandwidth, reserved and really used, from
++// GET /api/usb/bandwidth (UsbBandwidth.java), polled while a page shows it.
++import axios from "axios";
++import { ref } from "vue";
++
++export interface UsbCamera {
++  port: string; // e.g. "1-2.4"
++  id: string; // vid:pid
++  product: string;
++  camera: string | null; // PhotonVision nickname
++  uniqueName: string | null;
++  altBytes: number[]; // the camera's alternate settings, bytes per 125 us microframe
++  reservedBytes: number; // what it reserves now (0: not streaming)
++  streaming: boolean;
++  capBytes: number | null; // its cap (0: uncapped)
++  capFrom: "port" | "model" | null;
++  wantBytes: number; // what it reserves when streaming, under its cap
++  fps: number | null;
++  usedBytesPerSec: number | null;
++  recentMaxFrameBytes: number | null;
++  problem: string;
++}
++
++export interface UsbSurvey {
++  budgetBytes: number; // bytes per microframe every USB 2.0 camera shares
++  microframesPerSecond: number;
++  reservedBytes: number;
++  wantBytes: number;
++  usedBytesPerSec: number | null;
++  driver: "capped" | "capped-readonly" | "stock";
++  payloadCap: string;
++  cameras: UsbCamera[];
++}
++
++export const usbSurvey = ref<UsbSurvey | null>(null);
++
++let users = 0;
++let timer: ReturnType<typeof setTimeout> | undefined;
++const poll = async () => {
++  try {
++    usbSurvey.value = (await axios.get("/usb/bandwidth")).data;
++  } catch {
++    usbSurvey.value = null;
++  }
++  clearTimeout(timer);
++  if (users > 0) timer = setTimeout(poll, 1500);
++};
++
++/** Starts polling (shared by every caller); returns the function that stops it. */
++export const watchUsbBandwidth = () => {
++  if (users++ === 0) poll();
++  return () => {
++    if (--users === 0) clearTimeout(timer);
++  };
++};
++
++/** Polls now (after a change). */
++export const refreshUsbBandwidth = () => poll();
++
++/** Bytes per microframe as MB/s. */
++export const mbPerSec = (bytes: number) => (bytes * 8000) / 1e6;
++
++/** How many times over the recent largest frame fits in one frame time at this allocation. */
++export const frameFits = (c: UsbCamera, bytes: number) =>
++  c.fps && c.recentMaxFrameBytes ? (bytes * 8000) / c.fps / c.recentMaxFrameBytes : null;
+diff --git a/photon-client/src/views/CameraMatchingView.vue b/photon-client/src/views/CameraMatchingView.vue
+index aa73790b..c660294e 100644
+--- a/photon-client/src/views/CameraMatchingView.vue
++++ b/photon-client/src/views/CameraMatchingView.vue
+@@ -1,6 +1,6 @@
+ <script setup lang="ts">
+ import { useCameraSettingsStore } from "@/stores/settings/CameraSettingsStore";
+-import { computed, inject, ref } from "vue";
++import { computed, inject, onBeforeUnmount, ref } from "vue";
+ import { useStateStore } from "@/stores/StateStore";
+ import {
+   PlaceholderCameraSettings,
+@@ -15,9 +15,20 @@ import PvDeleteModal from "@/components/common/pv-delete-modal.vue";
+ import PvCameraInfoCard from "@/components/common/pv-camera-info-card.vue";
+ import PvCameraMatchCard from "@/components/common/pv-camera-match-card.vue";
+ import { useTheme } from "vuetify";
++import UsbBandwidthCard from "@/components/app/usb-bandwidth-card.vue";
++import { mbPerSec, usbSurvey, watchUsbBandwidth, type UsbCamera } from "@/lib/UsbBandwidth";
+ 
+ const theme = useTheme();
+ 
++// SpectrumJetson (photonvision-32): each camera's USB bandwidth, on its card and in the card above.
++const stopUsb = watchUsbBandwidth();
++onBeforeUnmount(stopUsb);
++const usbFor = (uniqueName: string) => usbSurvey.value?.cameras.find((c) => c.uniqueName === uniqueName);
++const usbLine = (c: UsbCamera) =>
++  c.streaming
++    ? `${c.usedBytesPerSec === null ? "…" : (c.usedBytesPerSec / 1e6).toFixed(1)} of ${mbPerSec(c.wantBytes).toFixed(1)} MB/s (port ${c.port})`
++    : `not streaming${c.problem ? ": " + c.problem : ""} (port ${c.port})`;
++
+ const formatUrl = (port) => `http://${inject("backendHostname")}:${port}/stream.mjpg`;
+ 
+ const activatingModule = ref(false);
+@@ -148,6 +159,9 @@ const getMatchedDevice = (info: PVCameraInfo | undefined): PVCameraInfo => {
+ <template>
+   <div class="pa-3">
+     <v-row>
++      <v-col cols="12" class="pr-0">
++        <usb-bandwidth-card />
++      </v-col>
+       <!-- Active modules -->
+       <v-col
+         v-for="(module, index) in activeVisionModules"
+@@ -190,6 +204,10 @@ const getMatchedDevice = (info: PVCameraInfo | undefined): PVCameraInfo => {
+                     {{ module.nickname }}
+                   </td>
+                 </tr>
++                <tr v-if="usbFor(module.uniqueName)">
++                  <td>USB bandwidth</td>
++                  <td>{{ usbLine(usbFor(module.uniqueName)!) }}</td>
++                </tr>
+                 <tr>
+                   <td>Pipelines</td>
+                   <td>{{ module.pipelineNicknames.join(", ") }}</td>
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/UsbBandwidth.java b/photon-core/src/main/java/org/photonvision/common/hardware/UsbBandwidth.java
+new file mode 100644
+index 00000000..19cb3b43
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/UsbBandwidth.java
+@@ -0,0 +1,390 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.hardware;
++
++import java.io.File;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.attribute.PosixFilePermission;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.TreeSet;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.vision.processes.VisionModule;
++import org.photonvision.vision.processes.VisionSourceManager;
++
++/**
++ * SpectrumJetson (photonvision-32): the USB bandwidth each camera reserves and really uses, and
++ * changing what a camera may reserve, for the Camera Matching page.
++ *
++ * <p>A USB camera reserves isochronous bandwidth for its alternate setting's packet size, whatever
++ * it actually sends. Every USB 2.0 port on the Jetson (the USB-A hub, USB-C, M.2) shares one
++ * budget: 6720 bytes per 125 us microframe fit, 7400 didn't (measured 2026-09-24). Our camera
++ * driver (kernel/uvcvideo-payload-cap.patch) takes a cap per camera model or per USB port
++ * ("payload_cap", writable at run time) and counts each stream's bytes and largest frames (its
++ * debugfs "stats"). PhotonVision runs as root, so it can read and write both.
++ */
++public final class UsbBandwidth {
++    /** Bytes per microframe the Jetson's USB 2.0 side fit (7400 was refused). */
++    public static final int BUDGET_BYTES = 6720;
++
++    public static final int MICROFRAMES_PER_S = 8000;
++
++    private static final Logger logger = new Logger(UsbBandwidth.class, LogGroup.Camera);
++    private static final Path DEVICES = Path.of("/sys/bus/usb/devices");
++    private static final Path PARAM = Path.of("/sys/module/uvcvideo/parameters/payload_cap");
++    private static final Path CONF = Path.of("/etc/modprobe.d/90-spectrum-uvcvideo.conf");
++    private static final Path STATS = Path.of("/sys/kernel/debug/usb/uvcvideo");
++    private static final Pattern MODEL_CAP = Pattern.compile("^([0-9a-fA-F]{4}):([0-9a-fA-F]{4}):(\\d+)$");
++    private static final Pattern PORT_CAP = Pattern.compile("^(\\d+-[\\d.]+):(\\d+)$");
++    private static final Pattern STAT_LINE =
++            Pattern.compile("(?m)^(frames|bytes):\\s*(\\d+)|^frame bytes: max (\\d+), recent max (\\d+)");
++
++    /**
++     * One camera. Bytes are per 125 us microframe unless named otherwise. {@code wantBytes}: what it
++     * reserves when it streams, under its cap. {@code capFrom}: "port", "model" or null (uncapped).
++     */
++    public record Camera(
++            String port,
++            String id,
++            String product,
++            String camera,
++            String uniqueName,
++            List<Integer> altBytes,
++            int reservedBytes,
++            boolean streaming,
++            Integer capBytes,
++            String capFrom,
++            int wantBytes,
++            Double fps,
++            Double usedBytesPerSec,
++            Integer recentMaxFrameBytes,
++            String problem) {}
++
++    /**
++     * Every camera on the USB 2.0 side. {@code driver}: "capped" (our driver, allocations can be
++     * changed), "capped-readonly" (an older build of it: reinstall with 11-uvcvideo-payload-cap.sh
++     * to change allocations here) or "stock".
++     */
++    public record Survey(
++            int budgetBytes,
++            int microframesPerSecond,
++            int reservedBytes,
++            int wantBytes,
++            Double usedBytesPerSec,
++            String driver,
++            String payloadCap,
++            List<Camera> cameras) {}
++
++    private record Sample(long tNs, long frames, long bytes) {}
++
++    private record Rates(double fps, double bytesPerSec) {}
++
++    private static final Map<String, Sample> samples = new HashMap<>();
++    private static final Map<String, Rates> rates = new HashMap<>();
++
++    private UsbBandwidth() {}
++
++    /** Bytes per microframe of a wMaxPacketSize: the size times the transactions per microframe. */
++    static int packetBytes(int w) {
++        return (w & 0x7ff) * (1 + ((w >> 11) & 3));
++    }
++
++    /** The alternate setting the driver picks under a cap: the smallest one at least that big. */
++    public static int altFor(List<Integer> alts, Integer cap) {
++        int largest = alts.isEmpty() ? 0 : alts.get(alts.size() - 1);
++        if (cap == null || cap <= 0) return largest;
++        for (int a : alts) if (a >= cap) return a;
++        return largest;
++    }
++
++    /** {interface: {alt: bytes of its isochronous IN endpoint}}, from the raw descriptors. */
++    private static Map<Integer, Map<Integer, Integer>> altSettings(Path dev) {
++        Map<Integer, Map<Integer, Integer>> out = new HashMap<>();
++        byte[] d;
++        try {
++            d = Files.readAllBytes(dev.resolve("descriptors"));
++        } catch (IOException e) {
++            return out;
++        }
++        int i = 0;
++        Integer intf = null, alt = null;
++        while (i + 2 <= d.length) {
++            int n = d[i] & 0xff, t = d[i + 1] & 0xff;
++            if (n < 2) break;
++            if (t == 4 && n >= 9 && i + 3 < d.length) { // interface
++                intf = d[i + 2] & 0xff;
++                alt = d[i + 3] & 0xff;
++                out.computeIfAbsent(intf, k -> new HashMap<>()).putIfAbsent(alt, 0);
++            } else if (t == 5 && n >= 7 && intf != null && i + 5 < d.length) { // endpoint
++                int attrs = d[i + 3] & 0xff;
++                if ((attrs & 3) == 1 && (d[i + 2] & 0x80) != 0) { // isochronous IN
++                    int w = (d[i + 4] & 0xff) | ((d[i + 5] & 0xff) << 8);
++                    out.get(intf).merge(alt, packetBytes(w), Math::max);
++                }
++            }
++            i += n;
++        }
++        return out;
++    }
++
++    private static String read(Path p) {
++        try {
++            return Files.readString(p).trim();
++        } catch (IOException e) {
++            return "";
++        }
++    }
++
++    private static int speedMbps(Path dev) {
++        try {
++            return (int) Double.parseDouble(read(dev.resolve("speed")));
++        } catch (NumberFormatException e) {
++            return 0;
++        }
++    }
++
++    private static String param() {
++        return read(PARAM).replace("(null)", "");
++    }
++
++    private static String driver() {
++        if (!Files.exists(PARAM)) return "stock";
++        try {
++            return Files.getPosixFilePermissions(PARAM).contains(PosixFilePermission.OWNER_WRITE)
++                    ? "capped"
++                    : "capped-readonly";
++        } catch (IOException e) {
++            return "capped-readonly";
++        }
++    }
++
++    /** Port -> the camera PhotonVision has on it. */
++    private static Map<String, VisionModule> modulesByPort() {
++        Map<String, VisionModule> out = new HashMap<>();
++        for (var m : VisionSourceManager.getInstance().vmm.getModules()) {
++            var usb = m.usbFrameProvider();
++            String port = usb == null ? null : usb.getUsbPort();
++            if (port != null) out.put(port, m);
++        }
++        return out;
++    }
++
++    /** The driver's stats for one stream: frames, bytes, recent max frame; null if unreadable. */
++    private static long[] stats(String dir) {
++        String s = read(STATS.resolve(dir).resolve("stats"));
++        if (s.isEmpty()) return null;
++        long frames = -1, bytes = -1, recentMax = -1;
++        Matcher m = STAT_LINE.matcher(s);
++        while (m.find()) {
++            if ("frames".equals(m.group(1))) frames = Long.parseLong(m.group(2));
++            else if ("bytes".equals(m.group(1))) bytes = Long.parseLong(m.group(2));
++            else if (m.group(4) != null) recentMax = Long.parseLong(m.group(4));
++        }
++        return frames < 0 || bytes < 0 ? null : new long[] {frames, bytes, recentMax};
++    }
++
++    /** fps and bytes/s since the last look (at least 0.5 s ago), or the last answer. */
++    private static Rates rates(String dir, long frames, long bytes) {
++        long now = System.nanoTime();
++        Sample prev = samples.get(dir);
++        if (prev != null && now - prev.tNs() < 500_000_000L) return rates.get(dir);
++        samples.put(dir, new Sample(now, frames, bytes));
++        if (prev == null || frames < prev.frames() || bytes < prev.bytes() || now - prev.tNs() > 30_000_000_000L) {
++            rates.remove(dir); // first look, or the stream restarted
++            return null;
++        }
++        double dt = (now - prev.tNs()) / 1e9;
++        var r = new Rates((frames - prev.frames()) / dt, (bytes - prev.bytes()) / dt);
++        rates.put(dir, r);
++        return r;
++    }
++
++    /** Every USB video camera: what it reserves, wants, and sends. */
++    public static synchronized Survey survey() {
++        Map<String, Integer> modelCaps = new HashMap<>(), portCaps = new HashMap<>();
++        String cap = param();
++        parseCaps(cap, modelCaps, portCaps);
++        var modules = modulesByPort();
++        List<Camera> cams = new ArrayList<>();
++        int reservedTotal = 0, wantTotal = 0;
++        double usedTotal = 0;
++        boolean anyUsed = false;
++        File[] devs = DEVICES.toFile().listFiles();
++        if (devs == null) devs = new File[0];
++        java.util.Arrays.sort(devs);
++        for (var f : devs) {
++            Path dev = f.toPath();
++            String port = f.getName();
++            if (port.contains(":") || !Files.exists(dev.resolve("idVendor"))) continue;
++            var alts = altSettings(dev);
++            Integer videoIntf = null;
++            int reserved = 0;
++            for (var intfDir : f.listFiles((x, name) -> name.startsWith(port + ":"))) {
++                String cls = read(intfDir.toPath().resolve("bInterfaceClass"));
++                String sub = read(intfDir.toPath().resolve("bInterfaceSubClass"));
++                boolean video = cls.equals("0e") && sub.equals("02"), audio = cls.equals("01") && sub.equals("02");
++                if (!video && !audio) continue;
++                int n = Integer.parseInt(read(intfDir.toPath().resolve("bInterfaceNumber")), 16);
++                int cur = Integer.parseInt(read(intfDir.toPath().resolve("bAlternateSetting")));
++                reserved += alts.getOrDefault(n, Map.of()).getOrDefault(cur, 0);
++                if (video && videoIntf == null) videoIntf = n;
++            }
++            if (videoIntf == null) continue;
++            if (speedMbps(dev) < 480) continue; // USB 2.0 high speed only: that's the shared budget
++            var sizes = new TreeSet<Integer>();
++            alts.getOrDefault(videoIntf, Map.of()).forEach((a, b) -> {
++                if (a != 0 && b > 0) sizes.add(b);
++            });
++            List<Integer> altBytes = new ArrayList<>(sizes);
++            String id = read(dev.resolve("idVendor")) + ":" + read(dev.resolve("idProduct"));
++            Integer capBytes = portCaps.containsKey(port) ? portCaps.get(port) : modelCaps.get(id);
++            String capFrom = portCaps.containsKey(port) ? "port" : modelCaps.containsKey(id) ? "model" : null;
++            boolean streaming = reserved > 0;
++            int want = streaming ? reserved : altFor(altBytes, capBytes);
++            Double fps = null, used = null;
++            Integer recentMax = null;
++            if (streaming) {
++                String dir = read(dev.resolve("busnum")) + "-" + read(dev.resolve("devnum")) + "-" + videoIntf;
++                long[] st = stats(dir);
++                if (st != null) {
++                    var r = rates(dir, st[0], st[1]);
++                    if (r != null) {
++                        fps = r.fps();
++                        used = r.bytesPerSec();
++                        usedTotal += used;
++                        anyUsed = true;
++                    }
++                    if (st[2] >= 0) recentMax = (int) st[2];
++                }
++            }
++            var m = modules.get(port);
++            var usb = m == null ? null : m.usbFrameProvider();
++            cams.add(
++                    new Camera(
++                            port,
++                            id,
++                            read(dev.resolve("product")),
++                            m == null ? null : m.getNickname(),
++                            m == null ? null : m.uniqueName(),
++                            altBytes,
++                            reserved,
++                            streaming,
++                            capBytes,
++                            capFrom,
++                            want,
++                            fps,
++                            used,
++                            recentMax,
++                            usb == null ? "" : usb.getProblem()));
++            reservedTotal += reserved;
++            wantTotal += want;
++        }
++        return new Survey(
++                BUDGET_BYTES,
++                MICROFRAMES_PER_S,
++                reservedTotal,
++                wantTotal,
++                anyUsed ? usedTotal : null,
++                driver(),
++                cap,
++                cams);
++    }
++
++    private static void parseCaps(String cap, Map<String, Integer> modelCaps, Map<String, Integer> portCaps) {
++        for (String part : cap.split(",")) {
++            part = part.trim();
++            Matcher m = MODEL_CAP.matcher(part);
++            if (m.matches()) {
++                modelCaps.put(m.group(1).toLowerCase() + ":" + m.group(2).toLowerCase(), Integer.parseInt(m.group(3)));
++                continue;
++            }
++            m = PORT_CAP.matcher(part);
++            if (m.matches()) portCaps.put(m.group(1), Integer.parseInt(m.group(2)));
++        }
++    }
++
++    /**
++     * Sets the most the camera on {@code port} may reserve: one of its alternate settings' sizes, 0
++     * for uncapped, or null for its model's cap. Saved for the next boot, and applied by resetting the
++     * camera at the USB level (a second or two without frames). Refused if it wouldn't fit.
++     */
++    public static synchronized String setAllocation(String port, Integer bytes) throws IOException {
++        if (!driver().equals("capped")) {
++            throw new IllegalStateException(
++                    "The camera driver can't change allocations while running: reinstall it with"
++                            + " scripts/jetson/11-uvcvideo-payload-cap.sh --install");
++        }
++        var s = survey();
++        Camera cam = s.cameras().stream().filter(c -> c.port().equals(port)).findFirst().orElse(null);
++        if (cam == null) throw new IllegalArgumentException("No USB camera on port " + port);
++        if (bytes != null && bytes != 0 && !cam.altBytes().contains(bytes)) {
++            throw new IllegalArgumentException(
++                    bytes + " bytes isn't one of this camera's settings " + cam.altBytes());
++        }
++        Map<String, Integer> modelCaps = new HashMap<>(), portCaps = new HashMap<>();
++        parseCaps(s.payloadCap(), modelCaps, portCaps);
++        int want = altFor(cam.altBytes(), bytes != null ? bytes : modelCaps.get(cam.id()));
++        int total = s.wantBytes() - cam.wantBytes() + want;
++        if (total > BUDGET_BYTES) {
++            throw new IllegalArgumentException(
++                    String.format(
++                            "That needs %d of the %d bytes per microframe every USB 2.0 camera shares:"
++                                    + " lower another camera's allocation first",
++                            total, BUDGET_BYTES));
++        }
++        if (bytes == null) portCaps.remove(port);
++        else portCaps.put(port, bytes);
++        var entries = new LinkedHashMap<String, Integer>();
++        new java.util.TreeMap<>(modelCaps).forEach(entries::put);
++        new java.util.TreeMap<>(portCaps).forEach(entries::put);
++        String cap = String.join(",", entries.entrySet().stream().map(e -> e.getKey() + ":" + e.getValue()).toList());
++        Files.writeString(PARAM, cap);
++        Files.writeString(
++                CONF,
++                "# SpectrumJetson: cap USB bandwidth reservations (scripts/jetson/11-uvcvideo-payload-cap.sh;"
++                        + " per-port entries set on the Camera Matching page)\noptions uvcvideo payload_cap="
++                        + cap
++                        + "\n");
++        String name = cam.camera() != null ? cam.camera() : cam.product() + " on " + port;
++        logger.info(String.format("USB bandwidth: %s may now reserve %d bytes per microframe (payload_cap=%s)", name, want, cap));
++        var m = modulesByPort().get(port);
++        var usb = m == null ? null : m.usbFrameProvider();
++        if (usb != null && cam.streaming() && want != cam.reservedBytes()) {
++            new Thread(() -> usb.applyUsbBandwidth(want), "UsbBandwidth-" + port).start();
++            return String.format("%s: resetting it to apply %d bytes (%.1f MB/s)", name, want, want * 8e-3);
++        }
++        return String.format("%s: %d bytes (%.1f MB/s) from its next start", name, want, want * 8e-3);
++    }
++
++    /** What the camera on {@code port} reserves right now, or -1 if it isn't there. */
++    public static synchronized int reservedNow(String port) {
++        return survey().cameras().stream()
++                .filter(c -> c.port().equals(port))
++                .mapToInt(Camera::reservedBytes)
++                .findFirst()
++                .orElse(-1);
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index fcdf1776..bdaea210 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -137,7 +137,11 @@ public class USBFrameProvider extends CpuImageProcessor {
+                                 String.format(
+                                         "no usable frames for %.1f s while connected (e.g. only corrupt JPEGs); reconnecting it",
+                                         stuckWatchdog.secondsWithoutFrames()));
+-                case USB_RESET -> usbReset();
++                case USB_RESET ->
++                        usbReset(
++                                String.format(
++                                        "still no usable frames %.1f s later", stuckWatchdog.secondsWithoutFrames()),
++                                true);
+                 case NONE -> {}
+             }
+         }
+@@ -160,6 +164,38 @@ public class USBFrameProvider extends CpuImageProcessor {
+         return problem;
+     }
+ 
++    /** The camera's USB port (sysfs name, e.g. "1-2.4"), or null (photonvision-32: public). */
++    public String getUsbPort() {
++        return usbPort();
++    }
++
++    /**
++     * SpectrumJetson (photonvision-32): applies a new USB bandwidth allocation (UsbBandwidth) by
++     * resetting the camera at the USB level, like a replug, so the driver probes it again under the
++     * new cap. (A cscore reconnect isn't enough: the driver kept its last negotiation, 1600 bytes 4 s
++     * after a change to 256.)
++     */
++    public void applyUsbBandwidth(int wantBytes) {
++        String port = usbPort();
++        usbReset("USB bandwidth allocation changed to " + wantBytes + " bytes per microframe", false);
++        long deadline = System.nanoTime() + 6_000_000_000L;
++        int now = -1;
++        while (System.nanoTime() < deadline) {
++            try {
++                Thread.sleep(200);
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++                return;
++            }
++            now = org.photonvision.common.hardware.UsbBandwidth.reservedNow(port);
++            if (now == wantBytes) {
++                logger.info("Now reserving " + wantBytes + " bytes per microframe on USB port " + port);
++                return;
++            }
++        }
++        logger.warn("Reserving " + now + " bytes per microframe on USB port " + port + " 6 s later, not " + wantBytes);
++    }
++
+     /** The camera's USB port (sysfs name, e.g. "1-2.4"), or null; looked up at most every 5 s. */
+     private String usbPort() {
+         long now = System.nanoTime();
+@@ -207,7 +243,7 @@ public class USBFrameProvider extends CpuImageProcessor {
+      * its USB device's sysfs "authorized" off and on, so it re-enumerates and the driver probes it
+      * again. PhotonVision opens cameras by their /dev/v4l/by-path name, so it finds it again.
+      */
+-    private void usbReset() {
++    private void usbReset(String why, boolean asError) {
+         try {
+             var dev = java.nio.file.Path.of(camera.getPath()).toRealPath(); // e.g. /dev/video2
+             var usbDevice =
+@@ -215,10 +251,9 @@ public class USBFrameProvider extends CpuImageProcessor {
+                             .toRealPath()
+                             .getParent(); // the USB interface's parent, e.g. .../2-2.3
+             var authorized = usbDevice.resolve("authorized");
+-            logger.error(
+-                    String.format(
+-                            "Still no usable frames %.1f s later; resetting the camera at the USB level (%s)",
+-                            stuckWatchdog.secondsWithoutFrames(), usbDevice.getFileName()));
++            String msg = "Resetting the camera at the USB level (" + usbDevice.getFileName() + "): " + why;
++            if (asError) logger.error(msg);
++            else logger.info(msg);
+             java.nio.file.Files.writeString(authorized, "0");
+             Thread.sleep(1000);
+             java.nio.file.Files.writeString(authorized, "1");
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index da58a5e7..f5f8d818 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -1072,6 +1072,11 @@ public class VisionModule {
+         saveAndBroadcastAll();
+     }
+ 
++    /** SpectrumJetson (photonvision-32): this camera's USB frame provider, or null (CSI, file). */
++    public USBFrameProvider usbFrameProvider() {
++        return visionSource.getFrameProvider() instanceof USBFrameProvider usb ? usb : null;
++    }
++
+     public String uniqueName() {
+         return this.visionSource.cameraConfiguration.uniqueName;
+     }
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index a721f00b..d832f736 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -50,6 +50,7 @@ import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
+ import org.photonvision.common.dataflow.websocket.UIPhotonConfiguration;
+ import org.photonvision.common.hardware.HardwareManager;
+ import org.photonvision.common.hardware.Platform;
++import org.photonvision.common.hardware.UsbBandwidth;
+ import org.photonvision.common.logging.LogGroup;
+ import org.photonvision.common.logging.Logger;
+ import org.photonvision.common.networking.NetworkManager;
+@@ -607,6 +608,43 @@ public class RequestHandler {
+             Map<String, List<String>> locked,
+             Boolean on) {}
+ 
++    /**
++     * GET /api/usb/bandwidth (photonvision-32): every USB camera's bandwidth, reserved and really used,
++     * against the budget all USB 2.0 ports share. See UsbBandwidth.
++     */
++    public static void onUsbBandwidthRequest(Context ctx) {
++        try {
++            ctx.status(200);
++            ctx.contentType("application/json");
++            ctx.result(kObjectMapper.writeValueAsString(UsbBandwidth.survey()));
++        } catch (Exception e) {
++            ctx.status(500);
++            ctx.result("USB bandwidth survey failed: " + e.getMessage());
++        }
++    }
++
++    private record UsbAllocationRequest(String port, Integer bytes) {}
++
++    /**
++     * POST /api/usb/bandwidth {"port": "1-2.4", "bytes": 944} (photonvision-32): the most that camera
++     * may reserve per microframe: one of its alternate settings, 0 for uncapped, or null for its
++     * model's cap. Saved for the next boot; the camera is reset (like a replug) to apply it.
++     */
++    public static void onUsbAllocationRequest(Context ctx) {
++        try {
++            var req = kObjectMapper.readValue(ctx.body(), UsbAllocationRequest.class);
++            if (req.port() == null) throw new IllegalArgumentException("port is required");
++            ctx.status(200);
++            ctx.result(UsbBandwidth.setAllocation(req.port(), req.bytes()));
++        } catch (IllegalArgumentException | IllegalStateException e) {
++            ctx.status(400);
++            ctx.result(e.getMessage());
++        } catch (Exception e) {
++            ctx.status(500);
++            ctx.result("Couldn't change the allocation: " + e.getMessage());
++        }
++    }
++
+     /** GET /api/fieldcal: state, live guidance, solve progress, recordings and results. */
+     public static void onFieldCalStatusRequest(Context ctx) {
+         try {
+diff --git a/photon-server/src/main/java/org/photonvision/server/Server.java b/photon-server/src/main/java/org/photonvision/server/Server.java
+index fa3d9d89..71b9fac4 100644
+--- a/photon-server/src/main/java/org/photonvision/server/Server.java
++++ b/photon-server/src/main/java/org/photonvision/server/Server.java
+@@ -135,6 +135,8 @@ public class Server {
+         app.get("/api/rewind", RequestHandler::onRewindStatusRequest);
+         app.post("/api/rewind", RequestHandler::onRewindSetRequest);
+         app.get("/api/rewind/download", RequestHandler::onRewindDownloadRequest);
++        app.get("/api/usb/bandwidth", RequestHandler::onUsbBandwidthRequest); // SpectrumJetson (32)
++        app.post("/api/usb/bandwidth", RequestHandler::onUsbAllocationRequest);
+         app.get("/api/fieldcal", RequestHandler::onFieldCalStatusRequest); // SpectrumJetson
+         app.post("/api/fieldcal", RequestHandler::onFieldCalActionRequest);
+         app.get("/api/fieldcal/file", RequestHandler::onFieldCalFileRequest);

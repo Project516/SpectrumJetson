@@ -103,7 +103,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
 | 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance), gray and colour; it uses ~180 MB of memory per camera. Leave it out to decode on the CPU. |
-| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–30. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–32. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 | 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
 | 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
 
@@ -191,7 +191,41 @@ So about **6700 bytes fit, whichever ports the cameras are on** (about 430 Mbps)
   - **Not the Key E slot:** its USB is Bus 1 again, and it holds the Wi-Fi card.
 - **CSI cameras:** the dev kit's two ribbon-cable connectors don't use USB at all (see "Next season" below).
 
-`scripts/jetson/usb-bandwidth.py` shows what each camera reserves, which ports failed and why, and the cap command to fix it. The health check runs it too.
+**The Camera Matching page shows all of this** (`photonvision-32`). A **USB bandwidth** card at the top draws the shared budget as a bar, one colour per camera, with what each actually sends filled in. Per camera it shows:
+- **FPS** and **Using:** what the camera really sends, in MB/s and as a share of its allocation. At 90% or more it says "squeezed" (see below).
+- **Largest frame:** the biggest recent frame, how many times it fits in one frame time at the camera's allocation ("fits 1.4x"), and how long it takes to cross USB.
+- **Allocation:** what it reserves. Pick another from the list to change it:
+  - it's saved for the next boot;
+  - the camera is reset, like a replug, to apply it: about 2 s without frames;
+  - choices that would go over the budget are greyed out, so to give one camera more, lower another first.
+
+Each camera's card also gets a line like "USB bandwidth: 3.4 of 10.2 MB/s (port 1-2.4)".
+
+**What if a camera needs more than its allocation?** It can't take more: the USB host lets it send only that many bytes per 125 µs. Its allocation is also guaranteed, so one camera never takes another's.
+
+We tested what the camera itself does by giving two cameras less than they were sending (2026-09-24). Both kept their frame rate and compressed harder instead:
+
+| Camera | Allocation | fps | Average frame | Frame time on USB | Slots in use |
+| --- | --- | --- | --- | --- | --- |
+| TopRight (Thriftiest) | 1280 B (10.2 MB/s) | 121 | 47.5 KB | 4.6 ms | — |
+| TopRight | 640 B (5.1 MB/s) | 121 | 40.8 KB | 8.0 ms | 97% |
+| Colour USB Camera, 640x480 | 256 B (2.0 MB/s) | 30 | 36.6 KB | 18 ms | 76% |
+| Colour USB Camera | 128 B (1.0 MB/s) | 30 | 31.5 KB | 31 ms | 96% |
+
+So a squeezed camera:
+- sends lower-quality JPEGs, which may cost AprilTag range and precision (not yet measured with tags);
+- adds latency, because each frame takes longer to cross USB.
+
+We haven't pushed a camera so far that it drops frames.
+
+**Choosing an allocation:**
+- **AprilTag cameras:** keep them out of "squeezed" (under 90%), with "fits" at 1.3x or more.
+- **The cost of going smaller:** latency. A 60 KB frame takes 5.9 ms to cross USB at 1280 bytes, and 8.0 ms at 944.
+- **Slower cameras** have room to spare: a 30 fps game-piece camera or a 60 fps camera usually fits 2–6x.
+
+The numbers come from our camera driver, which counts each camera's bytes and largest frames (`kernel/uvcvideo-payload-cap.patch`). Allocations set on the page are per USB port (e.g. `1-2.4:944`) and override the per-model defaults from `11-uvcvideo-payload-cap.sh`, which keeps them when reinstalled.
+
+`scripts/jetson/usb-bandwidth.py` shows the same from the command line: what each camera reserves, which ports failed and why, and the cap command to fix it. The health check runs it too.
 
 **Timestamps mark mid-exposure** (`photonvision-13`): the Jetson subtracts half the exposure from every frame's timestamp, so the robot shouldn't. The camera's own delay (readout and JPEG, before its first packet) is still to be measured on the robot with the spin-in-front-of-a-tag test, and set as `SPECTRUM_CAMERA_DELAY_US`. The camera doesn't send UVC hardware timestamps; we checked.
 
@@ -361,7 +395,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 | Flash hangs at "Waiting for target to boot-up" for minutes | NetworkManager or the firewall is interfering | Use `02-flash-nvme.sh`, which handles both. |
 | Camera doesn't show up (`lsusb`, no `/dev/video*`) | Loose cable, or plugged straight into the USB-C port | Reseat or swap the cable. Cameras work on USB-C through a hub (it shares the USB-A ports' bandwidth). |
 | Kernel log: "new low-speed USB device … error -71 … unable to enumerate USB device" | The camera's data wires aren't connecting: cable, adapter, or a plug not fully in (seen with two cameras at once on 2026-09-24) | A camera that should be high-speed showing up as low-speed is a data-line problem. Reseat it, or swap the cable. `scripts/jetson/usb-bandwidth.py` and the health check name the port. |
-| A 3rd, 4th or 5th camera won't start streaming ("No space left on device", "Not enough bandwidth" in the kernel log) | USB 2.0 bandwidth: a camera reserves bandwidth for its alternate setting, and every USB 2.0 port shares one budget (moving to USB-C doesn't help) | Run `scripts/jetson/usb-bandwidth.py`: it prints the cap to install, e.g. `CAP=1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600 scripts/jetson/11-uvcvideo-payload-cap.sh --install`. A camera it can't cap (the Razer Kiyo) takes half the budget by itself. |
+| A 3rd, 4th or 5th camera won't start streaming ("No space left on device", "Not enough bandwidth" in the kernel log) | USB 2.0 bandwidth: a camera reserves bandwidth for its alternate setting, and every USB 2.0 port shares one budget (moving to USB-C doesn't help) | On the Camera Matching page, lower another camera's allocation in the USB bandwidth card. Or run `scripts/jetson/usb-bandwidth.py`: it prints the cap to install, e.g. `CAP=1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600 scripts/jetson/11-uvcvideo-payload-cap.sh --install`. A camera it can't cap (the Razer Kiyo) takes half the budget by itself. |
 | Low FPS (~34) | Exposure too long (the units are 100 µs; the slider shows ms) | Exposure 50–83 (5–8.3 ms). |
 | Tags flicker in and out | Decision margin near the cutoff (dim light, or flickering light) | Run `tests/flicker-check/run.sh`. If frames pulse, use exposure 83; otherwise lower the cutoff a little. Retune on the field. |
 | One camera shows no detections, and the log fills with "invalid JPEG image received" | The camera got stuck sending corrupt frames (seen once after rapid restarts) | PhotonVision now recovers it by itself (`photonvision-29`): it reconnects the camera after 3 s without usable frames, then resets it at the USB level, like a replug, 5 s later. Look for "no usable frames" in the log. If it keeps happening, replug that camera or restart PhotonVision. |
@@ -431,6 +465,10 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Dashboard stream only while someone is watching, capped at 30 fps (`photonvision-15`)
 - [ ] Game-piece colour camera on the robot
 - [x] USB bandwidth: capped camera driver so 4 cameras fit on USB-A (alt 7, tested with 2: 122 fps, no bad frames)
+- [x] 5 cameras on USB 2.0 (4 on USB-A, 1 on a USB-C hub): the whole USB 2.0 side shares one budget, measured
+- [x] USB bandwidth card on Camera Matching (`photonvision-32`): allocated vs used per camera, and a per-camera allocation setting
+- [ ] Check `photonvision-31` live: the `health/problem` topic, and no USB resets while a camera lacks bandwidth
+- [ ] Measure whether a squeezed AprilTag camera (lower JPEG quality) loses range or precision
 - [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
 - [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
