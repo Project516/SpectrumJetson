@@ -125,12 +125,7 @@ class _Renderer:
         self.cam, self.size = cam, size
         u, v = np.meshgrid(np.arange(cam.width, dtype=np.float32), np.arange(cam.height, dtype=np.float32))
         pts = np.stack([u.ravel(), v.ravel()], axis=1).reshape(-1, 1, 2)
-        crit = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 40, 1e-7)
-        if hasattr(cv2, "undistortPointsIter"):  # OpenCV 4
-            und = cv2.undistortPointsIter(pts, cam.K, cam.dist8(), None, None, crit)
-        else:  # OpenCV 5 folded it into undistortPoints
-            und = cv2.undistortPoints(pts, cam.K, cam.dist8(), criteria=crit)
-        und = und.reshape(-1, 2)
+        und = cam.undistort(pts.reshape(-1, 2)).astype(np.float32)
         # Pixels the distortion model can't reach (past its turning radius, often the far corners)
         # stay background: their "ray" doesn't project back to them.
         back = cam.project(np.c_[und, np.ones(len(und))])

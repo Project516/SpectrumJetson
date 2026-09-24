@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from . import geometry as g
-from . import rewind, segments, solve as solver, report, synth
+from . import gpu971, rewind, segments, solve as solver, report, synth
 from .camera import Camera
 from .tags import Detector
 
@@ -52,23 +52,31 @@ def _detect_part(task):
 
 
 def detect_session(session_dir: Path, every: int, min_margin: float, cache: Path | None, only: list[str] | None,
-                   workers: int | None = None):
-    """Tag corners in every ``every``-th frame of every camera, on all CPU cores. Cached in
-    ``cache`` (redone if the settings change)."""
-    key = {"every": every, "minMargin": min_margin}
+                   workers: int | None = None, detector: str = "cpu", cams: dict[str, Camera] | None = None):
+    """Tag corners in every ``every``-th frame of every camera: WPILib's detector on all CPU cores
+    ("cpu"), or the 971 GPU detector on the Jetson ("971"). Cached in ``cache`` (redone if the
+    settings change)."""
+    key = {"every": every, "minMargin": min_margin, "detector": detector}
+    if detector == "cpu":
+        key.pop("detector")  # caches from before the 971 option
     if cache and cache.exists():
         raw = json.loads(cache.read_text())
         if raw.get("settings") == key:
             return {c: [(t, {int(k): np.array(v) for k, v in d.items()}) for t, d in fr]
                     for c, fr in raw["cameras"].items() if not only or c in only}
     srcs = [s_ for s_ in rewind.sources(session_dir) if not only or s_.name in only]
-    workers = workers or os.cpu_count() or 1
-    parts = max(1, -(-workers // max(1, len(srcs))))  # split each camera across the cores
-    tasks = [(src, every * parts, k * every, min_margin) for src in srcs for k in range(parts)]
     out: dict[str, list] = {src.name: [] for src in srcs}
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        for name, fr in ex.map(_detect_part, tasks):
-            out[name] += fr
+    if detector == "971":
+        for src in srcs:  # one camera at a time: they share the GPU
+            csv_path = (cache.parent if cache else Path(session_dir)) / f"971-{src.name}.csv"
+            out[src.name] = gpu971.detect(src, every, (cams or {}).get(src.name), min_margin, csv_path)
+    else:
+        workers = workers or os.cpu_count() or 1
+        parts = max(1, -(-workers // max(1, len(srcs))))  # split each camera across the cores
+        tasks = [(src, every * parts, k * every, min_margin) for src in srcs for k in range(parts)]
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            for name, fr in ex.map(_detect_part, tasks):
+                out[name] += fr
     for src in srcs:
         out[src.name].sort(key=lambda f: f[0])
         print(f"  {src.name}: {len(out[src.name])} frames analysed, tags in "
@@ -90,6 +98,9 @@ def cmd_solve(a) -> int:
               "Camera.frames.csv)", file=sys.stderr)
         return 2
     sizes = {src.name: rewind.frame_size(src) for src in srcs}
+    jetson_db = Path("/opt/photonvision/photonvision_config/photon.sqlite")
+    if not a.photon_db and set(sizes) - set(cams) and jetson_db.exists() and os.access(jetson_db, os.R_OK):
+        a.photon_db = jetson_db  # on the Jetson: PhotonVision's own calibrations
     if a.photon_db:
         for name, cals in rewind.cameras_from_photon_db(a.photon_db).items():
             if name in sizes and name not in cams:
@@ -125,10 +136,17 @@ def cmd_solve(a) -> int:
     missing = sorted(set(sizes) - set(cams))
     if missing:
         print(f"  no calibration for {', '.join(missing)}: skipped", file=sys.stderr)
-    out = Path(a.out or Path(a.session) / "fieldcal")
+    out = Path(a.out) if a.out else Path(a.session) / "fieldcal"
+    if not a.out and not os.access(a.session, os.W_OK):  # the Jetson's sessions belong to root
+        out = Path.home() / "fieldcal" / Path(a.session).resolve().name
     every = a.every or max(1, round(float(session.get("fps") or 30.0) / 5.0))  # ~5 fps is plenty when still
-    print(f"Detecting tags (every {every} frame(s))...", file=sys.stderr)
-    dets = detect_session(Path(a.session), every, a.min_margin, out / "detections.json", a.cameras)
+    detector = a.detector
+    if detector == "auto":
+        detector = "971" if gpu971.binary() and all(s_.kind == "raw" for s_ in srcs) else "cpu"
+    print(f"Detecting tags with the {'971 GPU' if detector == '971' else 'CPU'} detector "
+          f"(every {every} frame(s))...", file=sys.stderr)
+    dets = detect_session(Path(a.session), every, a.min_margin, out / "detections.json", a.cameras,
+                          detector=detector, cams=cams)
     dets = {c: v for c, v in dets.items() if c in cams}
     segs = segments.find_still_segments(dets, max_motion_px=a.max_motion_px, min_still_s=a.min_still_s)
     obs = segments.observations(dets, segs)
@@ -236,6 +254,8 @@ def main(argv=None) -> int:
     s.add_argument("--layout", type=Path, required=True)
     s.add_argument("--out", type=Path)
     s.add_argument("--every", type=int, help="analyse every Nth frame (default: about 5 per second)")
+    s.add_argument("--detector", choices=["auto", "cpu", "971"], default="auto",
+                   help="971: PhotonVision's GPU detector (on the Jetson, the default there); cpu: WPILib's")
     s.add_argument("--cameras", type=lambda v: v.split(","), help="only these cameras")
     s.add_argument("--photon-db", type=Path, help="PhotonVision's photon.sqlite, for the lens calibrations if session.json has none")
     s.add_argument("--calibration", action="append", help="NAME=calibration.json (PhotonVision's export), if session.json has none")

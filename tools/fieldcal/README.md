@@ -11,8 +11,37 @@ every camera with Rewind. This tool then works out, all in one solve:
 The why and the procedure at an event are in
 [docs/FIELD-CALIBRATION-PLAN.md](../../docs/FIELD-CALIBRATION-PLAN.md).
 
-**Status (2026-09-24):** tested on synthetic data only, including whole rendered recordings.
-Next: a shop test on our half field.
+**Status (2026-09-24):** tested on synthetic data only, including whole rendered recordings, on
+the laptop and on the Jetson. Next: a shop test on our half field.
+
+## On the Jetson (the easy way)
+
+Nothing to copy or install: the recording, the lens calibrations and the detector are already
+there. The tags are found by replaying the recording through **the 971 GPU detector PhotonVision
+uses in matches**, with its settings, at about 400 frames per second. The solve runs on the
+Jetson's own Python (numpy, scipy and OpenCV come with JetPack).
+
+1. **Once:** build the replay tool (about 10 min, installs nothing, PhotonVision keeps running):
+
+   ```bash
+   ~/SpectrumJetson/scripts/jetson/13-build-fieldcal-detect.sh
+   ```
+
+2. **Record** the robot pushed to each spot (below), then over SSH:
+
+   ```bash
+   ls -t /opt/photonvision/rewind/sessions | head -3
+   ```
+
+   ```bash
+   ~/SpectrumJetson/tools/fieldcal/fieldcal.sh solve /opt/photonvision/rewind/sessions/<recording> --layout ~/SpectrumJetson/tools/fieldcal/layouts/2026-rebuilt-andymark.json --cad cad.json
+   ```
+
+3. **The results land in `~/fieldcal/<recording>/`** (report.md, corrected-layout.json,
+   mounts.json).
+
+Run it with the robot disabled: the replay shares the GPU with PhotonVision for the minute or so
+it takes. On a 4-camera synthetic recording the replay took 2 s and the whole solve 20 s.
 
 ## Setup (laptop, once)
 
@@ -60,14 +89,22 @@ is cached in `detections.json`, so re-solving with other options takes seconds.
 | `--photon-db photon.sqlite` | Lens calibrations from PhotonVision's database, for recordings made before `photonvision-24` (their `session.json` has no calibrations). It's in `/opt/photonvision/photonvision_config/` on the Jetson. |
 | `--calibration NAME=file.json` | A camera's calibration from PhotonVision's calibration export. |
 | `--every N` | Analyse every Nth frame (default: about 5 per second). |
+| `--detector` | `971` (the default on the Jetson once it's built) or `cpu`. |
 | `--prior-cm`, `--prior-deg` | How far tags may move from the layout before the solver resists (default 5 cm, 2°). |
 
 ## What it does
 
-1. **Detect** tags in the recorded frames with WPILib's AprilTag detector at full resolution. Two
-   changes from WPILib's defaults: the minimum cluster size is 24 px, not 300, so tags smaller than
-   about 35 px across (more than ~4 m away) still count; and the corners are shifted by −0.5 px,
-   because AprilTag puts pixel centres at +0.5 and OpenCV (so the lens calibration) at 0.
+1. **Detect** tags in the recorded frames (hamming 0 only):
+   - **On the Jetson:** the 971 GPU detector (`detector/fieldcal_detect.cc`), with PhotonVision's
+     settings (from `08-select-detector.sh`) and each camera's calibration, which it uses to
+     straighten tag edges. Frames are decoded exactly as PhotonVision decodes them.
+   - **On a laptop:** WPILib's detector at full resolution, on every core, with a 24 px minimum
+     cluster size instead of 300, so tags smaller than about 35 px across (more than ~4 m away)
+     still count. `--detector cpu` also uses it on the Jetson.
+
+   Both put pixel centres at +0.5, while OpenCV (so the lens calibration) puts them at 0, so the
+   corners are shifted by −0.5 px. Measured on rendered frames: CPU +0.50, +0.47 px; 971 +0.49,
+   +0.49 px.
 2. **Find the still stretches:** times when every camera's tag corners stayed within 1.5 px, for at
    least 1 s. Each (stretch, camera, tag) becomes one observation, the median of its corners.
 3. **Start** from the official layout (multi-tag PnP per camera, then every camera's view of a spot
@@ -113,7 +150,8 @@ tools/fieldcal/tests/test_images.sh
 |---|---|---|
 | Observations, 8 seeds | median 0.2–0.7 cm, 0.2–0.3° | about 1 cm or better |
 | With big layout errors | the 15 cm and 25 cm moves found within about 1 cm | about 1 cm or better |
-| Rendered recordings, 2 seeds | median 0.2–0.4 cm | height within 4 mm, pitch/roll within 0.03°, x/y within 2 mm, yaw within 0.02° |
+| Rendered recordings, 2 seeds (laptop, CPU detector) | median 0.2–0.4 cm | height within 4 mm, pitch/roll within 0.03°, x/y within 2 mm, yaw within 0.02° |
+| Rendered recording (Jetson, 971 detector) | median 0.4 cm | height within 3 mm, pitch/roll within 0.02°, x/y within 3 mm, yaw within 0.01° |
 
 On rendered recordings, the report also found both mistakes planted in the test's CAD file: a
 camera's pitch off by 1.5°, and another's height off by 1 cm.
@@ -133,7 +171,7 @@ camera's pitch off by 1.5°, and another's height off by 1 cm.
 
 ## Files
 
-- `fieldcal/`: `camera.py` (lens model), `tags.py` (detector, tag geometry), `rewind.py` (both
-  recording formats), `segments.py` (still stretches), `solve.py` (initialisation, bundle
+- `fieldcal/`: `camera.py` (lens model), `tags.py` (CPU detector, tag geometry), `gpu971.py` (the
+  971 replay on the Jetson), `rewind.py` (both recording formats), `segments.py` (still stretches), `solve.py` (initialisation, bundle
   adjustment, alignment, anchors), `report.py`, `synth.py` (synthetic truth and rendering).
 - `layouts/2026-rebuilt-andymark.json`: the layout from our PhotonVision (32 tags, 16.518 × 8.043 m).

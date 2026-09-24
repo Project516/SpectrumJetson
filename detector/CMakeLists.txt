@@ -86,3 +86,11 @@ if(NVINFER_LIB)
 else()
   message(STATUS "TensorRT (libnvinfer) not found: skipping libspectrumtrt.so")
 endif()
+
+# SpectrumJetson: fieldcal_detect, which replays a Rewind recording through the same 971 detector
+# for tools/fieldcal (field calibration). A command-line tool; not installed, not used by
+# PhotonVision. Build it alone with --target fieldcal_detect.
+add_executable(fieldcal_detect fieldcal_detect.cc)
+target_include_directories(fieldcal_detect PRIVATE ${BOS_DIR})
+target_link_libraries(fieldcal_detect PRIVATE 971apriltag absl::flags wpiutil CUDA::cudart JPEG::JPEG
+                                              Threads::Threads ${CMAKE_DL_LIBS})

@@ -19,7 +19,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
-import robotpy_apriltag as rat  # also loads libwpiutil and libapriltag
+
+def _rat():
+    """robotpy_apriltag, imported only when needed (the Jetson uses the 971 detector instead)."""
+    import robotpy_apriltag  # also loads libwpiutil and libapriltag
+
+    return robotpy_apriltag
 
 # FRC tags since 2024: 36h11, 6.5 in (165.1 mm) black square.
 DEFAULT_TAG_SIZE = 0.1651
@@ -45,6 +50,7 @@ class Detector:
 
     def __init__(self, decimate: float = 1.0, max_hamming: int = 0, min_margin: float = 15.0,
                  min_cluster_px: int = 24):
+        rat = _rat()
         self.det = rat.AprilTagDetector()
         self.det.addFamily("tag36h11", max_hamming)
         cfg = self.det.getConfig()
@@ -88,7 +94,7 @@ def official_tag_cells(tag_id: int) -> np.ndarray:
     size measures (the black border square), upright."""
     global _lib, _family
     if _lib is None:
-        base = os.path.dirname(rat.__file__)
+        base = os.path.dirname(_rat().__file__)
         path = glob.glob(os.path.join(base, "..", "native", "apriltag", "lib", "libapriltag.so*"))[0]
         _lib = ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
         _lib.tag36h11_create.restype = ctypes.c_void_p

@@ -348,9 +348,10 @@ The detailed technical reference, with exact versions, commits and measurements,
 | Folder | What's in it |
 | --- | --- |
 | `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), back up and restore the SSD (04, 05), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
-| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), install a YOLO model (12), plus `health-check.sh` |
+| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), install a YOLO model (12), field-calibration replay tool (13), plus `health-check.sh` |
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
-| `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoders, CPU and hardware, and the TensorRT object detector) |
+| `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoders, CPU and hardware, the TensorRT object detector, and `fieldcal_detect`, which replays Rewind recordings through the detector) |
+| `tools/fieldcal/` | Field calibration: tag positions and camera mounts from a recording of the robot pushed to still spots ([README](tools/fieldcal/README.md)) |
 | `kernel/` | Our patch to Linux's USB camera driver (bandwidth cap), built by `11-uvcvideo-payload-cap.sh` |
 | `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test, flicker check, CPU profiler, performance snapshot, telemetry and mount-estimate check |
 | `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, the upstream PhotonVision port, the game-piece models, and the original handoff document that started the project |
@@ -386,9 +387,9 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
 - [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
 - [ ] Field calibration mode: push the robot by hand to 10–20 spots, then solve for the event's real tag positions, every camera's mount and the best camera settings ([docs/FIELD-CALIBRATION-PLAN.md](docs/FIELD-CALIBRATION-PLAN.md)). Test in the shop first.
-  - [x] Offline solver on a laptop: [tools/fieldcal](tools/fieldcal/README.md). On synthetic recordings: tags to a few mm, camera height to 4 mm, pitch and roll to 0.03°
+  - [x] Solver: [tools/fieldcal](tools/fieldcal/README.md). On synthetic recordings: tags to a few mm, camera height to 4 mm, pitch and roll to 0.03°
+  - [x] Runs on the Jetson, replaying the recording through the 971 GPU detector at ~400 fps (`scripts/jetson/13-build-fieldcal-detect.sh`)
   - [ ] Shop test on our half field
-  - [ ] Run it on the Jetson, replaying recordings through the 971 GPU detector
   - [ ] Recalibrate the lenses with board views right into the corners: our calibrations can't model the outer 1–4% of the image
 - [x] The camera controls PhotonVision's UI didn't show (contrast, gamma, sharpness, backlight compensation) are on the Input tab (`photonvision-28`), at the camera's defaults unless set
 - [ ] Measure whether contrast, gamma or sharpness help (decision margin, far-tag range, corner jitter): the field-calibration settings sweep

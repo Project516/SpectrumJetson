@@ -422,8 +422,8 @@ easy, and it's worth benchmarking.
 **Field calibration mode (solver built 2026-09-24):** during field calibration, push the robot by hand to
 10–20 spots. One solve then gives the event field's real tag positions, every camera's
 `robotToCamera`, and settings recommendations. Plan: [FIELD-CALIBRATION-PLAN.md](FIELD-CALIBRATION-PLAN.md).
-The laptop solver is [tools/fieldcal](../tools/fieldcal/README.md); next is running it on the Jetson
-with the 971 detector.
+The solver is [tools/fieldcal](../tools/fieldcal/README.md). It runs on the Jetson, replaying
+recordings through the 971 detector, or on a laptop.
 
 **Before October (cheap):**
 1. Test 3–4 cameras when they arrive (`tests/perf-snapshot.sh`).

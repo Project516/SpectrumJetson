@@ -1,8 +1,9 @@
 # Field calibration mode (plan)
 
-Agreed 2026-09-24. **The offline solver is built:** [tools/fieldcal](../tools/fieldcal/README.md),
-tested on synthetic data including rendered recordings. Not built yet: running it on the Jetson
-with the 971 GPU detector, and the settings sweep. Next: a shop test on our half field.
+Agreed 2026-09-24. **The solver is built:** [tools/fieldcal](../tools/fieldcal/README.md). It runs
+on the Jetson, replaying the recording through the 971 GPU detector PhotonVision uses, or on a
+laptop. Tested on synthetic data, including rendered recordings. Not built yet: the settings
+sweep. Next: a shop test on our half field.
 
 During an event's field calibration time, with the robot
 pushed around **by hand** (it can't be driven then), measure three things from the robot's own

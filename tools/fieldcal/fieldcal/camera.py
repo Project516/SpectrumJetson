@@ -98,14 +98,23 @@ class Camera:
 
     def coverage(self) -> float:
         """Fraction of the image the distortion model can reach at all."""
-        import cv2
-
         u, v = np.meshgrid(np.linspace(0, self.width - 1, 64), np.linspace(0, self.height - 1, 40))
         pts = np.stack([u.ravel(), v.ravel()], axis=1)
-        und = cv2.undistortPoints(pts.reshape(-1, 1, 2), self.K, self.dist8(),
-                                  criteria=(cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 60, 1e-9)).reshape(-1, 2)
+        und = self.undistort(pts, iterations=60)
         back = self.project(np.c_[und, np.ones(len(und))])
         return float(np.mean(np.linalg.norm(back - pts, axis=1) < 0.5))
+
+    def undistort(self, uv: np.ndarray, iterations: int = 40) -> np.ndarray:
+        """Pixels (N x 2) -> normalised, undistorted image coordinates (N x 2)."""
+        import cv2
+
+        pts = np.asarray(uv, np.float64).reshape(-1, 1, 2)
+        crit = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, iterations, 1e-9)
+        if hasattr(cv2, "undistortPointsIter"):  # OpenCV 4 (the Jetson's 4.8)
+            und = cv2.undistortPointsIter(pts, self.K, self.dist8(), None, None, crit)
+        else:  # OpenCV 5 folded it into undistortPoints
+            und = cv2.undistortPoints(pts, self.K, self.dist8(), criteria=crit)
+        return und.reshape(-1, 2)
 
     def scaled_to(self, width: int, height: int) -> "Camera":
         """The same lens at another resolution with the same aspect ratio (a binned mode)."""
