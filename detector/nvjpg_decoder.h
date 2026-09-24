@@ -36,6 +36,12 @@ void snj_destroy(SnjDecoder *d);
 int snj_decode_gray(SnjDecoder *d, const uint8_t *jpeg, size_t size, uint8_t *gray, int width,
                     int height, size_t stride);
 
+// Decodes a 4:2:2 JPEG to 8-bit BGR (width x height, rows `stride` bytes apart), converting on
+// the GPU (nvjpg_bgr.cu). Identical to libjpeg-turbo's JCS_EXT_BGR with its default settings
+// (what cscore's cv::imdecode produces). Other chroma layouts return SNJ_UNSUPPORTED.
+int snj_decode_bgr(SnjDecoder *d, const uint8_t *jpeg, size_t size, uint8_t *bgr, int width,
+                   int height, size_t stride);
+
 // The last error message for d ("" if none).
 const char *snj_error(const SnjDecoder *d);
 

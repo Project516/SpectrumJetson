@@ -1,0 +1,96 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/consumer/FileSaveFrameConsumer.java b/photon-core/src/main/java/org/photonvision/vision/frame/consumer/FileSaveFrameConsumer.java
+index dce9366a..031247ac 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/consumer/FileSaveFrameConsumer.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/consumer/FileSaveFrameConsumer.java
+@@ -139,6 +139,16 @@ public class FileSaveFrameConsumer implements Consumer<CVMat> {
+         this.saveFrameEntry = subTable.getIntegerTopic(ntEntryName).getEntry(-1); // Default negative
+     }
+ 
++    /**
++     * SpectrumJetson: whether the next accept() has work to do: a snapshot is pending, or the
++     * robot's counter moved backwards and accept() must resync. VisionModule skips the stream
++     * thread's work when neither this nor a stream viewer needs a frame.
++     */
++    public boolean wantsFrame() {
++        long currentCount = saveFrameEntry.get();
++        return currentCount != -1 && currentCount != savedImagesCount;
++    }
++
+     public void overrideTakeSnapshot() {
+         // Simulate NT change
+         saveFrameEntry.set(saveFrameEntry.get() + 1);
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/consumer/MJPGFrameConsumer.java b/photon-core/src/main/java/org/photonvision/vision/frame/consumer/MJPGFrameConsumer.java
+index b99dc23f..09cce2c2 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/consumer/MJPGFrameConsumer.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/consumer/MJPGFrameConsumer.java
+@@ -45,6 +45,14 @@ public class MJPGFrameConsumer implements AutoCloseable {
+         this(name, 320, 240, port);
+     }
+ 
++    /**
++     * SpectrumJetson: true while a client (the dashboard) is streaming. cscore enables a source
++     * only while an MjpegServer connection streams from it (CS_CONNECTION_AUTO_MANAGE).
++     */
++    public boolean hasViewers() {
++        return cvSource.isEnabled();
++    }
++
+     public void accept(CVMat image) {
+         long now = MathUtils.wpiNanoTime();
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 6935c73c..6aed56de 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -777,8 +777,13 @@ public class VisionModule {
+         if (result.inputAndOutputFrame != null
+                 && (pipelineManager.getCurrentPipelineSettings()
+                         instanceof AdvancedPipelineSettings settings)) {
+-            streamRunnable.updateData(result.inputAndOutputFrame, settings, result.targets);
+-            // The streamRunnable manages releasing in this case
++            if (streamFrameWanted()) {
++                streamRunnable.updateData(result.inputAndOutputFrame, settings, result.targets);
++                // The streamRunnable manages releasing in this case
++            } else {
++                // SpectrumJetson: no viewer and no snapshot, or not yet time for the next stream frame
++                result.release();
++            }
+         } else {
+             consumeResults(result.inputAndOutputFrame, result.targets);
+ 
+@@ -787,6 +792,35 @@ public class VisionModule {
+         }
+     }
+ 
++    // SpectrumJetson: the stream thread resizes, colour-converts and draws every frame it gets, and
++    // it used to get every frame (~0.3 ms of CPU each) even with no dashboard open. Now it gets a
++    // frame only while a stream has a viewer or a snapshot is pending, and at most
++    // SPECTRUM_STREAM_FPS a second while streaming (default 30; 0 = every frame). Snapshots are
++    // never delayed by the cap.
++    private static final double kStreamFps = streamFpsSetting();
++    private long nextStreamFrameNs = 0;
++
++    private static double streamFpsSetting() {
++        try {
++            String v = System.getenv("SPECTRUM_STREAM_FPS");
++            return v == null ? 30 : Double.parseDouble(v);
++        } catch (NumberFormatException e) {
++            return 30;
++        }
++    }
++
++    private boolean streamFrameWanted() {
++        if (inputFrameSaver.wantsFrame() || outputFrameSaver.wantsFrame()) return true;
++        if (!inputVideoStreamer.hasViewers() && !outputVideoStreamer.hasViewers()) return false;
++        if (kStreamFps <= 0) return true;
++        long now = System.nanoTime();
++        if (now < nextStreamFrameNs) return false;
++        long period = (long) (1e9 / kStreamFps);
++        // Keep the average rate exact, but don't bank frames after a pause.
++        nextStreamFrameNs = nextStreamFrameNs + period < now ? now + period : nextStreamFrameNs + period;
++        return true;
++    }
++
+     private void consumePipelineResult(CVPipelineResult result) {
+         for (var dataConsumer : resultConsumers) {
+             dataConsumer.accept(result);

@@ -201,10 +201,16 @@ PhotonVision 2027.
   - **PhotonVision still wants a full-size image for the stream.** It shrinks every frame to
     213x133 for the dashboard, with no fps cap, even when no one is watching (~0.3 ms a frame).
     The direct path would give the stream its own small image instead.
-  - **Built and on (2026-09-24), see [TECHNICAL.md](TECHNICAL.md).** With 2 cameras, PhotonVision
-    fell from 0.85 to 0.52 cores. libjpeg-turbo decodes any frame the hardware can't, and one
-    frame per camera every ~2 s is checked pixel for pixel against it. Still to do: the colour
-    game-piece camera, which gains most (cscore's colour decode is 8.9 ms).
+  - **Built (2026-09-24), see [TECHNICAL.md](TECHNICAL.md).** With 2 cameras, PhotonVision fell
+    from 0.85 to 0.52 cores. libjpeg-turbo decodes any frame the hardware can't, and one frame
+    per camera every ~2 s is checked pixel for pixel against it.
+  - **libnvjpeg must be in MJPEG mode** (`cinfo.mjpeg_decode = TRUE`, as NVIDIA's NvJPEGDecoder
+    sets it). Otherwise it leaks ~250 KB a frame: PhotonVision was OOM-killed twice before we
+    found it. MJPEG mode costs ~180 MB per decoder once, then stays flat.
+  - **Colour cameras too:** NVJPG plus a CUDA kernel that repeats libjpeg's own upsampling and
+    colour arithmetic, so the BGR output is identical to cscore's. One colour camera at 120 fps:
+    1.12 → 0.59 cores. Only 4:2:2 JPEGs use it; tested on real colour photos, since our cameras
+    are mono.
 - **Tag range: the GPU detector looks for tags on a half-size image.** It finds tag outlines at
   640x400, then refines the corners and reads the ID at full size, so found tags keep full
   accuracy. The half size is hard-wired (`CHECK_EQ(quad_decimate, 2)`). Tested 2026-09-24: 40
@@ -423,7 +429,7 @@ easy, and it's worth benchmarking.
 **Next season:**
 - A replay tool for Rewind recordings.
 - Camera-mount calibration and field mapping from data.
-- Hardware JPEG decode for the colour game-piece camera.
+- Hardware JPEG decode: check it with a real colour camera's recordings, and with 4 cameras.
 - Full-size tag search for range, if the robot code will use far tags (see Jetson-specific
   findings).
 - A joint or heading-constrained solve (Whacknet, bos).

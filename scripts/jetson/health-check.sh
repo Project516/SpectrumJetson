@@ -19,6 +19,12 @@ if systemctl is-active --quiet photonvision; then
   ver=$(journalctl _PID="$P" --no-pager -o cat 2>/dev/null | grep -m1 -oE "Starting PhotonVision version [^ ]+" | awk '{print $4}')
   pass "running ${up}s, version ${ver:-?}"
   [[ ${restarts:-0} -gt 0 ]] && warn "restarted $restarts time(s) since boot (check: journalctl -u photonvision)"
+  # Normal: ~0.7 GB, plus ~180 MB per camera with the hardware JPEG decoder. A leak once grew it
+  # to 5.6 GB in minutes before the kernel killed it (libnvjpeg outside MJPEG mode, 2026-09-24).
+  rss_mb=$(( $(ps -o rss= -p "$P" | tr -d ' ') / 1024 ))
+  [[ $rss_mb -gt 2500 ]] && warn "PhotonVision is using ${rss_mb} MB of memory (normal is 0.7-1.5 GB): a leak? The kernel kills it near 7 GB"
+  ooms=$(journalctl -u photonvision -b --no-pager 2>/dev/null | grep -c "killed by the OOM killer")
+  [[ $ooms -gt 0 ]] && warn "PhotonVision was killed for running out of memory $ooms time(s) since boot"
   LOG=$(journalctl _PID="$P" --no-pager -o cat 2>/dev/null)
 else
   fail "photonvision.service is not running (sudo systemctl restart photonvision)"

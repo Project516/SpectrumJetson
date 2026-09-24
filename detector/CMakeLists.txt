@@ -61,11 +61,12 @@ find_library(NVJPEG_LIB nvjpeg PATHS ${TEGRA_LIBDIR} NO_DEFAULT_PATH)
 find_library(NVBUFSURFACE_LIB nvbufsurface PATHS ${TEGRA_LIBDIR} NO_DEFAULT_PATH)
 find_library(EGL_LIB EGL)
 if(NVJPEG_LIB AND NVBUFSURFACE_LIB AND EGL_LIB AND EXISTS ${JETSON_MMAPI}/include/libjpeg-8b/jpeglib.h)
-  add_library(spectrumnvjpg SHARED NvJpgDecoder.cc)
+  add_library(spectrumnvjpg SHARED NvJpgDecoder.cc nvjpg_bgr.cu)
   target_include_directories(spectrumnvjpg BEFORE PRIVATE ${JETSON_MMAPI}/include/libjpeg-8b
                                                           ${JETSON_MMAPI}/include)
   target_compile_definitions(spectrumnvjpg PRIVATE EGL_NO_X11)
-  set_target_properties(spectrumnvjpg PROPERTIES CXX_VISIBILITY_PRESET hidden)
+  set_target_properties(spectrumnvjpg PROPERTIES CXX_VISIBILITY_PRESET hidden
+                                                 CUDA_VISIBILITY_PRESET hidden)
   target_link_libraries(spectrumnvjpg PRIVATE ${NVJPEG_LIB} ${NVBUFSURFACE_LIB} ${EGL_LIB}
                                               CUDA::cuda_driver CUDA::cudart)
   target_link_options(spectrumnvjpg PRIVATE -Wl,--no-undefined -Wl,-rpath,${TEGRA_LIBDIR})

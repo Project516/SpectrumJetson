@@ -10,9 +10,15 @@
 //    and the next good frame must decode on the hardware again and match. Then format changes
 //    (half size, 4:2:0), where libnvjpeg reallocates its buffers.
 // 3. 4 threads (4 cameras), one decoder each, all at once: every frame must still match.
+// Every frame is also decoded to BGR (snj_decode_bgr) and must match libjpeg-turbo's JCS_EXT_BGR
+// exactly; JPEGs that aren't 4:2:2 must be refused (SNJ_UNSUPPORTED) so PhotonVision falls back.
+// Colour test recordings: tests/jpeg-hw/make-colour-recordings.py (our cameras are mono).
+// 4. Memory: after the first recording has warmed the decoder up, the process may not grow more
+//    than 64 MB over all the others (libnvjpeg outside MJPEG mode leaked ~250 KB a frame).
 // Exit code 0 only if everything passed.
 #include <dlfcn.h>
 #include <sys/resource.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -40,6 +46,7 @@ struct Api {
   decltype(&snj_create_error) create_error;
   decltype(&snj_destroy) destroy;
   decltype(&snj_decode_gray) decode;
+  decltype(&snj_decode_bgr) decode_bgr;
   decltype(&snj_error) error;
 } api;
 
@@ -52,8 +59,10 @@ void TurboExit(j_common_ptr c) { longjmp(reinterpret_cast<TurboErr *>(c->err)->j
 void TurboMsg(j_common_ptr c, int level) {
   if (level < 0) reinterpret_cast<TurboErr *>(c->err)->warnings++;
 }
-// Same settings as GpuDetectorJNI.cc. 0 ok (warnings counted), -1 error, -2 wrong size.
-int Turbo(const std::vector<uint8_t> &j, std::vector<uint8_t> &out, int w, int h, int *warnings) {
+// Same settings as GpuDetectorJNI.cc (channels 1 gray, 3 BGR). 0 ok (warnings counted), -1 error,
+// -2 wrong size.
+int Turbo(const std::vector<uint8_t> &j, std::vector<uint8_t> &out, int w, int h, int *warnings,
+          int channels = 1) {
   jpeg_decompress_struct c;
   TurboErr e;
   c.err = jpeg_std_error(&e.mgr);
@@ -67,16 +76,16 @@ int Turbo(const std::vector<uint8_t> &j, std::vector<uint8_t> &out, int w, int h
   jpeg_create_decompress(&c);
   jpeg_mem_src(&c, const_cast<unsigned char *>(j.data()), j.size());
   jpeg_read_header(&c, TRUE);
-  c.out_color_space = JCS_GRAYSCALE;
+  c.out_color_space = channels == 1 ? JCS_GRAYSCALE : JCS_EXT_BGR;
   c.dct_method = JDCT_ISLOW;
   jpeg_start_decompress(&c);
   if (static_cast<int>(c.output_width) != w || static_cast<int>(c.output_height) != h) {
     jpeg_destroy_decompress(&c);
     return -2;
   }
-  out.resize(static_cast<size_t>(w) * h);
+  out.resize(static_cast<size_t>(w) * h * channels);
   while (c.output_scanline < c.output_height) {
-    JSAMPROW row = out.data() + static_cast<size_t>(c.output_scanline) * w;
+    JSAMPROW row = out.data() + static_cast<size_t>(c.output_scanline) * w * channels;
     jpeg_read_scanlines(&c, &row, 1);
   }
   jpeg_finish_decompress(&c);
@@ -144,6 +153,24 @@ bool Size(const std::vector<uint8_t> &j, int *w, int *h) {  // from the SOF0 mar
   return false;
 }
 
+bool Is422(const std::vector<uint8_t> &j) {  // SOF0: 3 components, Y 2x1, Cb/Cr 1x1
+  for (size_t i = 2; i + 18 < j.size(); ++i) {
+    if (j[i] == 0xFF && (j[i + 1] == 0xC0 || j[i + 1] == 0xC1)) {
+      return j[i + 9] == 3 && j[i + 11] == 0x21 && j[i + 14] == 0x11 && j[i + 17] == 0x11;
+    }
+  }
+  return false;
+}
+
+long RssKb() {
+  long pages = 0, rss = 0;
+  if (FILE *f = std::fopen("/proc/self/statm", "r")) {
+    if (std::fscanf(f, "%ld %ld", &pages, &rss) != 2) rss = 0;
+    std::fclose(f);
+  }
+  return rss * (sysconf(_SC_PAGESIZE) / 1024);
+}
+
 double CpuSeconds() {
   rusage r;
   getrusage(RUSAGE_SELF, &r);
@@ -172,8 +199,10 @@ int main(int argc, char **argv) {
   api.create_error = reinterpret_cast<decltype(api.create_error)>(dlsym(h, "snj_create_error"));
   api.destroy = reinterpret_cast<decltype(api.destroy)>(dlsym(h, "snj_destroy"));
   api.decode = reinterpret_cast<decltype(api.decode)>(dlsym(h, "snj_decode_gray"));
+  api.decode_bgr = reinterpret_cast<decltype(api.decode_bgr)>(dlsym(h, "snj_decode_bgr"));
   api.error = reinterpret_cast<decltype(api.error)>(dlsym(h, "snj_error"));
-  if (!api.create || !api.create_error || !api.destroy || !api.decode || !api.error) {
+  if (!api.create || !api.create_error || !api.destroy || !api.decode || !api.decode_bgr ||
+      !api.error) {
     std::printf("FAIL: %s is missing functions\n", argv[1]);
     return 1;
   }
@@ -185,13 +214,13 @@ int main(int argc, char **argv) {
 
   // 1. Every frame, both decoders.
   std::vector<std::vector<std::vector<uint8_t>>> files;
-  std::vector<double> hw_ms;
-  long frames = 0, same = 0, skipped = 0;
+  std::vector<double> hw_ms, bgr_ms;
+  long frames = 0, same = 0, skipped = 0, bgr_same = 0, warm_rss = 0, warm_frames = 0;
+  for (int f = 2; f < argc; ++f) files.push_back(Frames(argv[f]));  // all loaded before measuring
   double cpu0 = CpuSeconds();
   for (int f = 2; f < argc; ++f) {
-    files.push_back(Frames(argv[f]));
-    long fsame = 0, fdiff = 0, fskip = 0, ffall = 0;
-    for (auto &j : files.back()) {
+    long fsame = 0, fdiff = 0, fskip = 0, ffall = 0, bsame = 0, bdiff = 0, brefused = 0, bbad = 0;
+    for (auto &j : files[f - 2]) {
       int w, hh, warnings = 0;
       if (!Size(j, &w, &hh)) {
         fskip++;
@@ -214,12 +243,40 @@ int main(int argc, char **argv) {
       } else {
         fdiff++;
       }
+      // Colour: identical to libjpeg-turbo for 4:2:2, refused otherwise.
+      std::vector<uint8_t> bref, bout(static_cast<size_t>(w) * hh * 3);
+      Turbo(j, bref, w, hh, &warnings, 3);
+      a = clk::now();
+      rc = api.decode_bgr(d, j.data(), j.size(), bout.data(), w, hh, static_cast<size_t>(w) * 3);
+      if (Is422(j)) {
+        bgr_ms.push_back(std::chrono::duration<double, std::milli>(clk::now() - a).count());
+        if (rc != SNJ_OK) {
+          if (++bbad <= 3) std::printf("  colour decode rc %d: %s\n", rc, api.error(d));
+        } else if (bout == bref) {
+          bsame++;
+        } else {
+          bdiff++;
+        }
+      } else if (rc == SNJ_UNSUPPORTED) {
+        brefused++;
+      } else {
+        if (++bbad <= 3) std::printf("  colour decode of a non-4:2:2 JPEG: rc %d, not refused\n", rc);
+      }
     }
+    bgr_same += bsame;
+    if (f == 2) {
+      warm_rss = RssKb();
+      warm_frames = frames;
+    }
+    std::printf("  colour: %ld identical, %ld DIFFER, %ld failed, %ld refused (not 4:2:2)\n", bsame,
+                bdiff, bbad, brefused);
+    if (bdiff) Fail(std::to_string(bdiff) + " colour frames differ in " + argv[f]);
+    if (bbad) Fail(std::to_string(bbad) + " colour decodes failed in " + argv[f]);
     same += fsame;
     skipped += fskip;
     std::printf("%s: %zu frames, %ld identical, %ld DIFFER, %ld not decoded by the hardware, %ld "
                 "skipped (corrupt)\n",
-                argv[f], files.back().size(), fsame, fdiff, ffall, fskip);
+                argv[f], files[f - 2].size(), fsame, fdiff, ffall, fskip);
     if (fdiff) Fail(std::to_string(fdiff) + " frames differ in " + argv[f]);
     if (ffall) Fail(std::to_string(ffall) + " frames not decoded by the hardware in " + argv[f]);
   }
@@ -232,7 +289,20 @@ int main(int argc, char **argv) {
                 hw_ms[hw_ms.size() / 2], hw_ms[static_cast<size_t>(0.99 * (hw_ms.size() - 1))],
                 hw_ms.back(), frames, cpu * 1000 / frames);
   }
+  std::sort(bgr_ms.begin(), bgr_ms.end());
+  if (!bgr_ms.empty()) {
+    std::printf("hardware colour decode + GPU conversion + copy: median %.2f ms, p99 %.2f ms over "
+                "%zu 4:2:2 frames\n",
+                bgr_ms[bgr_ms.size() / 2], bgr_ms[static_cast<size_t>(0.99 * (bgr_ms.size() - 1))],
+                bgr_ms.size());
+  }
   if (frames == 0) Fail("no frames decoded");
+  if (argc > 3) {
+    const long grew = RssKb() - warm_rss;
+    std::printf("memory: grew %ld MB over %ld frames after the first recording\n", grew / 1024,
+                frames - warm_frames);
+    if (grew > 64 * 1024) Fail("memory grew " + std::to_string(grew / 1024) + " MB: a leak");
+  }
 
   // 2. Bad input, each followed by a good frame.
   std::vector<uint8_t> good;
@@ -332,6 +402,16 @@ int main(int argc, char **argv) {
       std::vector<uint8_t> out(static_cast<size_t>(w) * hh);
       if (api.decode(td, j.data(), j.size(), out.data(), w, hh, w) != SNJ_OK || out != ref) tbad++;
       tframes++;
+      if (Is422(j) && k % 2) {  // every other frame in colour too, on the same decoder
+        std::vector<uint8_t> bref, bout(static_cast<size_t>(w) * hh * 3);
+        Turbo(j, bref, w, hh, &warnings, 3);
+        if (api.decode_bgr(td, j.data(), j.size(), bout.data(), w, hh, static_cast<size_t>(w) * 3) !=
+                SNJ_OK ||
+            bout != bref) {
+          tbad++;
+        }
+        tframes++;
+      }
     }
     api.destroy(td);
   };
@@ -341,7 +421,7 @@ int main(int argc, char **argv) {
   std::printf("4 threads for 5 s: %ld frames, %ld wrong or failed\n", tframes.load(), tbad.load());
   if (tbad) Fail("4-thread run");
 
-  std::printf("%s (%ld frames identical, %ld corrupt skipped)\n",
-              failures ? "FAILED" : "PASSED", same, skipped);
+  std::printf("%s (%ld gray and %ld colour frames identical, %ld corrupt skipped)\n",
+              failures ? "FAILED" : "PASSED", same, bgr_same, skipped);
   return failures ? 1 : 0;
 }

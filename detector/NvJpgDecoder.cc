@@ -12,6 +12,7 @@
 //     read stale frames.
 //   - After a decode error the decompress object must be re-created, or every later frame fails.
 //   - NVIDIA's NvJPEGDecoder class keeps libjpeg's default error_exit, which calls exit().
+//   - Without mjpeg_decode = TRUE (MakeCinfo), libnvjpeg leaks ~250 KB a frame.
 
 #include "nvjpg_decoder.h"
 
@@ -32,6 +33,12 @@
 #include <cudaEGL.h>  // after nvbufsurface.h; EGL_NO_X11 keeps X11's macros out
 
 #define SNJ_API __attribute__((visibility("default")))
+
+// nvjpg_bgr.cu
+cudaError_t SnjInitBgrTables();
+cudaError_t SnjYcc422ToBgr(const uint8_t *y, int y_pitch, const uint8_t *cb, const uint8_t *cr,
+                           int c_pitch, uint8_t *out, int out_pitch, int width, int height,
+                           int c_width, cudaStream_t stream);
 
 namespace {
 
@@ -74,6 +81,10 @@ struct SnjDecoder {
   // Size and sampling of the frames the buffers were made for. libnvjpeg reallocates its buffers
   // when these change, so we drop our registrations first, while the old buffers still exist.
   int format[5] = {0, 0, 0, 0, 0};
+  // snj_decode_bgr's output on the GPU, before the copy into the caller's buffer.
+  uint8_t *bgr = nullptr;
+  size_t bgr_pitch = 0;
+  int bgr_width = 0, bgr_height = 0;
   std::string error;
 };
 
@@ -96,6 +107,11 @@ void MakeCinfo(SnjDecoder *d) {
   d->err.pub.error_exit = ErrorExit;
   d->err.pub.emit_message = Silent;
   jpeg_create_decompress(&d->cinfo);
+  // Stream (MJPEG) mode, as NVIDIA's NvJPEGDecoder sets it. Without it, libnvjpeg leaks ~250 KB
+  // of memory every frame until the decompress object is destroyed: PhotonVision grew to 5.6 GB
+  // and was OOM-killed (2026-09-24). With it, a decoder takes ~85 MB once and stays flat
+  // (13,000 frames measured), with the same decode time.
+  d->cinfo.mjpeg_decode = TRUE;
   d->have_cinfo = true;
 }
 
@@ -107,11 +123,14 @@ void Reset(SnjDecoder *d) {
   MakeCinfo(d);
 }
 
-enum Step { kDecoded, kLibjpegError, kWrongSize, kHeaderUnsupported, kNotHardware, kNewFormat };
+enum Step {
+  kDecoded, kLibjpegError, kWrongSize, kHeaderUnsupported, kNot422, kNotHardware, kNewFormat
+};
 
 // The libjpeg part. Nothing here has a destructor, so longjmp out of libnvjpeg is safe.
+// bgr: the caller needs 4:2:2 chroma (the only layout the BGR kernel converts).
 Step DecodeToBuffer(SnjDecoder *d, const uint8_t *jpeg, size_t size, int width, int height,
-                    int *fd) {
+                    bool bgr, int *fd) {
   jpeg_decompress_struct *c = &d->cinfo;
   NvBufSurface vendor;  // libnvjpeg's out-parameter, as in NvJPEGDecoder::decodeToFd
   if (setjmp(d->err.jump)) return kLibjpegError;
@@ -124,6 +143,12 @@ Step DecodeToBuffer(SnjDecoder *d, const uint8_t *jpeg, size_t size, int width, 
   if (c->progressive_mode || c->num_components != 3 || c->jpeg_color_space != JCS_YCbCr) {
     jpeg_abort_decompress(c);
     return kHeaderUnsupported;
+  }
+  if (bgr && (c->comp_info[0].h_samp_factor != 2 || c->comp_info[0].v_samp_factor != 1 ||
+              c->comp_info[1].h_samp_factor != 1 || c->comp_info[1].v_samp_factor != 1 ||
+              c->comp_info[2].h_samp_factor != 1 || c->comp_info[2].v_samp_factor != 1)) {
+    jpeg_abort_decompress(c);
+    return kNot422;
   }
   const int format[5] = {width, height, c->comp_info[0].h_samp_factor,
                          c->comp_info[0].v_samp_factor, c->max_v_samp_factor};
@@ -152,8 +177,43 @@ int Fail(SnjDecoder *d, int rc, const std::string &why) {
   return rc;
 }
 
-// Copies the Y plane of libnvjpeg's buffer `fd` into gray with CUDA.
-int CopyGray(SnjDecoder *d, int fd, uint8_t *gray, int width, int height, size_t stride) {
+// Decodes on the NVJPG engine into libnvjpeg's own buffer. SNJ_OK and *fd, or an error code.
+int Decode(SnjDecoder *d, const uint8_t *jpeg, size_t size, int width, int height, bool bgr,
+           int *fd) {
+  // A thread other than the creator needs the context made current first.
+  thread_local bool context = cudaFree(nullptr) == cudaSuccess;
+  if (!context) return Fail(d, SNJ_CUDA, "no CUDA context on this thread");
+  Step step = DecodeToBuffer(d, jpeg, size, width, height, bgr, fd);
+  if (step == kNewFormat) {
+    Reset(d);
+    step = DecodeToBuffer(d, jpeg, size, width, height, bgr, fd);
+  }
+  switch (step) {
+    case kDecoded:
+      return SNJ_OK;
+    case kNewFormat:  // can't happen twice in a row: the format was just recorded
+      return Fail(d, SNJ_UNSUPPORTED, "JPEG format changed");
+    case kLibjpegError: {
+      std::string why = d->err.message;
+      Reset(d);
+      return Fail(d, SNJ_BAD_JPEG, why);
+    }
+    case kWrongSize:
+      return Fail(d, SNJ_WRONG_SIZE, "JPEG size doesn't match");
+    case kHeaderUnsupported:
+      return Fail(d, SNJ_UNSUPPORTED, "not a baseline 3-component YCbCr JPEG");
+    case kNot422:
+      return Fail(d, SNJ_UNSUPPORTED, "colour decode needs 4:2:2 chroma");
+    case kNotHardware:
+      Reset(d);  // libnvjpeg's state after a non-hardware decode is unknown
+      return Fail(d, SNJ_UNSUPPORTED, "libnvjpeg didn't use the NVJPG engine");
+  }
+  return Fail(d, SNJ_BAD_JPEG, "unreachable");
+}
+
+// libnvjpeg's buffer `fd` as seen by CUDA, registered once per buffer.
+int MapBuffer(SnjDecoder *d, int fd, int width, int height, NvBufSurface **surf_out,
+              Buffer **out) {
   struct stat sb;
   NvBufSurface *surf = nullptr;
   if (fstat(fd, &sb) != 0 || NvBufSurfaceFromFd(fd, reinterpret_cast<void **>(&surf)) != 0 ||
@@ -189,16 +249,68 @@ int CopyGray(SnjDecoder *d, int fd, uint8_t *gray, int width, int height, size_t
     d->buffers.push_back(nb);
     b = &d->buffers.back();
   }
+  *surf_out = surf;
+  *out = b;
+  return SNJ_OK;
+}
 
-  cudaMemcpy2DAsync(gray, stride, b->frame.frame.pPitch[0], b->frame.pitch, width, height,
-                    cudaMemcpyDeviceToHost, d->stream);
+int Finish(SnjDecoder *d, const char *what) {
   const cudaError_t e = cudaStreamSynchronize(d->stream);
   if (e != cudaSuccess) {
     cudaGetLastError();
     Unregister(d);
-    return Fail(d, SNJ_CUDA, std::string("CUDA copy failed: ") + cudaGetErrorString(e));
+    return Fail(d, SNJ_CUDA, std::string(what) + " failed: " + cudaGetErrorString(e));
   }
   return SNJ_OK;
+}
+
+// Copies the Y plane of libnvjpeg's buffer `fd` into gray with CUDA.
+int CopyGray(SnjDecoder *d, int fd, uint8_t *gray, int width, int height, size_t stride) {
+  NvBufSurface *surf;
+  Buffer *b;
+  if (int rc = MapBuffer(d, fd, width, height, &surf, &b); rc != SNJ_OK) return rc;
+  cudaMemcpy2DAsync(gray, stride, b->frame.frame.pPitch[0], b->frame.pitch, width, height,
+                    cudaMemcpyDeviceToHost, d->stream);
+  return Finish(d, "CUDA copy");
+}
+
+// Converts libnvjpeg's 4:2:2 planes to BGR on the GPU (nvjpg_bgr.cu), then copies that out.
+int CopyBgr(SnjDecoder *d, int fd, uint8_t *bgr, int width, int height, size_t stride) {
+  NvBufSurface *surf;
+  Buffer *b;
+  if (int rc = MapBuffer(d, fd, width, height, &surf, &b); rc != SNJ_OK) return rc;
+  const NvBufSurfacePlaneParams &pp = surf->surfaceList[0].planeParams;
+  const int c_width = (width + 1) / 2;
+  if (surf->surfaceList[0].colorFormat != NVBUF_COLOR_FORMAT_YUV422 || pp.num_planes != 3 ||
+      b->frame.planeCount != 3 || static_cast<int>(pp.width[1]) != c_width ||
+      static_cast<int>(pp.height[1]) < height || pp.pitch[1] != pp.pitch[2]) {
+    return Fail(d, SNJ_UNSUPPORTED, "libnvjpeg's buffer isn't planar 4:2:2");
+  }
+  if (d->bgr_width != width || d->bgr_height != height) {
+    cudaFree(d->bgr);
+    d->bgr = nullptr;
+    d->bgr_width = d->bgr_height = 0;
+    if (cudaError_t e = cudaMallocPitch(reinterpret_cast<void **>(&d->bgr), &d->bgr_pitch,
+                                        static_cast<size_t>(width) * 3, height);
+        e != cudaSuccess) {
+      d->bgr = nullptr;
+      return Fail(d, SNJ_CUDA, std::string("cudaMallocPitch failed: ") + cudaGetErrorString(e));
+    }
+    d->bgr_width = width;
+    d->bgr_height = height;
+  }
+  if (cudaError_t e = SnjYcc422ToBgr(
+          static_cast<const uint8_t *>(b->frame.frame.pPitch[0]), pp.pitch[0],
+          static_cast<const uint8_t *>(b->frame.frame.pPitch[1]),
+          static_cast<const uint8_t *>(b->frame.frame.pPitch[2]), pp.pitch[1], d->bgr,
+          static_cast<int>(d->bgr_pitch), width, height, c_width, d->stream);
+      e != cudaSuccess) {
+    cudaGetLastError();
+    return Fail(d, SNJ_CUDA, std::string("BGR kernel launch failed: ") + cudaGetErrorString(e));
+  }
+  cudaMemcpy2DAsync(bgr, stride, d->bgr, d->bgr_pitch, static_cast<size_t>(width) * 3, height,
+                    cudaMemcpyDeviceToHost, d->stream);
+  return Finish(d, "CUDA BGR conversion");
 }
 
 }  // namespace
@@ -211,6 +323,11 @@ SNJ_API SnjDecoder *snj_create(void) {
   // (EGL registration) need that.
   if (cudaError_t e = cudaFree(nullptr); e != cudaSuccess) {
     create_error = std::string("CUDA unavailable: ") + cudaGetErrorString(e);
+    return nullptr;
+  }
+  static const cudaError_t tables = SnjInitBgrTables();  // once per process
+  if (tables != cudaSuccess) {
+    create_error = std::string("BGR tables upload failed: ") + cudaGetErrorString(tables);
     return nullptr;
   }
   auto *d = new SnjDecoder;
@@ -230,6 +347,7 @@ SNJ_API void snj_destroy(SnjDecoder *d) {
   if (!d) return;
   Unregister(d);
   if (d->have_cinfo) jpeg_destroy_decompress(&d->cinfo);
+  cudaFree(d->bgr);
   if (d->stream) cudaStreamDestroy(d->stream);
   delete d;
 }
@@ -241,35 +359,21 @@ SNJ_API int snj_decode_gray(SnjDecoder *d, const uint8_t *jpeg, size_t size, uin
       stride < static_cast<size_t>(width)) {
     return Fail(d, SNJ_BAD_JPEG, "bad arguments");
   }
-  // A thread other than the creator needs the context made current first.
-  thread_local bool context = cudaFree(nullptr) == cudaSuccess;
-  if (!context) return Fail(d, SNJ_CUDA, "no CUDA context on this thread");
-
   int fd = -1;
-  Step step = DecodeToBuffer(d, jpeg, size, width, height, &fd);
-  if (step == kNewFormat) {
-    Reset(d);
-    step = DecodeToBuffer(d, jpeg, size, width, height, &fd);
+  if (int rc = Decode(d, jpeg, size, width, height, /*bgr=*/false, &fd); rc != SNJ_OK) return rc;
+  return CopyGray(d, fd, gray, width, height, stride);
+}
+
+SNJ_API int snj_decode_bgr(SnjDecoder *d, const uint8_t *jpeg, size_t size, uint8_t *bgr,
+                           int width, int height, size_t stride) {
+  if (!d) return SNJ_BAD_JPEG;
+  if (!jpeg || size < 4 || !bgr || width <= 0 || height <= 0 ||
+      stride < static_cast<size_t>(width) * 3) {
+    return Fail(d, SNJ_BAD_JPEG, "bad arguments");
   }
-  switch (step) {
-    case kDecoded:
-      return CopyGray(d, fd, gray, width, height, stride);
-    case kNewFormat:  // can't happen twice in a row: the format was just recorded
-      return Fail(d, SNJ_UNSUPPORTED, "JPEG format changed");
-    case kLibjpegError: {
-      std::string why = d->err.message;
-      Reset(d);
-      return Fail(d, SNJ_BAD_JPEG, why);
-    }
-    case kWrongSize:
-      return Fail(d, SNJ_WRONG_SIZE, "JPEG size doesn't match");
-    case kHeaderUnsupported:
-      return Fail(d, SNJ_UNSUPPORTED, "not a baseline 3-component YCbCr JPEG");
-    case kNotHardware:
-      Reset(d);  // libnvjpeg's state after a non-hardware decode is unknown
-      return Fail(d, SNJ_UNSUPPORTED, "libnvjpeg didn't use the NVJPG engine");
-  }
-  return Fail(d, SNJ_BAD_JPEG, "unreachable");
+  int fd = -1;
+  if (int rc = Decode(d, jpeg, size, width, height, /*bgr=*/true, &fd); rc != SNJ_OK) return rc;
+  return CopyBgr(d, fd, bgr, width, height, stride);
 }
 
 SNJ_API const char *snj_error(const SnjDecoder *d) { return d ? d->error.c_str() : ""; }

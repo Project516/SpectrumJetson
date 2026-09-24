@@ -1,0 +1,119 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index ec5c4169..c8a95f12 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -105,6 +105,16 @@ public class USBFrameProvider extends CpuImageProcessor {
+             }
+         }
+ 
++        // SpectrumJetson: colour frames (game pieces, driver mode, calibration) decoded on the
++        // Jetson's JPEG hardware when it's switched on (SPECTRUM_JPEG_DECODER=nvjpg): ~1.6 ms of
++        // CPU a 1280x800 frame, against ~5.7 ms for cscore's own decode, with identical pixels.
++        if (!useGray && directBgr && hardwareJpegDecode()) {
++            var mode = settables.getCurrentVideoMode();
++            if (mode != null && mode.pixelFormat == PixelFormat.kMJPEG) {
++                return grabMjpegAsBgr(mode.width, mode.height, m_blockForFrames ? 0 : lastTime);
++            }
++        }
++
+         if (m_blockForFrames) {
+             // We allocate memory so we don't fill a Mat in use by another thread (memory model is easier)
+             var mat = new CVMat();
+@@ -165,6 +175,71 @@ public class USBFrameProvider extends CpuImageProcessor {
+ 
+     private boolean loggedDirectGray = false;
+ 
++    /** SpectrumJetson: off after repeated failures, or with a detector library that can't. */
++    private boolean directBgr = true;
++
++    private int directBgrFailures = 0;
++    private boolean loggedDirectBgr = false;
++
++    private boolean hardwareJpegDecode() {
++        try {
++            return GpuDetectorJNI.hardwareJpegDecode();
++        } catch (UnsatisfiedLinkError e) {
++            directBgr = false;
++            logger.info("The detector library has no hardware colour decode; using cscore's");
++            return false;
++        }
++    }
++
++    private CapturedFrame directBgrFailed(String why) {
++        decodeFailures++;
++        if (++directBgrFailures >= 30) {
++            directBgr = false;
++            logger.error(
++                    "Hardware MJPEG->BGR decode failed 30 times in a row ("
++                            + why
++                            + "); using cscore's decode for this camera from now on");
++        }
++        return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
++    }
++
++    /**
++     * SpectrumJetson: like grabMjpegAsGray, for colour frames: the newest frame after {@code
++     * afterTimeUs} (0: the next frame) as the camera's own JPEG, decoded to BGR by the detector
++     * library (the Jetson's JPEG hardware plus a CUDA colour conversion).
++     */
++    private CapturedFrame grabMjpegAsBgr(int width, int height, long afterTimeUs) {
++        CvSink sink = cvSink; // the enabled sink in colour mode; kUnknown gets the raw JPEG
++        var frame = new RawFrame(); // fresh each time, so the size is this frame's (see above)
++        try {
++            frame.setInfo(0, 0, 0, PixelFormat.kUnknown);
++            long captureTimeUs =
++                    CscoreExtras.grabRawSinkFrameTimeoutLastTime(
++                            sink.getHandle(), frame.getNativeObj(), CSCORE_DEFAULT_FRAME_TIMEOUT, afterTimeUs);
++            if (captureTimeUs == 0) {
++                logger.error("Error grabbing image: " + sink.getError());
++                return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
++            }
++            lastTime = captureTimeUs;
++            Mat bgr = new Mat(height, width, CvType.CV_8UC3);
++            int rc = GpuDetectorJNI.decodeMjpegBgr(frame.getNativeObj(), bgr.getNativeObjAddr());
++            if (rc != 0) {
++                bgr.release();
++                return directBgrFailed(
++                        rc == -1 ? "frame not MJPEG" : rc == -3 ? "size mismatch" : "bad JPEG");
++            }
++            directBgrFailures = 0;
++            if (!loggedDirectBgr) {
++                loggedDirectBgr = true;
++                logger.info("Capture format: MJPEG decoded to BGR by the JPEG hardware (" + width + "x" + height + ")");
++            }
++            return new CapturedFrame(
++                    new CVMat(bgr), settables.getFrameStaticProperties(), toMidExposureUs(captureTimeUs) * 1000);
++        } finally {
++            frame.close();
++        }
++    }
++
+     /**
+      * SpectrumJetson: the camera's delay from the end of exposure to its first USB packet
+      * (sensor readout + JPEG start), in microseconds. Not visible from here; measure it on the
+diff --git a/photon-core/src/main/java/org/photonvision/vision/objects/GpuDetectorJNI.java b/photon-core/src/main/java/org/photonvision/vision/objects/GpuDetectorJNI.java
+index 48123d4c..ab659f72 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/objects/GpuDetectorJNI.java
++++ b/photon-core/src/main/java/org/photonvision/vision/objects/GpuDetectorJNI.java
+@@ -27,6 +27,21 @@ public class GpuDetectorJNI {
+      */
+     public static native int decodeMjpegGray(long rawFramePtr, long cvMatPtr);
+ 
++    /**
++     * SpectrumJetson: whether colour frames should be decoded by {@link #decodeMjpegBgr} (the
++     * Jetson's JPEG hardware is switched on and loaded) instead of by cscore.
++     */
++    public static native boolean hardwareJpegDecode();
++
++    /**
++     * SpectrumJetson: decodes a cscore RawFrame holding the camera's MJPEG image to 8-bit BGR,
++     * into {@code cvMatPtr} (a WxH CV_8UC3 Mat allocated by the caller). Same pixels as cscore's
++     * own decode; 4:2:2 JPEGs use the hardware, others libjpeg-turbo.
++     *
++     * @return 0 ok, -1 not an MJPEG frame, -2 bad JPEG, -3 Mat isn't WxH 8-bit BGR
++     */
++    public static native int decodeMjpegBgr(long rawFramePtr, long cvMatPtr);
++
+     // SpectrumJetson: all 8 coefficients of the OpenCV rational model PhotonVision's
+     // calibration produces (k1 k2 p1 p2 k3 k4 k5 k6). setparams() drops k4..k6. Only the
+     // SpectrumJetson/bos build of lib971apriltag has this; callers fall back to setparams().
