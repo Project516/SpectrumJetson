@@ -39,7 +39,7 @@ add_subdirectory(${BOS_DIR}/third_party/971apriltag 971apriltag EXCLUDE_FROM_ALL
 find_package(JNI REQUIRED)
 find_package(OpenCV REQUIRED core)
 
-add_library(971apriltag_jni SHARED GpuDetectorJNI.cc)
+add_library(971apriltag_jni SHARED GpuDetectorJNI.cc fault_kernel.cu)
 set_target_properties(971apriltag_jni PROPERTIES OUTPUT_NAME 971apriltag)
 target_include_directories(971apriltag_jni PRIVATE ${BOS_DIR} ${JNI_INCLUDE_DIRS}
                                                    ${OpenCV_INCLUDE_DIRS})

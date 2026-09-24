@@ -1,0 +1,38 @@
+diff --git a/third_party/971apriltag/apriltag.cc b/third_party/971apriltag/apriltag.cc
+index 2626a42..9fb472d 100644
+--- a/third_party/971apriltag/apriltag.cc
++++ b/third_party/971apriltag/apriltag.cc
+@@ -945,6 +945,20 @@ absl::Status GpuDetector::Detect(const uint8_t* image,
+     after_filter_.Synchronize();
+   }
+ 
++  // SpectrumJetson: a frame with no candidate blobs (uniform image: covered lens, dark pit,
++  // plain wall) leaves num_selected_blobs_host == 0. FitLines then launched a <<<0, 128>>>
++  // kernel, an invalid launch configuration that surfaced in the next CUB call as status 101
++  // on every such frame. Nothing can be detected, so report no detections.
++  if (num_selected_blobs_host == 0) {
++    for (int i = 0; i < zarray_size(detections_); ++i) {
++      apriltag_detection_t* det;
++      zarray_get(detections_, i, &det);
++      apriltag_detection_destroy(det);
++    }
++    zarray_truncate(detections_, 0);
++    return absl::OkStatus();
++  }
++
+   {
+     // Sort based on the angle.
+     size_t temp_storage_bytes = radix_sort_tmpstorage_device_.size();
+diff --git a/third_party/971apriltag/line_fit_filter.cc b/third_party/971apriltag/line_fit_filter.cc
+index c8d4042..46e6935 100644
+--- a/third_party/971apriltag/line_fit_filter.cc
++++ b/third_party/971apriltag/line_fit_filter.cc
+@@ -605,6 +605,8 @@ void FitLines(
+   constexpr size_t kThreads = 128;
+   const size_t kBlocks = (points + kPointsPerBlock - 2 * kErrorsBuffer - 1) /
+                          (kPointsPerBlock - 2 * kErrorsBuffer);
++  // SpectrumJetson: zero points would launch <<<0, kThreads>>> (invalid configuration).
++  if (kBlocks == 0) return;
+ 
+   VLOG(1) << "Spawning with " << kThreads << " threads, and " << kBlocks
+           << " blocks for " << num_extents << " blob_ids and " << points

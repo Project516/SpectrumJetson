@@ -89,12 +89,24 @@ echo "PID before $pid0, after $pid1 ($([ "$pid0" = "$pid1" ] && echo 'no restart
 echo "failures logged: $fails; stats while faulting: $(WINDOW=10 summarize)"
 
 echo
-echo "== Fault test 2: every frame fails (should exit once, systemd restarts) =="
+echo "== Fault test 2: every frame hits a non-sticky CUDA error (must NOT restart) =="
+wait_for_stats 2
+pid0=$(mainpid)
+echo 1 > $FAULT
+wait_secs 8
+rm -f $FAULT
+wait_secs 4
+pid1=$(mainpid)
+echo "PID before $pid0, after $pid1 ($([ "$pid0" = "$pid1" ] && echo 'no restart: PASS' || echo 'RESTARTED: FAIL'))"
+echo "stats after the fault stopped: $(WINDOW=3 summarize)"
+
+echo
+echo "== Fault test 3: sticky CUDA fault, context broken (should exit once, systemd restarts) =="
 wait_for_stats 2
 pid0=$(mainpid)
 t0=$(date +%s.%N)
-echo 1 > $FAULT
-# Remove the flag as soon as the abort is logged so the restarted process runs clean.
+echo sticky > $FAULT
+# Remove the flag as soon as the exit is logged so the restarted process runs clean.
 deadline=$(( $(date +%s) + 30 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   if journalctl _PID="$pid0" --no-pager -o cat 2>/dev/null | grep -q "exiting so systemd restarts"; then break; fi
@@ -111,7 +123,7 @@ done
 t_back=$(date +%s.%N)
 echo "PID $pid0 -> $(mainpid)"
 awk -v a="$t0" -v b="$t_abort" -v c="$t_back" 'BEGIN {
-  printf "time to exit after faults began: %.1f s; exit to detecting again: %.1f s\n", b-a, c-b }'
+  printf "time to exit after the fault: %.1f s; exit to detecting again: %.1f s\n", b-a, c-b }'
 
 echo
 v4l2-ctl -d /dev/video0 --set-ctrl=exposure_time_absolute=83

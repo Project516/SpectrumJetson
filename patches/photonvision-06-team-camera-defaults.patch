@@ -28,7 +28,7 @@ index 3302404d..d5588b6a 100644
  
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
 new file mode 100644
-index 00000000..f13587f9
+index 00000000..db22beb6
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
 @@ -0,0 +1,95 @@
@@ -107,7 +107,7 @@ index 00000000..f13587f9
 +     * at its highest fps; else the largest MJPEG mode running at least 60 fps; else the largest
 +     * mode. Returns -1 if the camera reported no modes.
 +     */
-+    static int pickVideoMode(Map<Integer, VideoMode> modes) {
++    public static int pickVideoMode(Map<Integer, VideoMode> modes) {
 +        int best = -1;
 +        long bestScore = Long.MIN_VALUE;
 +        for (var e : modes.entrySet()) {
@@ -128,31 +128,68 @@ index 00000000..f13587f9
 +    }
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
-index b57b01d9..14ca08d7 100644
+index b57b01d9..6e411117 100644
 --- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
 +++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
-@@ -164,6 +164,26 @@ public class VisionModule {
+@@ -164,6 +164,63 @@ public class VisionModule {
                  (result) ->
                          lastPipelineResultBestTarget = result.hasTargets() ? result.targets.get(0) : null);
  
 +        // SpectrumJetson: a brand-new camera gets the team's tuned settings (TeamCameraDefaults)
-+        // instead of stock PhotonVision's CPU AprilTag at 320x240.
++        // instead of stock PhotonVision's CPU AprilTag at 320x240. The camera usually hasn't
++        // reported its video modes yet at this point (they're enumerated when it connects), so
++        // the resolution is picked by a short background wait once the modes are known.
 +        if (pipelineManager.createdDefaultPipeline && !pipelineManager.userPipelineSettings.isEmpty()) {
 +            var first = pipelineManager.userPipelineSettings.get(0);
 +            TeamCameraDefaults.apply(first, visionSource.getSettables().getAllVideoModes());
-+            var mode = visionSource.getSettables().getAllVideoModes().get(first.cameraVideoModeIndex);
 +            logger.info(
 +                    "New camera: applied team defaults ("
 +                            + first.pipelineType
-+                            + ", "
-+                            + (mode != null ? mode.width + "x" + mode.height + " " + mode.pixelFormat : "no video modes")
 +                            + ", exposure "
 +                            + first.cameraExposureRaw
 +                            + ", brightness "
 +                            + first.cameraBrightness
-+                            + ")");
++                            + "); resolution is picked once the camera reports its modes");
 +            pipelineManager.createdDefaultPipeline = false;
 +            saveModule();
++            var modeThread =
++                    new Thread(
++                            () -> {
++                                for (int i = 0; i < 150; i++) { // up to 30 s
++                                    var modes = visionSource.getSettables().getAllVideoModes();
++                                    if (!modes.isEmpty()) {
++                                        int idx = TeamCameraDefaults.pickVideoMode(modes);
++                                        if (idx >= 0) {
++                                            first.cameraVideoModeIndex = idx;
++                                            var m = modes.get(idx);
++                                            logger.info(
++                                                    "New camera: team default resolution "
++                                                            + m.width
++                                                            + "x"
++                                                            + m.height
++                                                            + " "
++                                                            + m.pixelFormat
++                                                            + " @ "
++                                                            + m.fps
++                                                            + " fps (mode "
++                                                            + idx
++                                                            + ")");
++                                            setPipeline(pipelineManager.getRequestedIndex());
++                                            saveAndBroadcastAll();
++                                        }
++                                        return;
++                                    }
++                                    try {
++                                        Thread.sleep(200);
++                                    } catch (InterruptedException e) {
++                                        return;
++                                    }
++                                }
++                                logger.warn("New camera: no video modes after 30 s; resolution left at default");
++                            },
++                            "TeamDefaultVideoMode");
++            modeThread.setDaemon(true);
++            modeThread.start();
 +        }
 +
          // Sync VisionModule state with the first pipeline index

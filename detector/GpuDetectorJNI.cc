@@ -18,7 +18,7 @@
 //   - Detect() failures (absl::Status) are logged and return no detections
 //   - CUDA errors throw (patches/bos-01-nonfatal-cuda.patch) instead of aborting the JVM:
 //     the frame is skipped and the detector rebuilt on the next frame; only after
-//     failing continuously for kMaxFailingTime do we exit so systemd restarts
+//     the CUDA context stays broken (sticky error) for kMaxFailingTime do we exit so systemd restarts
 //     PhotonVision (a broken CUDA context cannot be recovered in-process)
 //   - no per-detection std::cout; a once-per-second stats line instead
 
@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <iostream>
 #include <mutex>
@@ -40,6 +41,8 @@
 #include "apriltag/apriltag.h"
 #include "apriltag/tag36h11.h"
 #include "third_party/971apriltag/apriltag.h"
+
+void SpectrumInjectStickyCudaFault();  // fault_kernel.cu (test only)
 
 namespace {
 
@@ -56,18 +59,22 @@ int MinWhiteBlackDiff() {
   return 5;
 }
 
-// Test hook: if /tmp/spectrum-971-fault-every contains N > 0, every Nth frame hits a
-// real CUDA error (cudaSetDevice on a bad ordinal right before Detect, the
-// NVIDIA/cccl#1791 case). N=1 fails every frame, exercising abort-and-restart.
-// Re-read every 30 frames so a test can remove it before the restarted process runs.
+// Test hooks, read from /tmp/spectrum-971-fault-every (re-read every 30 frames so a test can
+// remove it before a restarted process runs):
+//   N > 0     every Nth frame hits a real, non-sticky CUDA error (cudaSetDevice on a bad
+//             ordinal right before Detect: the NVIDIA/cccl#1791 case) -> frame skipped
+//   "sticky"  one null-pointer kernel write: a sticky error that breaks the CUDA context
+//             -> the watchdog restarts PhotonVision
 constexpr const char *kFaultFile = "/tmp/spectrum-971-fault-every";
+constexpr int kFaultSticky = -1;
 int FaultEvery() {
   static int n = 0;
   static int calls = 0;
   if (calls++ % 30 == 0) {
     n = 0;
     if (FILE *f = std::fopen(kFaultFile, "r")) {
-      if (std::fscanf(f, "%d", &n) != 1) n = 0;
+      char buf[16] = {0};
+      if (std::fgets(buf, sizeof(buf), f)) n = (std::strncmp(buf, "sticky", 6) == 0) ? kFaultSticky : std::atoi(buf);
       std::fclose(f);
     }
   }
@@ -106,9 +113,9 @@ struct DetectorSlot {
   Stats stats;
 };
 
-// Failing continuously this long (and at least kMinFailures frames) means the CUDA
-// context is assumed broken. Time-based because each failed frame also rebuilds the
-// detector, so frame count alone stretched this to ~5 s.
+// A broken CUDA context (sticky error) for this long, over at least kMinFailures frames,
+// means only a process restart can recover. Time-based because each failed frame also
+// rebuilds the detector, so frame count alone stretched this to ~5 s.
 constexpr std::chrono::milliseconds kMaxFailingTime{1000};
 constexpr int kMinFailures = 3;
 
@@ -149,19 +156,27 @@ bool Rebuild(DetectorSlot &s, size_t width, size_t height) {
   }
 }
 
-// Called with s.mu held after a failed frame or rebuild.
+// Called with s.mu held after a failed frame or rebuild. The frame is skipped and the detector
+// rebuilt next frame. PhotonVision is restarted only if the CUDA *context* is broken: a sticky
+// error (illegal address, launch failure) makes every later call fail, including
+// cudaDeviceSynchronize, and only a new process recovers. A failure on one camera with a
+// healthy context must never take the other cameras down or cause a restart loop.
 void RecordFailure(DetectorSlot &s, jlong handle, const char *what) {
   s.needs_rebuild = true;
   auto now = std::chrono::steady_clock::now();
-  if (s.consecutive_failures == 0) s.first_failure = now;
+  const bool context_ok = cudaDeviceSynchronize() == cudaSuccess;
+  cudaGetLastError();  // clear whatever was pending so the rebuild starts clean
+  if (s.consecutive_failures == 0 || context_ok) s.first_failure = now;
   if (++s.consecutive_failures <= 5 || s.consecutive_failures % 30 == 0) {
     std::cout << "971 detector h" << handle << " failure " << s.consecutive_failures << ": "
-              << what << std::endl;
-  }
-  if (s.consecutive_failures >= kMinFailures && now - s.first_failure >= kMaxFailingTime) {
-    std::cout << "971 detector h" << handle << ": " << s.consecutive_failures
-              << " consecutive failures over 1 s; exiting so systemd restarts PhotonVision"
+              << what << (context_ok ? " (CUDA context OK; frame skipped)" : " (CUDA context BROKEN)")
               << std::endl;
+  }
+  if (!context_ok && s.consecutive_failures >= kMinFailures &&
+      now - s.first_failure >= kMaxFailingTime) {
+    std::cout << "971 detector h" << handle << ": CUDA context broken for "
+              << std::chrono::duration<double>(now - s.first_failure).count()
+              << " s; exiting so systemd restarts PhotonVision" << std::endl;
     // _exit, not abort(): SIGABRT runs the JVM crash handler and Apport, which took ~28 s
     // (and a 156 MB /var/crash report) before the process died. Exit code 1 still makes
     // systemd's Restart=on-failure restart it.
@@ -421,6 +436,13 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
   if (int every = FaultEvery(); every > 0) {
     static long frame = 0;
     if (++frame % every == 0) cudaSetDevice(9999);  // leaves "invalid device ordinal"
+  } else if (every == kFaultSticky) {
+    static bool injected = false;
+    if (!injected) {
+      injected = true;
+      std::cout << "971 TEST: injecting a sticky CUDA fault" << std::endl;
+      SpectrumInjectStickyCudaFault();
+    }
   }
   try {
     absl::Status status = s->gpu->Detect(img.ptr<uint8_t>(), nullptr);
