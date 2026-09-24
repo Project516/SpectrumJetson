@@ -1,0 +1,240 @@
+diff --git a/photon-client/src/components/dashboard/tabs/TargetsTab.vue b/photon-client/src/components/dashboard/tabs/TargetsTab.vue
+index 9c5a0794..983c1ffa 100644
+--- a/photon-client/src/components/dashboard/tabs/TargetsTab.vue
++++ b/photon-client/src/components/dashboard/tabs/TargetsTab.vue
+@@ -29,6 +29,23 @@ const calculateStdDev = (values: number[]): number => {
+ 
+   return Math.sqrt(values.map((x) => Math.pow(angleModulus(x - mean), 2)).reduce((a, b) => a + b) / values.length);
+ };
++
++// SpectrumJetson: the camera's mount on the robot, from the same multi-tag samples. With the robot
++// level on the floor, the camera's field height, pitch and roll are its mount's (photonvision-17).
++const mean = (values: number[]): number =>
++  values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
++const plainStdDev = (values: number[]): number => {
++  if (values.length < 2) return 0;
++  const m = mean(values);
++  return Math.sqrt(values.reduce((sum, v) => sum + (v - m) * (v - m), 0) / values.length);
++};
++const mountHeights = computed(() => useStateStore().currentMultitagBuffer?.map((v) => v.bestTransform.z) || []);
++const mountPitches = computed(
++  () => useStateStore().currentMultitagBuffer?.map((v) => toDeg(v.bestTransform.angle_y)) || []
++);
++const mountRolls = computed(
++  () => useStateStore().currentMultitagBuffer?.map((v) => toDeg(v.bestTransform.angle_x)) || []
++);
+ const resetCurrentBuffer = () => {
+   // Need to clear the array in place
+   if (useStateStore().currentMultitagBuffer) useStateStore().currentMultitagBuffer!.length = 0;
+@@ -277,6 +294,46 @@ const resetCurrentBuffer = () => {
+           </template>
+         </v-table>
+       </v-row>
++      <v-row
++        v-if="useStateStore().currentPipelineResults?.multitagResult"
++        class="pb-4 text-white"
++        style="display: flex; flex-direction: column"
++      >
++        <v-card-subtitle class="ma-0 pa-0 pb-2 pr-4" style="font-size: 16px"
++          >Camera mount estimate from the same samples (robot level on the floor)
++        </v-card-subtitle>
++        <v-table density="compact">
++          <template #default>
++            <thead>
++              <tr>
++                <th class="text-center text-white">Height</th>
++                <th class="text-center text-white">Pitch &theta;&deg;</th>
++                <th class="text-center text-white">Roll &theta;&deg;</th>
++              </tr>
++            </thead>
++            <tbody>
++              <tr>
++                <td class="text-center text-white">
++                  {{ mean(mountHeights).toFixed(3) }}&nbsp;m &plusmn; {{ plainStdDev(mountHeights).toFixed(3) }}
++                </td>
++                <td class="text-center text-white">
++                  {{ mean(mountPitches).toFixed(2) }}&deg; &plusmn; {{ plainStdDev(mountPitches).toFixed(2) }}
++                </td>
++                <td class="text-center text-white">
++                  {{ mean(mountRolls).toFixed(2) }}&deg; &plusmn; {{ plainStdDev(mountRolls).toFixed(2) }}
++                </td>
++              </tr>
++            </tbody>
++          </template>
++        </v-table>
++        <v-card-text class="ma-0 pa-0 pt-2" style="font-size: 14px">
++          While the robot is level on the floor, the camera's height, pitch and roll on the field are its mount on the
++          robot, wherever the robot is. They use the same axes and signs as <code>robotToCamera</code> in robot code:
++          negative pitch means tilted up. Yaw and the X/Y offsets also need the robot's pose. Robot code gets these
++          numbers, and the camera's field X, Y and yaw, from <code>/photonvision/&lt;camera&gt;/mount</code> on
++          NetworkTables.
++        </v-card-text>
++      </v-row>
+     </v-container>
+   </div>
+ </template>
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/MountEstimatePublisher.java b/photon-core/src/main/java/org/photonvision/vision/processes/MountEstimatePublisher.java
+new file mode 100644
+index 00000000..75d2e731
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/MountEstimatePublisher.java
+@@ -0,0 +1,145 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.processes;
++
++import edu.wpi.first.math.geometry.Pose3d;
++import edu.wpi.first.networktables.DoublePublisher;
++import edu.wpi.first.networktables.IntegerPublisher;
++import edu.wpi.first.networktables.NetworkTable;
++import java.util.ArrayDeque;
++import java.util.function.Supplier;
++import org.photonvision.common.dataflow.CVPipelineResultConsumer;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.vision.pipeline.result.CVPipelineResult;
++
++/**
++ * SpectrumJetson: this camera's mount, estimated from the tags it sees, for setting and checking
++ * robotToCamera in robot code.
++ *
++ * <p>The multi-tag result is the camera's pose on the field. With the robot level on the floor,
++ * the camera's height, pitch and roll on the field are its height, pitch and roll on the robot,
++ * wherever the robot is. Yaw and the forward/sideways offsets also need the robot's pose, so the
++ * camera's field x, y and yaw are published for robot code to combine with its own pose.
++ *
++ * <p>Every 0.5 s, over the multi-tag frames of the last 2 s, under /photonvision/<camera>/mount/:
++ * {@code heightM}, {@code pitchDeg}, {@code rollDeg} (means) and {@code heightStdM}, {@code
++ * pitchStdDeg}, {@code rollStdDeg}; {@code fieldXM}, {@code fieldYM}, {@code fieldYawDeg};
++ * {@code reprojErrorPx} (mean); {@code samples} (0: no multi-tag frames, nothing else is
++ * updated). Angles follow WPILib's Rotation3d, like robotToCamera: a camera tilted up has
++ * negative pitch.
++ */
++public class MountEstimatePublisher implements CVPipelineResultConsumer {
++    private static final long WINDOW_NS = 2_000_000_000L;
++    private static final long PUBLISH_NS = 500_000_000L;
++
++    private final Supplier<String> nickname;
++    private final ArrayDeque<double[]> samples = new ArrayDeque<>(); // {t, z, pitch, roll, x, y, yaw, err}
++
++    private String publishedName = null;
++    private DoublePublisher height, pitch, roll, heightStd, pitchStd, rollStd, fieldX, fieldY, fieldYaw, reproj;
++    private IntegerPublisher count;
++    private long lastPublishNs = 0;
++
++    public MountEstimatePublisher(Supplier<String> nickname) {
++        this.nickname = nickname;
++    }
++
++    @Override
++    public void accept(CVPipelineResult result) {
++        long now = System.nanoTime();
++        if (result.multiTagResult != null && result.multiTagResult.isPresent()) {
++            var est = result.multiTagResult.get().estimatedPose;
++            var cam = new Pose3d().plus(est.best); // field to camera
++            var r = cam.getRotation();
++            samples.addLast(
++                    new double[] {
++                        now, cam.getZ(), r.getY(), r.getX(), cam.getX(), cam.getY(), r.getZ(), est.bestReprojErr
++                    });
++        }
++        while (!samples.isEmpty() && now - (long) samples.peekFirst()[0] > WINDOW_NS) samples.removeFirst();
++        if (now - lastPublishNs < PUBLISH_NS) return;
++        lastPublishNs = now;
++        publish();
++    }
++
++    private void publish() {
++        ensurePublishers();
++        int n = samples.size();
++        count.set(n);
++        if (n == 0) return;
++        double[] sum = new double[8], sq = new double[8];
++        double yawSin = 0, yawCos = 0;
++        for (double[] s : samples) {
++            for (int i = 1; i < 8; i++) {
++                sum[i] += s[i];
++                sq[i] += s[i] * s[i];
++            }
++            yawSin += Math.sin(s[6]);
++            yawCos += Math.cos(s[6]);
++        }
++        height.set(sum[1] / n);
++        pitch.set(Math.toDegrees(sum[2] / n));
++        roll.set(Math.toDegrees(sum[3] / n));
++        heightStd.set(std(sum[1], sq[1], n));
++        pitchStd.set(Math.toDegrees(std(sum[2], sq[2], n)));
++        rollStd.set(Math.toDegrees(std(sum[3], sq[3], n)));
++        fieldX.set(sum[4] / n);
++        fieldY.set(sum[5] / n);
++        fieldYaw.set(Math.toDegrees(Math.atan2(yawSin, yawCos)));
++        reproj.set(sum[7] / n);
++    }
++
++    private static double std(double sum, double sq, int n) {
++        if (n < 2) return 0;
++        double mean = sum / n;
++        return Math.sqrt(Math.max(0, sq / n - mean * mean));
++    }
++
++    /** (Re)creates the topics when the camera is first seen or renamed. */
++    private void ensurePublishers() {
++        String name = nickname.get();
++        if (name.equals(publishedName)) return;
++        if (publishedName != null) {
++            for (var p :
++                    new DoublePublisher[] {
++                        height, pitch, roll, heightStd, pitchStd, rollStd, fieldX, fieldY, fieldYaw, reproj
++                    }) {
++                p.close();
++            }
++            count.close();
++        }
++        NetworkTable t =
++                NetworkTablesManager.getInstance()
++                        .getNTInst()
++                        .getTable("photonvision")
++                        .getSubTable(name)
++                        .getSubTable("mount");
++        height = t.getDoubleTopic("heightM").publish();
++        pitch = t.getDoubleTopic("pitchDeg").publish();
++        roll = t.getDoubleTopic("rollDeg").publish();
++        heightStd = t.getDoubleTopic("heightStdM").publish();
++        pitchStd = t.getDoubleTopic("pitchStdDeg").publish();
++        rollStd = t.getDoubleTopic("rollStdDeg").publish();
++        fieldX = t.getDoubleTopic("fieldXM").publish();
++        fieldY = t.getDoubleTopic("fieldYM").publish();
++        fieldYaw = t.getDoubleTopic("fieldYawDeg").publish();
++        reproj = t.getDoubleTopic("reprojErrorPx").publish();
++        count = t.getIntegerTopic("samples").publish();
++        publishedName = name;
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 63af0c23..ad562eba 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -180,6 +180,9 @@ public class VisionModule {
+                                         ? usb.getDecodeFailures()
+                                         : 0));
+         JetsonTelemetry.start();
++        // SpectrumJetson: the camera's mount (height, pitch, roll) from the tags it sees (photonvision-17).
++        addResultConsumer(
++                new MountEstimatePublisher(() -> visionSource.getSettables().getConfiguration().nickname));
+ 
+         // SpectrumJetson: a brand-new camera gets the team's tuned settings (TeamCameraDefaults)
+         // instead of stock PhotonVision's CPU AprilTag at 320x240. The camera usually hasn't

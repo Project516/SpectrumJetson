@@ -103,7 +103,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
 | 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance); leave it out to decode on the CPU. |
-| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–14. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–17. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 | 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
 | 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
 
@@ -197,6 +197,13 @@ All four USB-A ports share one USB 2.0 root port. Four cameras fit there only wi
 
 A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there.
 
+**Measuring a camera's mount from the tags** (`photonvision-17`):
+- **Where:** with the robot level on the floor and 2+ tags in view, the Targets tab's **Camera mount estimate** shows the camera's height, pitch and roll on the robot, averaged over the last 100 samples with a ± spread.
+- **Why it works:** while the robot is level, the camera's height, pitch and roll on the field are its mount's, wherever the robot is.
+- **Using it:** the numbers use `robotToCamera`'s axes and signs (negative pitch means tilted up), so they go straight into robot code.
+- **Yaw and X/Y** also need the robot's pose. Robot code gets everything from `/photonvision/<camera>/mount` on NetworkTables, and at events it can compare the estimate with its configured mount to catch a bumped camera.
+- **Accuracy:** it's only as good as the field's tag layout and a flat floor.
+
 **Calibration board settings** (ChArUco, 5x5 markers, 30 mm squares, 22 mm markers):
 
 | Field | Value |
@@ -286,6 +293,12 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 
 **Checking on it:** run `scripts/jetson/health-check.sh` for a readiness report. `journalctl -u photonvision -f` shows PhotonVision's live log on the Jetson. The `971 stats` lines show frames per second, detection time and decision margin for each camera. The `971 jpeg` lines (every 10 s) show which JPEG decoder is running and how its checks went.
 
+**Robot code sees the same health on NetworkTables** (`photonvision-16`), once a second:
+- `/photonvision/jetson/`: GPU load, temperatures, fan speed, power, and the JPEG decoder's state.
+- `/photonvision/<camera>/health/`: fps, pipeline time, latency, and failed JPEG decodes.
+- The topics and suggested alerts are in [docs/TECHNICAL.md](docs/TECHNICAL.md) and issue #10.
+- `tests/jetson-telemetry/run.sh` prints them on the bench.
+
 ## Where everything lives, and what's left
 
 The detailed technical reference, with exact versions, commits and measurements, is [docs/TECHNICAL.md](docs/TECHNICAL.md). This README is the overview. What this setup lacks compared with Limelight 4, and what the robot code has to do about it (MegaTag 1/2, gyro heading), is in [docs/LIMELIGHT-COMPARISON.md](docs/LIMELIGHT-COMPARISON.md). Other teams' vision systems and our performance work are in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md). What we took from upstream PhotonVision, and what to test, is in [docs/UPSTREAM-PORT.md](docs/UPSTREAM-PORT.md).
@@ -297,7 +310,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoders, CPU and hardware, and the TensorRT object detector) |
 | `kernel/` | Our patch to Linux's USB camera driver (bandwidth cap), built by `11-uvcvideo-payload-cap.sh` |
-| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test, flicker check, CPU profiler, performance snapshot |
+| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test, flicker check, CPU profiler, performance snapshot, telemetry and mount-estimate check |
 | `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, the upstream PhotonVision port, the game-piece models, and the original handoff document that started the project |
 
 **Still to do before the October event:**

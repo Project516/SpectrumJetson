@@ -473,6 +473,61 @@ The camera JPEGs can be decoded on the Orin Nano's two NVJPG engines instead of 
 
 Still open: `use_neon` (a CPU NEON threshold absl flag) is untested and off.
 
+### Jetson telemetry and camera mount estimate (2026-09-24)
+
+`photonvision-16` and `photonvision-17`, plus `nativeJpegStatus` in `detector/GpuDetectorJNI.cc`.
+Robot-side use is in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10).
+
+**Jetson, `/photonvision/jetson/`, every 1 s** (`JetsonTelemetry`):
+
+| Topic | Type | Source |
+|---|---|---|
+| `gpuLoadPct` | double | `/sys/devices/platform/bus@0/17000000.gpu/load` (per mille) |
+| `cpuTempC`, `gpuTempC`, `tjTempC`, `socTempC` | double | thermal zones `cpu-`, `gpu-`, `tj-thermal`; hottest of `soc0..2-thermal` |
+| `fanRpm` | double | hwmon `pwm_tach` `rpm` |
+| `powerW`, `cpuGpuPowerW`, `socPowerW` | double | INA3221 rails `VDD_IN` (board input), `VDD_CPU_GPU_CV`, `VDD_SOC` (mV x mA) |
+| `jpegDecoder` | string | `nvjpg` or `libjpeg-turbo` (the decoder in use) |
+| `jpegHardwareOff` | boolean | the hardware decoder was switched off (a check differed, or CUDA failed) |
+| `jpegChecksOk`, `jpegChecksDiffer` | integer | hardware-vs-CPU frame checks since start |
+| `heartbeat` | integer | +1 per publish; a stalled value means the telemetry (or PhotonVision) stopped |
+
+- Topics the hardware doesn't have aren't published.
+- The JPEG topics need the detector library with `nativeJpegStatus` (rebuild with 07, then
+  `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg`).
+- PhotonVision's own metrics (`/photonvision//metrics/<host>`: CPU temperature and use, RAM,
+  disk, uptime) are unchanged.
+
+**Per camera, `/photonvision/<camera>/health/`, every 1 s** (`CameraHealthPublisher`):
+- `fps`: pipeline results per second.
+- `pipelineMs`, `pipelineMsMax`: average and worst over the last second.
+- `latencyMs`: average, capture to result.
+- `frames`: total since start.
+- `decodeFailures`: total frames our decoder rejected, counted in `USBFrameProvider`. A rising
+  count means corrupt JPEGs are getting through.
+- The stuck-camera case (see "Decode speedup") shows as `fps` near 0 instead: cscore drops the
+  corrupt frames itself, before PhotonVision sees them.
+
+**Per camera, `/photonvision/<camera>/mount/`, every 0.5 s over the last 2 s of multi-tag frames**
+(`MountEstimatePublisher`):
+
+| Topics | Meaning |
+|---|---|
+| `heightM`, `pitchDeg`, `rollDeg` | Means. The camera's pose on the field; with the robot level on the floor, the same as its mount on the robot |
+| `heightStdM`, `pitchStdDeg`, `rollStdDeg` | Spread over the window |
+| `fieldXM`, `fieldYM`, `fieldYawDeg` | Camera position and heading on the field (yaw is a circular mean), for robot code to combine with its own pose |
+| `reprojErrorPx` | Mean multi-tag reprojection error |
+| `samples` | Multi-tag frames in the window. 0 means nothing else is updated |
+
+- Angles follow WPILib's `Rotation3d`, like `robotToCamera`: positive pitch points the camera down,
+  so a camera tilted up has negative pitch.
+- The Targets tab shows the same height, pitch and roll from the UI's 100-sample buffer.
+- The robot's origin must be on the floor (WPILib's convention) for the height to match
+  `robotToCamera`'s z.
+
+**Bench check:** `tests/jetson-telemetry/run.sh` runs a NetworkTables server on the Jetson and prints
+every topic above. Set PhotonVision's NT server address to 127.0.0.1 first, and set it back to 8515
+afterwards.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,

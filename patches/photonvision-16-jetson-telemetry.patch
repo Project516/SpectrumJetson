@@ -1,0 +1,425 @@
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonTelemetry.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonTelemetry.java
+new file mode 100644
+index 00000000..1fa667d3
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/JetsonTelemetry.java
+@@ -0,0 +1,203 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.hardware.metrics;
++
++import edu.wpi.first.networktables.BooleanPublisher;
++import edu.wpi.first.networktables.DoublePublisher;
++import edu.wpi.first.networktables.IntegerPublisher;
++import edu.wpi.first.networktables.NetworkTable;
++import edu.wpi.first.networktables.StringPublisher;
++import java.io.IOException;
++import java.nio.file.DirectoryStream;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.common.util.TimedTaskManager;
++import org.photonvision.jni.JetsonStatusJNI;
++
++/**
++ * SpectrumJetson: the Jetson's own health on NetworkTables, once a second, for robot code to log
++ * and raise alerts on. PhotonVision's built-in metrics (/photonvision//metrics/<host>) already have
++ * CPU temperature and use, RAM, disk and uptime. This adds what the Jetson exposes beyond that,
++ * under /photonvision/jetson/:
++ *
++ * <ul>
++ *   <li>{@code gpuLoadPct}; {@code cpuTempC}, {@code gpuTempC}, {@code socTempC} (hottest of the
++ *       three SoC sensors), {@code tjTempC} (hottest on the chip); {@code fanRpm}
++ *   <li>{@code powerW} (the board's input), {@code cpuGpuPowerW}, {@code socPowerW}
++ *   <li>{@code jpegDecoder} ("nvjpg" or "libjpeg-turbo"), {@code jpegHardwareOff} (the hardware
++ *       decoder was switched off after a failed check), {@code jpegChecksOk}, {@code
++ *       jpegChecksDiffer} (counts since PhotonVision started)
++ *   <li>{@code heartbeat}: goes up by one every publish
++ * </ul>
++ *
++ * Anything the hardware (or the detector library) doesn't provide isn't published.
++ */
++public final class JetsonTelemetry {
++    private static final Logger logger = new Logger(JetsonTelemetry.class, LogGroup.General);
++    private static JetsonTelemetry instance;
++
++    /** Starts the once-a-second publisher (idempotent). */
++    public static synchronized void start() {
++        if (instance == null) instance = new JetsonTelemetry();
++    }
++
++    private static final Path GPU_LOAD = Path.of("/sys/devices/platform/bus@0/17000000.gpu/load");
++
++    private final NetworkTable table;
++    private final Map<String, DoublePublisher> doubles = new HashMap<>();
++    private final Map<String, Path> temps = new LinkedHashMap<>(); // thermal zone type -> temp file
++    private final Map<String, Path[]> rails = new LinkedHashMap<>(); // label -> {mV, mA} files
++    private Path fanRpm = null;
++    private IntegerPublisher heartbeat, jpegChecksOk, jpegChecksDiffer;
++    private StringPublisher jpegDecoder;
++    private BooleanPublisher jpegHardwareOff;
++    private boolean jpegStatusAvailable = true;
++    private long beats = 0;
++
++    private JetsonTelemetry() {
++        table = NetworkTablesManager.getInstance().getNTInst().getTable("photonvision").getSubTable("jetson");
++        discover();
++        heartbeat = table.getIntegerTopic("heartbeat").publish();
++        logger.info(
++                "Jetson telemetry on /photonvision/jetson: temperatures "
++                        + temps.keySet()
++                        + ", power rails "
++                        + rails.keySet()
++                        + (fanRpm != null ? ", fan" : "")
++                        + (Files.isReadable(GPU_LOAD) ? ", GPU load" : ""));
++        TimedTaskManager.getInstance().addTask("JetsonTelemetry", this::tick, 1000, 1000);
++    }
++
++    private void discover() {
++        try (DirectoryStream<Path> zones = Files.newDirectoryStream(Path.of("/sys/class/thermal"), "thermal_zone*")) {
++            for (Path z : zones) {
++                String type = read(z.resolve("type"));
++                // Zones with no sensor behind them (cv0..cv2 here) fail to read; skip those.
++                if (type != null && read(z.resolve("temp")) != null) temps.put(type, z.resolve("temp"));
++            }
++        } catch (IOException | RuntimeException e) {
++            // Not a Linux thermal system; no temperatures.
++        }
++        try (DirectoryStream<Path> mons = Files.newDirectoryStream(Path.of("/sys/class/hwmon"), "hwmon*")) {
++            for (Path h : mons) {
++                String name = read(h.resolve("name"));
++                if ("pwm_tach".equals(name) && Files.isReadable(h.resolve("rpm"))) fanRpm = h.resolve("rpm");
++                if ("ina3221".equals(name)) {
++                    for (int i = 1; i <= 3; i++) {
++                        String label = read(h.resolve("in" + i + "_label"));
++                        Path mv = h.resolve("in" + i + "_input"), ma = h.resolve("curr" + i + "_input");
++                        if (label != null && Files.isReadable(mv) && Files.isReadable(ma)) {
++                            rails.put(label, new Path[] {mv, ma});
++                        }
++                    }
++                }
++            }
++        } catch (IOException | RuntimeException e) {
++            // No hwmon; no fan or power readings.
++        }
++    }
++
++    private void tick() {
++        try {
++            Double gpu = number(GPU_LOAD);
++            if (gpu != null) put("gpuLoadPct", gpu / 10.0); // per mille
++
++            put("cpuTempC", milliC("cpu-thermal"));
++            put("gpuTempC", milliC("gpu-thermal"));
++            put("tjTempC", milliC("tj-thermal"));
++            Double soc = null;
++            for (String z : new String[] {"soc0-thermal", "soc1-thermal", "soc2-thermal"}) {
++                Double t = milliC(z);
++                if (t != null && (soc == null || t > soc)) soc = t;
++            }
++            put("socTempC", soc);
++
++            if (fanRpm != null) put("fanRpm", number(fanRpm));
++
++            put("powerW", railW("VDD_IN"));
++            put("cpuGpuPowerW", railW("VDD_CPU_GPU_CV"));
++            put("socPowerW", railW("VDD_SOC"));
++
++            publishJpegStatus();
++            heartbeat.set(++beats);
++        } catch (RuntimeException e) {
++            logger.error("Jetson telemetry failed", e);
++        }
++    }
++
++    private void publishJpegStatus() {
++        if (!jpegStatusAvailable) return;
++        long[] s = JetsonStatusJNI.jpegStatus();
++        if (s == null || s.length < 4) {
++            jpegStatusAvailable = false; // no detector library, or one without jpegStatus
++            return;
++        }
++        if (jpegDecoder == null) {
++            jpegDecoder = table.getStringTopic("jpegDecoder").publish();
++            jpegHardwareOff = table.getBooleanTopic("jpegHardwareOff").publish();
++            jpegChecksOk = table.getIntegerTopic("jpegChecksOk").publish();
++            jpegChecksDiffer = table.getIntegerTopic("jpegChecksDiffer").publish();
++        }
++        jpegDecoder.set(s[0] == 1 ? "nvjpg" : "libjpeg-turbo");
++        jpegHardwareOff.set(s[1] != 0);
++        jpegChecksOk.set(s[2]);
++        jpegChecksDiffer.set(s[3]);
++    }
++
++    private void put(String key, Double value) {
++        if (value == null) return;
++        doubles.computeIfAbsent(key, k -> table.getDoubleTopic(k).publish()).set(value);
++    }
++
++    private Double milliC(String zone) {
++        Path p = temps.get(zone);
++        Double v = p == null ? null : number(p);
++        return v == null ? null : v / 1000.0;
++    }
++
++    private Double railW(String label) {
++        Path[] f = rails.get(label);
++        if (f == null) return null;
++        Double mv = number(f[0]), ma = number(f[1]);
++        return mv == null || ma == null ? null : mv * ma / 1e6;
++    }
++
++    private static Double number(Path p) {
++        String s = read(p);
++        if (s == null) return null;
++        try {
++            return Double.parseDouble(s);
++        } catch (NumberFormatException e) {
++            return null;
++        }
++    }
++
++    private static String read(Path p) {
++        try {
++            return Files.readString(p).strip();
++        } catch (IOException | RuntimeException e) {
++            return null;
++        }
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/jni/JetsonStatusJNI.java b/photon-core/src/main/java/org/photonvision/jni/JetsonStatusJNI.java
+new file mode 100644
+index 00000000..4999d729
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/jni/JetsonStatusJNI.java
+@@ -0,0 +1,43 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.jni;
++
++/**
++ * SpectrumJetson: status from the detector library (lib971apriltag, loaded by GpuDetectorJNI) for
++ * JetsonTelemetry. Safe to call without the library, or with an older one that lacks it: returns
++ * null.
++ */
++public final class JetsonStatusJNI {
++    private JetsonStatusJNI() {}
++
++    /**
++     * The JPEG decoder's state: {active decoder (1 nvjpg, 0 libjpeg-turbo), hardware decoder
++     * switched off (1/0), checks ok, checks that differed, checks skipped}. Counts are since
++     * PhotonVision started. Null if the library doesn't provide it.
++     */
++    public static long[] jpegStatus() {
++        try {
++            Class.forName("org.photonvision.jni.GpuDetectorJNI"); // loads lib971apriltag
++            return nativeJpegStatus();
++        } catch (Throwable t) { // no library (ExceptionInInitializerError) or no symbol
++            return null;
++        }
++    }
++
++    private static native long[] nativeJpegStatus();
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index 21e6eec1..ec5c4169 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -215,7 +215,16 @@ public class USBFrameProvider extends CpuImageProcessor {
+ 
+     private int directGrayFailures = 0;
+ 
++    // SpectrumJetson: every frame whose JPEG couldn't be decoded, for CameraHealthPublisher.
++    private volatile long decodeFailures = 0;
++
++    /** Frames whose JPEG couldn't be decoded since this camera started. */
++    public long getDecodeFailures() {
++        return decodeFailures;
++    }
++
+     private CapturedFrame directGrayFailed(String why) {
++        decodeFailures++;
+         if (++directGrayFailures >= 30) {
+             directGray = false;
+             logger.error(
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java b/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
+new file mode 100644
+index 00000000..2a423918
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
+@@ -0,0 +1,104 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.processes;
++
++import edu.wpi.first.networktables.DoublePublisher;
++import edu.wpi.first.networktables.IntegerPublisher;
++import edu.wpi.first.networktables.NetworkTable;
++import java.util.function.LongSupplier;
++import java.util.function.Supplier;
++import org.photonvision.common.dataflow.CVPipelineResultConsumer;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.vision.pipeline.result.CVPipelineResult;
++
++/**
++ * SpectrumJetson: one camera's health on NetworkTables, once a second, under
++ * /photonvision/<camera>/health/: {@code fps}, {@code pipelineMs} (average) and {@code
++ * pipelineMsMax} over the last second, {@code latencyMs} (average, capture to result), {@code
++ * frames} (total since start) and {@code decodeFailures} (total frames whose JPEG couldn't be
++ * decoded; a rising count means a corrupt camera stream).
++ */
++public class CameraHealthPublisher implements CVPipelineResultConsumer {
++    private final Supplier<String> nickname;
++    private final LongSupplier decodeFailures;
++
++    private String publishedName = null;
++    private DoublePublisher fps, pipelineMs, pipelineMsMax, latencyMs;
++    private IntegerPublisher frames, failures;
++
++    private long windowStartNs = 0, total = 0;
++    private int count = 0;
++    private double sumMs = 0, maxMs = 0, sumLatencyMs = 0;
++
++    public CameraHealthPublisher(Supplier<String> nickname, LongSupplier decodeFailures) {
++        this.nickname = nickname;
++        this.decodeFailures = decodeFailures;
++    }
++
++    @Override
++    public void accept(CVPipelineResult result) {
++        long now = System.nanoTime();
++        if (windowStartNs == 0) windowStartNs = now;
++        double ms = result.getProcessingMillis();
++        count++;
++        total++;
++        sumMs += ms;
++        maxMs = Math.max(maxMs, ms);
++        sumLatencyMs += result.getLatencyMillis();
++
++        double window = (now - windowStartNs) / 1e9;
++        if (window < 1.0) return;
++        ensurePublishers();
++        fps.set(count / window);
++        pipelineMs.set(sumMs / count);
++        pipelineMsMax.set(maxMs);
++        latencyMs.set(sumLatencyMs / count);
++        frames.set(total);
++        failures.set(decodeFailures.getAsLong());
++        windowStartNs = now;
++        count = 0;
++        sumMs = maxMs = sumLatencyMs = 0;
++    }
++
++    /** (Re)creates the topics when the camera is first seen or renamed. */
++    private void ensurePublishers() {
++        String name = nickname.get();
++        if (name.equals(publishedName)) return;
++        if (publishedName != null) {
++            fps.close();
++            pipelineMs.close();
++            pipelineMsMax.close();
++            latencyMs.close();
++            frames.close();
++            failures.close();
++        }
++        NetworkTable t =
++                NetworkTablesManager.getInstance()
++                        .getNTInst()
++                        .getTable("photonvision")
++                        .getSubTable(name)
++                        .getSubTable("health");
++        fps = t.getDoubleTopic("fps").publish();
++        pipelineMs = t.getDoubleTopic("pipelineMs").publish();
++        pipelineMsMax = t.getDoubleTopic("pipelineMsMax").publish();
++        latencyMs = t.getDoubleTopic("latencyMs").publish();
++        frames = t.getIntegerTopic("frames").publish();
++        failures = t.getIntegerTopic("decodeFailures").publish();
++        publishedName = name;
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 6935c73c..63af0c23 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -39,6 +39,7 @@ import org.photonvision.common.dataflow.websocket.UICameraConfiguration;
+ import org.photonvision.common.dataflow.websocket.UIDataPublisher;
+ import org.photonvision.common.dataflow.websocket.UIPhotonConfiguration;
+ import org.photonvision.common.hardware.HardwareManager;
++import org.photonvision.common.hardware.metrics.JetsonTelemetry;
+ import org.photonvision.common.logging.LogGroup;
+ import org.photonvision.common.logging.Logger;
+ import org.photonvision.common.util.SerializationUtils;
+@@ -50,6 +51,7 @@ import org.photonvision.vision.camera.csi.LibcameraGpuSource;
+ import org.photonvision.vision.frame.Frame;
+ import org.photonvision.vision.frame.consumer.FileSaveFrameConsumer;
+ import org.photonvision.vision.frame.consumer.MJPGFrameConsumer;
++import org.photonvision.vision.frame.provider.USBFrameProvider;
+ import org.photonvision.vision.pipeline.AdvancedPipelineSettings;
+ import org.photonvision.vision.pipeline.OutputStreamPipeline;
+ import org.photonvision.vision.pipeline.ReflectivePipelineSettings;
+@@ -169,6 +171,15 @@ public class VisionModule {
+         addResultConsumer(
+                 (result) ->
+                         lastPipelineResultBestTarget = result.hasTargets() ? result.targets.get(0) : null);
++        // SpectrumJetson: this camera's health, and the Jetson's, on NetworkTables (photonvision-16).
++        addResultConsumer(
++                new CameraHealthPublisher(
++                        () -> visionSource.getSettables().getConfiguration().nickname,
++                        () ->
++                                visionSource.getFrameProvider() instanceof USBFrameProvider usb
++                                        ? usb.getDecodeFailures()
++                                        : 0));
++        JetsonTelemetry.start();
+ 
+         // SpectrumJetson: a brand-new camera gets the team's tuned settings (TeamCameraDefaults)
+         // instead of stock PhotonVision's CPU AprilTag at 320x240. The camera usually hasn't

@@ -859,4 +859,23 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
   return result;
 }
 
+// ---- Status for NetworkTables (JetsonStatusJNI) -------------------------------------------------
+
+// SpectrumJetson: the JPEG decoder's state, for the telemetry PhotonVision publishes under
+// /photonvision/jetson (JetsonTelemetry, photonvision-16):
+//   long[] nativeJpegStatus()
+//     {active decoder (1 nvjpg, 0 libjpeg-turbo), hardware decoder switched off (1/0),
+//      checks ok, checks that differed, checks skipped}; counts since PhotonVision started.
+JNIEXPORT jlongArray JNICALL Java_org_photonvision_jni_JetsonStatusJNI_nativeJpegStatus(JNIEnv *env,
+                                                                                        jclass) {
+  const jlong v[5] = {WantedJpegDecoder() == JpegDecoder::kNvjpg ? 1 : 0,
+                      nvjpg_off ? 1 : 0,
+                      checks_ok.load(),
+                      checks_differ.load(),
+                      checks_skipped.load()};
+  jlongArray arr = env->NewLongArray(5);
+  if (arr) env->SetLongArrayRegion(arr, 0, 5, v);
+  return arr;
+}
+
 }  // extern "C"
