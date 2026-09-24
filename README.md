@@ -16,7 +16,7 @@ Measured on the bench:
 
 - **2 AprilTag cameras at 120 fps each, full resolution (1280x800), about 15 ms latency, using about 25% of the CPU.** The cameras are Thrifty Bot [Thriftiest Cams](https://www.thethriftybot.com/products/thriftiest-cam): mono, global shutter, USB 2.0, $50 each. The GPU finds the tags in about 2 ms per frame and is only about 12% busy (peaks under 25%).
 - **Set up for 4 AprilTag cameras** on the USB-A ports, with more on a USB-C hub.
-- **Game-piece detection at 30 fps alongside the AprilTag cameras,** with no measurable slowdown to them (76 fps if uncapped). Speed only so far: it was tested on a mono camera, and how well it finds FUEL still needs a colour camera.
+- **Game-piece detection at 30 fps alongside the AprilTag cameras,** with no measurable slowdown to them (76 fps if uncapped). It found FUEL surprisingly well even on our mono camera.
 - **Rewind:** robot code can record every camera at 30 fps, for 3% of one core, and you can download the recordings from the web UI.
 - **Accurate timing:** frames are timestamped at mid-exposure and synced to the robot's clock.
 - **Match-ready:**
@@ -247,10 +247,12 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
   ```
   Then give the camera a pipeline of type **Object Detection** and pick the model.
 - **The 2026 FUEL model** we started with is Team 2826 Wave Robotics' YOLO11n, the same one PhotonVision ships for other hardware. The models we have, their licenses and exports: [docs/GAME-PIECE-MODELS.md](docs/GAME-PIECE-MODELS.md).
-- **Measured on the bench** (mono camera, 1280x800 in; measured with nothing else using the GPU). This measures **speed, not accuracy**:
+- **It works on our mono cameras.**
   - The Object Detection pipeline doesn't ask for gray frames, so a mono camera's JPEG is decoded to a colour image whose three channels are identical. The model runs on that.
-  - The model was trained on colour photos, and FUEL's yellow is lost in gray.
-  - Inference costs the same either way, so these numbers should hold for a colour camera. Detection rate and false positives still need measuring on one.
+  - The model was trained on colour photos, where FUEL is yellow, yet it found real FUEL balls on the bench surprisingly well.
+  - We judged that by eye on the stream. Detection rate at distance and false positives haven't been measured yet (Rewind recordings are good for that).
+  - Inference costs the same on gray or colour, so the speed numbers below hold for a colour camera too.
+- **Measured on the bench** (mono camera, 1280x800 in; measured with nothing else using the GPU):
 
   | | AprilTag camera beside it | AprilTag detect (avg / worst) | GPU | PhotonVision CPU |
   | --- | --- | --- | --- | --- |
@@ -259,7 +261,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 
   - **Object Detection pipelines are capped at 30 fps by default** (`SPECTRUM_OD_FPS_LIMIT`; a robot-set FPS limit takes precedence). At 30 fps they cost the AprilTag cameras nothing measurable.
   - **Don't build TensorRT engines while measuring.** A `trtexec` build uses the GPU hard for ~8 minutes and made our first measurements look like FUEL doubled the AprilTag detect time. It didn't.
-- **Use a colour camera** for game pieces (FUEL is yellow). With 4 Thriftiest Cams on USB-A, put it on the USB-C port, or use a USB 3 camera.
+- **Which camera:** a colour camera should do even better (FUEL is yellow), and a mono Thriftiest Cam works too. With 4 Thriftiest Cams on USB-A, put the game-piece camera on the USB-C port, or use a USB 3 camera.
 
 ## Troubleshooting quick reference
 
