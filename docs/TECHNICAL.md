@@ -307,6 +307,14 @@ JVM (`tests/jvm-check.sh`, 2 cameras at ~90 fps): 28 MB peak heap of 512 MB, 0 G
 - **Team defaults:** `photonvision-06` now picks the resolution once the camera reports its
   video modes (they're empty when the pipeline is first created). Verified: "team default
   resolution 1280x800 kMJPEG @ 120 fps (mode 13)".
+- **3D and multi-tag follow the calibration:** new cameras get `doMultiTarget = true`. When a
+  calibration is saved or imported (`addCalibrationToConfig`), or a new camera's resolution
+  is picked, every AprilTag/AprilTagCuda pipeline whose resolution now has a calibration gets
+  `solvePNPEnabled = true` and multi-tag on. Never turns either off. (3D stays off without a
+  calibration because the pose pipes have no intrinsics then.) Verified: TopLeft switched to
+  2D, same calibration re-imported through `/api/calibration/importFromData` → "turned on 3D
+  and multi-tag for pipeline "New Pipeline"", 97–103 fps after. Found because TopLeft had
+  lost 3D, and both cameras had multi-tag off, after TopLeft was re-created as BottomLeft.
 
 ### CUDA error handling (bos build)
 

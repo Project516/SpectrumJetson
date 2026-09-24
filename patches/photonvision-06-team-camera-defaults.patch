@@ -28,10 +28,10 @@ index 3302404d..d5588b6a 100644
  
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
 new file mode 100644
-index 00000000..db22beb6
+index 00000000..fac72e8b
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/vision/processes/TeamCameraDefaults.java
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,144 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -53,9 +53,14 @@ index 00000000..db22beb6
 +
 +import edu.wpi.first.cscore.VideoMode;
 +import edu.wpi.first.util.PixelFormat;
++import java.util.List;
 +import java.util.Map;
 +import org.photonvision.common.hardware.Platform;
++import org.photonvision.vision.calibration.CameraCalibrationCoefficients;
 +import org.photonvision.vision.frame.FrameDivisor;
++import org.photonvision.vision.pipeline.AdvancedPipelineSettings;
++import org.photonvision.vision.pipeline.AprilTagCudaPipelineSettings;
++import org.photonvision.vision.pipeline.AprilTagPipelineSettings;
 +import org.photonvision.vision.pipeline.CVPipelineSettings;
 +import org.photonvision.vision.pipeline.PipelineType;
 +
@@ -81,6 +86,12 @@ index 00000000..db22beb6
 +    /** Only the browser preview stream; smaller saves CPU. */
 +    public static final FrameDivisor STREAM_DIVISOR = FrameDivisor.SIXTH;
 +
++    /**
++     * Multi-tag solve on the Jetson (PhotonLib's multi-tag result). It only runs while 3D is on,
++     * and 3D needs a calibration, so {@link #enable3dIfCalibrated} turns 3D on once there is one.
++     */
++    public static final boolean MULTI_TAG = true;
++
 +    public static final int PREFERRED_WIDTH = 1280;
 +    public static final int PREFERRED_HEIGHT = 800;
 +
@@ -98,6 +109,8 @@ index 00000000..db22beb6
 +        s.cameraWhiteBalanceTemp = WHITE_BALANCE_TEMP;
 +        s.blockForFrames = LOW_LATENCY_MODE;
 +        s.streamingFrameDivisor = STREAM_DIVISOR;
++        if (s instanceof AprilTagCudaPipelineSettings a) a.doMultiTarget = MULTI_TAG;
++        if (s instanceof AprilTagPipelineSettings a) a.doMultiTarget = MULTI_TAG;
 +        int mode = pickVideoMode(modes);
 +        if (mode >= 0) s.cameraVideoModeIndex = mode;
 +    }
@@ -126,12 +139,48 @@ index 00000000..db22beb6
 +        }
 +        return best;
 +    }
++
++    /**
++     * Turns 3D (and multi-tag) on for an AprilTag pipeline whose resolution has a calibration. 3D
++     * without a calibration doesn't work, which is why new cameras start with it off. Only ever
++     * turns settings on. Returns true if it changed anything.
++     */
++    public static boolean enable3dIfCalibrated(
++            CVPipelineSettings s,
++            Map<Integer, VideoMode> modes,
++            List<CameraCalibrationCoefficients> calibrations) {
++        if (!(s instanceof AprilTagCudaPipelineSettings || s instanceof AprilTagPipelineSettings)) {
++            return false;
++        }
++        VideoMode m = modes.get(s.cameraVideoModeIndex);
++        if (m == null || calibrations == null) return false;
++        boolean calibrated =
++                calibrations.stream()
++                        .anyMatch(
++                                c ->
++                                        c.unrotatedImageSize != null
++                                                && (int) c.unrotatedImageSize.width == m.width
++                                                && (int) c.unrotatedImageSize.height == m.height);
++        if (!calibrated) return false;
++        var a = (AdvancedPipelineSettings) s;
++        boolean changed = !a.solvePNPEnabled;
++        a.solvePNPEnabled = true;
++        if (s instanceof AprilTagCudaPipelineSettings c && c.doMultiTarget != MULTI_TAG) {
++            c.doMultiTarget = MULTI_TAG;
++            changed = true;
++        }
++        if (s instanceof AprilTagPipelineSettings c && c.doMultiTarget != MULTI_TAG) {
++            c.doMultiTarget = MULTI_TAG;
++            changed = true;
++        }
++        return changed;
++    }
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
-index b57b01d9..6e411117 100644
+index b57b01d9..9ee317e4 100644
 --- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
 +++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
-@@ -164,6 +164,63 @@ public class VisionModule {
+@@ -164,6 +164,64 @@ public class VisionModule {
                  (result) ->
                          lastPipelineResultBestTarget = result.hasTargets() ? result.targets.get(0) : null);
  
@@ -174,6 +223,7 @@ index b57b01d9..6e411117 100644
 +                                                            + " fps (mode "
 +                                                            + idx
 +                                                            + ")");
++                                            enable3dWhereCalibrated();
 +                                            setPipeline(pipelineManager.getRequestedIndex());
 +                                            saveAndBroadcastAll();
 +                                        }
@@ -195,3 +245,36 @@ index b57b01d9..6e411117 100644
          // Sync VisionModule state with the first pipeline index
          setPipeline(visionSource.getSettables().getConfiguration().currentPipelineIndex);
  
+@@ -702,6 +760,7 @@ public class VisionModule {
+         if (newCalibration != null) {
+             logger.info("Got new calibration for " + newCalibration.unrotatedImageSize);
+             visionSource.getSettables().addCalibration(newCalibration);
++            enable3dWhereCalibrated();
+         } else {
+             logger.error("Got null calibration?");
+         }
+@@ -709,6 +768,24 @@ public class VisionModule {
+         saveAndBroadcastAll();
+     }
+ 
++    /**
++     * SpectrumJetson: turn 3D and multi-tag on for every AprilTag pipeline whose resolution now
++     * has a calibration (TeamCameraDefaults). Called when a calibration is saved and when a new
++     * camera's resolution is picked. Never turns anything off.
++     */
++    private void enable3dWhereCalibrated() {
++        var modes = visionSource.getSettables().getAllVideoModes();
++        var calibrations = visionSource.getSettables().getConfiguration().calibrations;
++        for (var settings : pipelineManager.userPipelineSettings) {
++            if (TeamCameraDefaults.enable3dIfCalibrated(settings, modes, calibrations)) {
++                logger.info(
++                        "Calibrated at this resolution: turned on 3D and multi-tag for pipeline \""
++                                + settings.pipelineNickname
++                                + "\"");
++            }
++        }
++    }
++
+     public void removeCalibrationFromConfig(Size unrotatedImageSize) {
+         if (unrotatedImageSize != null) {
+             visionSource.getSettables().removeCalibration(unrotatedImageSize);

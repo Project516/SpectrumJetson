@@ -141,10 +141,11 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 - Resolution: **1280x800 at 120 FPS, MJPEG**. Don't use YUYV, which only manages 5 fps at this resolution.
 - Auto Exposure off, Exposure **83**, Brightness 100
 - Low Latency Mode **off** (or on, for 3–4 cameras)
+- Processing Mode **3D** and **multi-tag on** (Output tab), once the camera is calibrated. The robot's pose code needs both.
 - Stream Resolution: small, to save CPU (it only affects the video you watch in the browser)
 - AprilTag field layout: **2026 Rebuilt AndyMark**. The robot code must use the same layout.
 
-**New cameras start with these settings automatically.** A camera PhotonVision has never seen gets AprilTagCuda, 1280x800 MJPEG, exposure 83, brightness 100, white balance 2800 K and Low Latency off (`TeamCameraDefaults` in `photonvision-06`). Existing cameras keep their saved settings.
+**New cameras start with these settings automatically.** A camera PhotonVision has never seen gets AprilTagCuda, 1280x800 MJPEG, exposure 83, brightness 100, white balance 2800 K, Low Latency off and multi-tag on (`TeamCameraDefaults` in `photonvision-06`). 3D can't work without a calibration, so it starts off and turns itself on (with multi-tag) as soon as a calibration is saved or imported for the resolution the camera uses. It never turns 3D off. Existing cameras keep their saved settings.
 
 **Cameras are named after their USB port.** Every Thriftiest Cam reports the same name and serial number, so PhotonVision tells them apart only by the port they're plugged into, and each name (and its calibration) stays with its port. The robot code uses the same names, e.g. `new PhotonCamera("TopLeft")`.
 
