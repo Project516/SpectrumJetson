@@ -4,10 +4,11 @@
 #
 # Why: a UVC camera reserves isochronous bandwidth for what it *asks* for, not what it sends.
 # The Thriftiest Cam (1bcf:28c5) asks for the largest alternate setting in every mode
-# (3 x 1020 bytes per 125 us microframe, ~196 Mbps) while sending 4-7 MB/s. USB 2.0 caps
-# reservations at ~80% of 480 Mbps per root port, and all four USB-A ports share one root port,
-# so only two cameras fit there. Capping the request at 1280 bytes makes the driver pick
-# alternate setting 7 (2 x 640 bytes, 10.2 MB/s, ~85 KB per frame at 120 fps): four fit.
+# (3 x 1020 bytes per 125 us microframe, ~196 Mbps) while sending 4-7 MB/s. Every USB 2.0 port on
+# the Jetson (the four USB-A ports, the USB-C port, M.2) shares one budget of about 6700 bytes per
+# microframe (measured: 6720 fit, 7400 didn't), so only two uncapped cameras fit. Capping the request
+# at 1280 bytes makes the driver pick alternate setting 7 (2 x 640 bytes, 10.2 MB/s, ~85 KB per frame
+# at 120 fps): four fit, plus a fifth at 1600. scripts/jetson/usb-bandwidth.py shows what's reserved.
 #
 # The patch (kernel/uvcvideo-payload-cap.patch) adds one module parameter,
 #   payload_cap=vid:pid:bytes[,vid:pid:bytes...]
@@ -18,12 +19,16 @@
 #   11-uvcvideo-payload-cap.sh              build only (no sudo)
 #   11-uvcvideo-payload-cap.sh --install    build, install, reload the driver (restarts PhotonVision)
 #   11-uvcvideo-payload-cap.sh --undo       remove it: back to the stock driver
-# Env: CAP (default "1bcf:28c5:1280"; "1bcf:28c5:1984" = alt 9, 3 cameras per root port).
+# Env: CAP (default "1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600": the Thriftiest Cam, the "Global
+# Shutter Camera" 32e4:0144 with the same alternate settings, and the "USB Camera" 32e4:62f0, whose
+# settings go 800 / 1600 / 2400 / 3072). The driver picks the smallest alternate setting at least as
+# big as the cap. A camera with no small alternate setting (the Razer Kiyo has only 3 x 1020) can't
+# be capped, and another port doesn't help: all USB 2.0 ports share the budget.
 set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 KVER=$(uname -r)
 BASE=v${KVER%%-*}   # 5.15.199-tegra -> v5.15.199
-CAP=${CAP:-1bcf:28c5:1280}
+CAP=${CAP:-1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600}
 W=$HOME/build/uvcvideo-$KVER
 DEST=/lib/modules/$KVER/updates/uvcvideo.ko
 CONF=/etc/modprobe.d/90-spectrum-uvcvideo.conf

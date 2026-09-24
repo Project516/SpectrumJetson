@@ -15,7 +15,7 @@ Built by Spectrum 3847 with Claude Opus 5.5 (Anthropic) in Claude Code, which di
 Measured on the bench:
 
 - **2 AprilTag cameras at 120 fps each, full resolution (1280x800), about 15 ms latency, using about 25% of the CPU.** The cameras are Thrifty Bot [Thriftiest Cams](https://www.thethriftybot.com/products/thriftiest-cam): mono, global shutter, USB 2.0, $50 each. The GPU finds the tags in about 2 ms per frame and is only about 12% busy (peaks under 25%).
-- **Set up for 4 AprilTag cameras** on the USB-A ports, with more on a USB-C hub.
+- **Set up for 4 AprilTag cameras** on the USB-A ports, plus a 5th camera on a USB-C hub (tested: all 5 streaming). All of them share one USB 2.0 budget, which 5 cameras fill.
 - **Game-piece detection at 30 fps alongside the AprilTag cameras,** with no measurable slowdown to them (76 fps if uncapped). It found FUEL surprisingly well even on our mono camera.
 - **Rewind:** robot code can record every camera at 30 fps, for 3% of one core, and you can download the recordings from the web UI.
 - **Accurate timing:** frames are timestamped at mid-exposure and synced to the robot's clock.
@@ -163,9 +163,35 @@ We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. Th
 
 **Measure before optimizing.** We added a once-per-second stats line to the detector (calls per second, milliseconds per frame, tags per frame, decision margin). It showed right away that the GPU was idle and the camera pipeline was the problem, which saved us from optimizing the wrong thing.
 
-**More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), and less with the JPEG hardware, so 4 cameras should fit. The limit was **USB bandwidth**. With the stock driver each camera reserves ~196 Mbps whatever mode it runs, and a USB 2.0 root port holds two. All four USB-A ports share one root port, so only 2 cameras fit there.
+**More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), and less with the JPEG hardware, so 4 cameras should fit. The limit was **USB bandwidth**. With the stock driver each camera reserves ~196 Mbps whatever mode it runs, and the Jetson's whole USB 2.0 side holds two of those (see below).
 
-We fixed that with a patched camera driver (`scripts/jetson/11-uvcvideo-payload-cap.sh`). It caps the Thriftiest Cam's reservation at 82 Mbps (UVC alternate setting 7), still about 1.4x the largest frame we've measured at 120 fps. Now **4 cameras fit on the USB-A ports**, and a hub in the USB-C port adds a second root port for more (tested: 121 fps there). Tested with 2 cameras: 122 fps each, every frame complete. The cost: a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so results reach the robot ~2 ms later. It does **not** make timestamps less accurate: the driver stamps a frame when its *first* USB packet arrives. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
+We fixed that with a patched camera driver (`scripts/jetson/11-uvcvideo-payload-cap.sh`). It caps the Thriftiest Cam's reservation at 82 Mbps (UVC alternate setting 7), still about 1.4x the largest frame we've measured at 120 fps. Now **4 cameras fit on the USB-A ports**, plus a 5th capped at 1600 bytes on a USB-C hub. Tested with 2 cameras: 122 fps each, every frame complete. The cost: a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so results reach the robot ~2 ms later. It does **not** make timestamps less accurate: the driver stamps a frame when its *first* USB packet arrives. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
+
+**There is only one USB 2.0 bus. The USB-C port doesn't add bandwidth** (measured 2026-09-24). The Jetson has one USB controller, with one USB 2.0 bus (`lsusb` Bus 1) and one USB 3 bus (Bus 2). Every USB 2.0 port is a branch of Bus 1 and shares its budget:
+- the four USB-A ports (one hub inside the Jetson);
+- the USB-C port;
+- the M.2 Key E slot (the Wi-Fi card's Bluetooth).
+
+We tested by setting cameras' USB alternate settings directly, with PhotonVision stopped. The bandwidth figures are bytes reserved per 125 µs microframe.
+
+| Reserved | Where | Result |
+| --- | --- | --- |
+| 6120 | two uncapped cameras on USB-A (3060 + 3060) | fits |
+| 6132 | 3072 on USB-C + 3060 on USB-A | fits, but a second 3060 on USB-A is then refused |
+| 6720 | four at 1280 on USB-A + 1600 on USB-C | fits (what we run) |
+| 7400 | 3060 + 3060 + 1280, all on USB-A | refused |
+| 7520 | four at 1280 on USB-A + 2400 on USB-C | refused |
+
+So about **6700 bytes fit, whichever ports the cameras are on** (about 430 Mbps). With 4 cameras at 1280 and a 5th at 1600 it's full: a 6th USB 2.0 camera needs lower caps (check each camera still holds its frame rate), or one of these:
+- **A USB 3 camera:** it streams on Bus 2, the USB 3 bus, which has its own budget. The USB-A ports are USB 3.2, and so is USB-C.
+- **A USB controller card in the spare M.2 slot:** a second controller gives a second USB 2.0 bus.
+  - **The slot:** the Orin Nano dev kit has an empty M.2 Key M 2230 slot, PCIe 3.0 x2 ([NVIDIA's hardware layout](https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/latest/hardware_layout.html), mark 11). The 2280 Key M slot holds our SSD.
+  - **Drivers:** Key M slots carry only PCIe, not USB, so this needs a PCIe-to-USB controller card. The Jetson's kernel has the drivers (`xhci-pci`, plus the Renesas firmware loader).
+  - **Untested:** most such cards are 2280 or need a riser, and the new ports must be mounted on the robot.
+  - **Not the Key E slot:** its USB is Bus 1 again, and it holds the Wi-Fi card.
+- **CSI cameras:** the dev kit's two ribbon-cable connectors don't use USB at all (see "Next season" below).
+
+`scripts/jetson/usb-bandwidth.py` shows what each camera reserves, which ports failed and why, and the cap command to fix it. The health check runs it too.
 
 **Timestamps mark mid-exposure** (`photonvision-13`): the Jetson subtracts half the exposure from every frame's timestamp, so the robot shouldn't. The camera's own delay (readout and JPEG, before its first packet) is still to be measured on the robot with the spin-in-front-of-a-tag test, and set as `SPECTRUM_CAMERA_DELAY_US`. The camera doesn't send UVC hardware timestamps; we checked.
 
@@ -201,7 +227,7 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 | BottomLeft | bottom row, left | 2.2 |
 | BottomRight | bottom row, right | 2.4 (expected) |
 
-All four USB-A ports share one USB 2.0 root port. Four cameras fit there only with our capped camera driver installed (`scripts/jetson/11-uvcvideo-payload-cap.sh --install`; the health check shows which driver is loaded). With the stock driver, only two fit.
+All the Jetson's USB 2.0 ports share one bandwidth budget: the four USB-A ports, the USB-C port, and anything on a hub (see Performance). Four cameras fit only with our capped camera driver installed (`scripts/jetson/11-uvcvideo-payload-cap.sh --install`; the health check shows which driver is loaded). With the stock driver, only two fit.
 
 A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there.
 
@@ -325,7 +351,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
   - **Object Detection pipelines are capped at 30 fps by default** (`SPECTRUM_OD_FPS_LIMIT`; a robot-set FPS limit takes precedence). At 30 fps they cost the AprilTag cameras nothing measurable.
   - **Raising the cap:** the hardware colour decode saves CPU, but uncapped FUEL also pushed the AprilTag camera's worst detect time to 28 ms by sharing the GPU, and hardware decode doesn't change that. Measure the AprilTag worst case before running game pieces faster than 30 fps.
   - **Don't build TensorRT engines while measuring.** A `trtexec` build uses the GPU hard for ~8 minutes and made our first measurements look like FUEL doubled the AprilTag detect time. It didn't.
-- **Which camera:** a colour camera should do even better (FUEL is yellow), and a mono Thriftiest Cam works too. With 4 Thriftiest Cams on USB-A, put the game-piece camera on the USB-C port, or use a USB 3 camera.
+- **Which camera:** a colour camera should do even better (FUEL is yellow), and a mono Thriftiest Cam works too. With 4 Thriftiest Cams on USB-A, a 5th USB 2.0 camera fits only capped (the USB-C port shares the same budget; see Performance), or use a USB 3 camera.
 
 ## Troubleshooting quick reference
 
@@ -333,8 +359,9 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 | --- | --- | --- |
 | `lsusb` shows no NVIDIA device | Not in recovery mode, or a charge-only USB-C cable | Redo the FC REC–GND jumper with power off. Try a USB-C cable you know carries data. |
 | Flash hangs at "Waiting for target to boot-up" for minutes | NetworkManager or the firewall is interfering | Use `02-flash-nvme.sh`, which handles both. |
-| Camera doesn't show up (`lsusb`, no `/dev/video*`) | Loose cable, or plugged straight into the USB-C port | Reseat or swap the cable. Cameras work on USB-C through a hub (it's a separate USB root port). |
-| A 3rd or 4th camera won't start streaming ("No space left on device") | USB 2.0 bandwidth: the stock camera driver lets each camera reserve ~196 Mbps | Install the capped driver: `scripts/jetson/11-uvcvideo-payload-cap.sh --install`. The health check shows which driver is loaded. |
+| Camera doesn't show up (`lsusb`, no `/dev/video*`) | Loose cable, or plugged straight into the USB-C port | Reseat or swap the cable. Cameras work on USB-C through a hub (it shares the USB-A ports' bandwidth). |
+| Kernel log: "new low-speed USB device … error -71 … unable to enumerate USB device" | The camera's data wires aren't connecting: cable, adapter, or a plug not fully in (seen with two cameras at once on 2026-09-24) | A camera that should be high-speed showing up as low-speed is a data-line problem. Reseat it, or swap the cable. `scripts/jetson/usb-bandwidth.py` and the health check name the port. |
+| A 3rd, 4th or 5th camera won't start streaming ("No space left on device", "Not enough bandwidth" in the kernel log) | USB 2.0 bandwidth: a camera reserves bandwidth for its alternate setting, and every USB 2.0 port shares one budget (moving to USB-C doesn't help) | Run `scripts/jetson/usb-bandwidth.py`: it prints the cap to install, e.g. `CAP=1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600 scripts/jetson/11-uvcvideo-payload-cap.sh --install`. A camera it can't cap (the Razer Kiyo) takes half the budget by itself. |
 | Low FPS (~34) | Exposure too long (the units are 100 µs; the slider shows ms) | Exposure 50–83 (5–8.3 ms). |
 | Tags flicker in and out | Decision margin near the cutoff (dim light, or flickering light) | Run `tests/flicker-check/run.sh`. If frames pulse, use exposure 83; otherwise lower the cutoff a little. Retune on the field. |
 | One camera shows no detections, and the log fills with "invalid JPEG image received" | The camera got stuck sending corrupt frames (seen once after rapid restarts) | PhotonVision now recovers it by itself (`photonvision-29`): it reconnects the camera after 3 s without usable frames, then resets it at the USB level, like a replug, 5 s later. Look for "no usable frames" in the log. If it keeps happening, replug that camera or restart PhotonVision. |
@@ -368,7 +395,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 | Folder | What's in it |
 | --- | --- |
 | `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), back up and restore the SSD (04, 05), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
-| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), install a YOLO model (12), field-calibration replay tool (13), plus `health-check.sh` |
+| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), install a YOLO model (12), field-calibration replay tool (13), plus `health-check.sh` and `usb-bandwidth.py` (what each camera reserves on USB, and the fix) |
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoders, CPU and hardware, the TensorRT object detector, and `fieldcal_detect`, which replays Rewind recordings through the detector) |
 | `tools/fieldcal/` | Field calibration: tag positions and camera mounts from a recording of the robot pushed to still spots ([README](tools/fieldcal/README.md)) |

@@ -19,10 +19,13 @@ if systemctl is-active --quiet photonvision; then
   ver=$(journalctl _PID="$P" --no-pager -o cat 2>/dev/null | grep -m1 -oE "Starting PhotonVision version [^ ]+" | awk '{print $4}')
   pass "running ${up}s, version ${ver:-?}"
   [[ ${restarts:-0} -gt 0 ]] && warn "restarted $restarts time(s) since boot (check: journalctl -u photonvision)"
-  # Normal: ~0.7 GB, plus ~180 MB per camera with the hardware JPEG decoder. A leak once grew it
-  # to 5.6 GB in minutes before the kernel killed it (libnvjpeg outside MJPEG mode, 2026-09-24).
+  # Normal: ~0.7 GB, plus ~0.4 GB per camera all in (decoder, detector, module): 2.25 GB with 5
+  # cameras. A leak once grew it to 5.6 GB in minutes before the kernel killed it (libnvjpeg
+  # outside MJPEG mode, 2026-09-24).
   rss_mb=$(( $(ps -o rss= -p "$P" | tr -d ' ') / 1024 ))
-  [[ $rss_mb -gt 2500 ]] && warn "PhotonVision is using ${rss_mb} MB of memory (normal is 0.7-1.5 GB): a leak? The kernel kills it near 7 GB"
+  ncam=$(ls -d /sys/bus/usb/drivers/uvcvideo/*:1.0 2>/dev/null | wc -l)
+  rss_max=$(( 1000 + 500 * ncam ))
+  [[ $rss_mb -gt $rss_max ]] && warn "PhotonVision is using ${rss_mb} MB of memory (over ${rss_max} MB for $ncam cameras): a leak? The kernel kills it near 7 GB"
   ooms=$(journalctl -u photonvision -b --no-pager 2>/dev/null | grep -c "killed by the OOM killer")
   [[ $ooms -gt 0 ]] && warn "PhotonVision was killed for running out of memory $ooms time(s) since boot"
   LOG=$(journalctl _PID="$P" --no-pager -o cat 2>/dev/null)
@@ -54,8 +57,27 @@ done
 [[ -z $handles && $P != 0 ]] && fail "no detector stats in the last 3 s (no CUDA pipeline running?)"
 ndet=$(wc -w <<<"$handles")
 ncam=$(ls -d /sys/bus/usb/drivers/uvcvideo/*:1.0 2>/dev/null | wc -l)
-if [[ $P != 0 && $ndet -gt 0 && $ndet -lt $ncam ]]; then
-  warn "only $ndet of $ncam cameras are detecting (a camera stuck? restart PhotonVision, or replug it)"
+# AprilTag cameras: plugged in, and PhotonVision's saved pipeline for them is an AprilTag one
+# (a game-piece or driver camera has no detector). Every camera if the config can't be read.
+napril=$(python3 - <<'PY' 2>/dev/null
+import glob, json, re, sqlite3
+port = lambda s: (m := re.search(r"usb-0:([\d.]+):1\.0-video", s)) and m.group(1)
+here = {port(p) for p in glob.glob("/dev/v4l/by-path/*-video-index0")}
+db = sqlite3.connect("file:/opt/photonvision/photonvision_config/photon.sqlite?mode=ro", uri=True)
+n = 0
+for cfg, pipes in db.execute("select config_json, pipeline_jsons from cameras"):
+    cfg, pipes = json.loads(cfg), json.loads(pipes)
+    i = cfg.get("currentPipelineIndex", 0)
+    if cfg.get("deactivated") or port(json.dumps(cfg.get("matchedCameraInfo", {}))) not in here or not 0 <= i < len(pipes):
+        continue
+    s = json.loads(pipes[i]) if isinstance(pipes[i], str) else pipes[i]
+    n += "AprilTag" in (s[0] if isinstance(s, list) else "")
+print(n)
+PY
+)
+[[ -z $napril ]] && napril=$ncam
+if [[ $P != 0 && $ndet -gt 0 && $ndet -lt $napril ]]; then
+  warn "only $ndet of $napril AprilTag cameras are detecting (a camera stuck? restart PhotonVision, or replug it)"
 fi
 # A camera can get stuck sending corrupt JPEGs (seen once after rapid restarts): cscore drops them.
 badjpeg=$(journalctl _PID="$P" --no-pager -o cat --since "-10 s" 2>/dev/null | grep -oE "[A-Za-z]+: invalid JPEG image received" | sort | uniq -c)
@@ -93,8 +115,9 @@ if [[ -n $jline ]]; then
 fi
 calib8=$(grep -c "setparams handle .*(8 dist coeffs)" <<<"$LOG")
 calib5=$(grep -c "setparams handle .*(5 dist coeffs)\|sending 5 of 8" <<<"$LOG")
-if [[ $calib8 -ge $EXPECT ]]; then pass "calibration loaded for $calib8 detector(s), 8 lens coefficients"
-elif [[ $calib8 -gt 0 ]]; then warn "calibration loaded for only $calib8 of $EXPECT cameras"
+want_cal=$(( napril > 0 ? napril : EXPECT ))
+if [[ $calib8 -ge $want_cal ]]; then pass "calibration loaded for $calib8 detector(s), 8 lens coefficients"
+elif [[ $calib8 -gt 0 ]]; then warn "calibration loaded for only $calib8 of $want_cal AprilTag cameras"
 elif [[ $calib5 -gt 0 ]]; then warn "calibration loaded with only 5 lens coefficients"
 else warn "no calibration loaded (3D mode needs one at the active resolution)"; fi
 nfail=$(journalctl _PID="$P" --no-pager -o cat --since "-60 s" 2>/dev/null | grep -c "^971 detector h.* failure")
@@ -148,9 +171,26 @@ if [[ $cams -lt $EXPECT ]]; then fail "$cams camera(s) found, expected $EXPECT";
 # USB 2.0 bandwidth: stock uvcvideo lets a Thriftiest Cam reserve ~196 Mbps, so only 2 fit on the
 # USB-A ports; our capped driver (11-uvcvideo-payload-cap.sh) fits 4.
 cap=$(cat /sys/module/uvcvideo/parameters/payload_cap 2>/dev/null || true)
-if [[ -n $cap && $cap != "(null)" ]]; then pass "camera driver: bandwidth cap $cap (4 cameras fit on the USB-A ports)"
-elif [[ $cams -gt 2 ]]; then warn "stock camera driver: only 2 cameras fit on the USB-A ports (run 11-uvcvideo-payload-cap.sh --install)"
-else pass "stock camera driver (fine for 2 cameras; 3-4 on USB-A need 11-uvcvideo-payload-cap.sh)"; fi
+if [[ -n $cap && $cap != "(null)" ]]; then pass "camera driver: bandwidth cap $cap"
+elif [[ $cams -gt 2 ]]; then warn "stock camera driver: only 2 cameras fit on USB 2.0, on any ports (run 11-uvcvideo-payload-cap.sh --install)"
+else pass "stock camera driver (fine for 2 cameras; more need 11-uvcvideo-payload-cap.sh)"; fi
+# USB bandwidth and connection trouble in the last 10 minutes, with what to do about it
+# (usb-bandwidth.py: each camera's reservation, what failed, and the fix).
+UB=$(dirname "$0")/usb-bandwidth.py
+if [[ -x $UB ]]; then
+  ub=$(python3 "$UB" --json 2>/dev/null || true)
+  if [[ -n $ub ]]; then
+    python3 - "$ub" <<'PY' | while IFS=$'\t' read -r kind line; do [[ $kind == FAIL ]] && fail "$line" || pass "$line"; done
+import json, sys
+s = json.loads(sys.argv[1])
+for a in s.get("advice", []):
+    print("FAIL\t" + a)
+used = ", ".join("bus %d: %d of ~%d bytes" % (b["bus"], b["reservedBytes"], s["budgetBytes"]) for b in s["buses"])
+if used:
+    print("PASS\tUSB bandwidth reserved: %s per microframe (usb-bandwidth.py for details)" % used)
+PY
+  fi
+fi
 
 echo "== Robot connection"
 last_nt=$(grep -E "NT connected to|Could not connect to the robot|disconnected" <<<"$LOG" | tail -1)
