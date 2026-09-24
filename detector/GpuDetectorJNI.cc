@@ -25,7 +25,10 @@
 #include <jni.h>
 #include <wpi/jni_util.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -33,11 +36,19 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include <csetjmp>
 
+#include <dlfcn.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <cuda_runtime.h>
 #include <jpeglib.h>
+#include "nvjpg_decoder.h"
 #include <wpi/RawFrame.h>
 #include "absl/status/status.h"
 #include <opencv2/core/mat.hpp>
@@ -281,6 +292,324 @@ void RecordStats(Stats &st, jlong handle, const cv::Mat &img, const zarray_t *de
   }
 }
 
+// ---- MJPEG -> gray (decodeMjpegGray) -----------------------------------------------------------
+// libjpeg-turbo by default. SPECTRUM_JPEG_DECODER=nvjpg uses the Jetson's NVJPG hardware engine
+// instead (libspectrumnvjpg.so, nvjpg_decoder.h): 2.5 ms and 0.7 ms of CPU a frame, against
+// 2.9 ms and 2.9 ms. /tmp/spectrum-jpeg-decoder ("nvjpg" or "turbo", re-read every 2 s)
+// overrides it without a restart, for A/B tests.
+//   - A frame the hardware can't decode is decoded by libjpeg-turbo instead.
+//   - Every kCheckEvery hardware frames per camera, a low-priority thread decodes the same JPEG
+//     with libjpeg-turbo. Any difference turns the hardware decoder off until PhotonVision
+//     restarts: the obvious way of calling libnvjpeg returned stale frames with no error
+//     (docs/VISION-RESEARCH.md), so the output is checked, not trusted.
+
+struct JpegError {
+  jpeg_error_mgr mgr;
+  std::jmp_buf jump;
+  int warnings;
+};
+void JpegErrorExit(j_common_ptr c) {  // libjpeg's default calls exit(): never in a JVM
+  std::longjmp(reinterpret_cast<JpegError *>(c->err)->jump, 1);
+}
+void JpegCountWarnings(j_common_ptr c, int level) {
+  if (level < 0) reinterpret_cast<JpegError *>(c->err)->warnings++;  // corrupt data
+}
+
+// libjpeg-turbo straight to gray. 0 ok, -2 bad/unsupported JPEG, -3 not width x height x 1.
+// *warnings (if given) counts libjpeg's corrupt-data warnings, e.g. a truncated frame.
+int TurboDecodeGray(const uint8_t *jpeg, size_t size, uint8_t *gray, int width, int height,
+                    size_t stride, int *warnings = nullptr) {
+  jpeg_decompress_struct c;
+  JpegError err;
+  c.err = jpeg_std_error(&err.mgr);
+  err.mgr.error_exit = JpegErrorExit;
+  err.mgr.emit_message = JpegCountWarnings;
+  err.warnings = 0;
+  if (setjmp(err.jump)) {
+    jpeg_destroy_decompress(&c);
+    return -2;
+  }
+  jpeg_create_decompress(&c);
+  jpeg_mem_src(&c, const_cast<unsigned char *>(jpeg), size);
+  if (jpeg_read_header(&c, TRUE) != JPEG_HEADER_OK) {
+    jpeg_destroy_decompress(&c);
+    return -2;
+  }
+  c.out_color_space = JCS_GRAYSCALE;
+  c.dct_method = JDCT_ISLOW;  // accurate: tag corners depend on clean edges
+  jpeg_start_decompress(&c);
+  if (static_cast<int>(c.output_width) != width || static_cast<int>(c.output_height) != height ||
+      c.output_components != 1) {
+    jpeg_abort_decompress(&c);
+    jpeg_destroy_decompress(&c);
+    return -3;
+  }
+  while (c.output_scanline < c.output_height) {
+    JSAMPROW row = gray + static_cast<size_t>(c.output_scanline) * stride;
+    jpeg_read_scanlines(&c, &row, 1);
+  }
+  jpeg_finish_decompress(&c);
+  jpeg_destroy_decompress(&c);
+  if (warnings) *warnings = err.warnings;
+  return 0;
+}
+
+struct Nvjpg {
+  decltype(&snj_create) create;
+  decltype(&snj_create_error) create_error;
+  decltype(&snj_destroy) destroy;
+  decltype(&snj_decode_gray) decode;
+  decltype(&snj_error) error;
+};
+
+// libspectrumnvjpg.so from this library's own directory (so an uninstalled build tests its own
+// copy), else from the search path. RTLD_DEEPBIND: its jpeg_* calls must bind to libnvjpeg, not
+// to the libjpeg-turbo this library links.
+const Nvjpg *LoadNvjpg() {
+  static const Nvjpg *api = []() -> const Nvjpg * {
+    std::string path = "libspectrumnvjpg.so";
+    Dl_info self;
+    if (dladdr(reinterpret_cast<void *>(&TurboDecodeGray), &self) && self.dli_fname) {
+      std::string dir = self.dli_fname;
+      dir.erase(dir.rfind('/') + 1);
+      if (access((dir + path).c_str(), R_OK) == 0) path = dir + path;
+    }
+    void *h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND);
+    if (!h) {
+      std::cout << "971 jpeg: can't load " << path << " (" << dlerror()
+                << "); using libjpeg-turbo" << std::endl;
+      return nullptr;
+    }
+    static Nvjpg a;
+    a.create = reinterpret_cast<decltype(a.create)>(dlsym(h, "snj_create"));
+    a.create_error = reinterpret_cast<decltype(a.create_error)>(dlsym(h, "snj_create_error"));
+    a.destroy = reinterpret_cast<decltype(a.destroy)>(dlsym(h, "snj_destroy"));
+    a.decode = reinterpret_cast<decltype(a.decode)>(dlsym(h, "snj_decode_gray"));
+    a.error = reinterpret_cast<decltype(a.error)>(dlsym(h, "snj_error"));
+    if (!a.create || !a.create_error || !a.destroy || !a.decode || !a.error) {
+      std::cout << "971 jpeg: " << path << " is missing functions; using libjpeg-turbo"
+                << std::endl;
+      return nullptr;
+    }
+    std::cout << "971 jpeg: loaded " << path << std::endl;
+    return &a;
+  }();
+  return api;
+}
+
+enum class JpegDecoder { kTurbo, kNvjpg };
+
+// Set when a check finds the hardware's output differs, or on a CUDA failure: from then on
+// libjpeg-turbo decodes everything until PhotonVision restarts.
+std::atomic<bool> nvjpg_off{false};
+
+JpegDecoder WantedJpegDecoder() {
+  static std::mutex mu;
+  static std::chrono::steady_clock::time_point next{};
+  static JpegDecoder mode = JpegDecoder::kTurbo;
+  static std::string logged;
+  std::lock_guard<std::mutex> lock(mu);
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= next) {
+    next = now + std::chrono::seconds(2);
+    std::string v = "turbo";
+    if (const char *e = std::getenv("SPECTRUM_JPEG_DECODER")) v = e;
+    if (FILE *f = std::fopen("/tmp/spectrum-jpeg-decoder", "r")) {
+      char buf[16] = {0};
+      if (std::fgets(buf, sizeof(buf), f)) v = std::string(buf).substr(0, std::strcspn(buf, " \r\n"));
+      std::fclose(f);
+    }
+    mode = v == "nvjpg" ? JpegDecoder::kNvjpg : JpegDecoder::kTurbo;
+    if (v != logged) {
+      logged = v;
+      std::cout << "971 jpeg decoder: "
+                << (mode == JpegDecoder::kNvjpg ? "nvjpg (hardware)" : "libjpeg-turbo")
+                << (nvjpg_off ? " requested, but the hardware decoder is off (see above)" : "")
+                << std::endl;
+    }
+  }
+  return nvjpg_off ? JpegDecoder::kTurbo : mode;
+}
+
+std::atomic<long> checks_ok{0}, checks_differ{0}, checks_skipped{0};
+
+// Re-decodes copies of hardware-decoded frames with libjpeg-turbo on its own low-priority
+// thread, and compares. One job at a time; a frame offered while it's busy isn't checked.
+// (Plain buffers, not cv::Mat: this library uses only OpenCV's header-inline parts, because
+// PhotonVision brings its own OpenCV build.)
+class JpegChecker {
+ public:
+  void Submit(const uint8_t *jpeg, size_t size, const uint8_t *gray, int width, int height,
+              size_t stride) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (busy_) return;
+    busy_ = true;
+    jpeg_.assign(jpeg, jpeg + size);
+    width_ = width;
+    height_ = height;
+    gray_.resize(static_cast<size_t>(width) * height);
+    for (int y = 0; y < height; ++y) {
+      std::memcpy(&gray_[static_cast<size_t>(y) * width], gray + y * stride, width);
+    }
+    if (!thread_.joinable()) thread_ = std::thread([this] { Run(); });
+    cv_.notify_one();
+  }
+
+ private:
+  void Run() {
+    setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);
+    std::vector<uint8_t> ref;
+    for (;;) {
+      {
+        std::unique_lock<std::mutex> lock(mu_);
+        cv_.wait(lock, [this] { return busy_; });
+      }
+      ref.resize(gray_.size());
+      int warnings = 0;
+      const int rc = TurboDecodeGray(jpeg_.data(), jpeg_.size(), ref.data(), width_, height_,
+                                     width_, &warnings);
+      if (rc != 0 || warnings) {
+        checks_skipped++;  // a corrupt frame: libjpeg-turbo and NVJPG may fill the gap differently
+      } else {
+        long differ = 0;
+        int max_diff = 0;
+        for (size_t i = 0; i < ref.size(); ++i) {
+          const int d = std::abs(ref[i] - gray_[i]);
+          differ += d != 0;
+          max_diff = std::max(max_diff, d);
+        }
+        if (differ == 0) {
+          checks_ok++;
+        } else {
+          checks_differ++;
+          nvjpg_off = true;
+          std::cout << "971 jpeg: HARDWARE DECODE DIFFERS from libjpeg-turbo (" << differ << " of "
+                    << ref.size() << " pixels, max difference " << max_diff
+                    << "); libjpeg-turbo decodes everything until PhotonVision restarts"
+                    << std::endl;
+        }
+      }
+      std::lock_guard<std::mutex> lock(mu_);
+      busy_ = false;
+    }
+  }
+
+  std::mutex mu_;
+  std::condition_variable cv_;
+  bool busy_ = false;
+  std::thread thread_;
+  std::vector<uint8_t> jpeg_, gray_;
+  int width_ = 0, height_ = 0;
+};
+
+JpegChecker &Checker() {
+  static JpegChecker *c = new JpegChecker;  // never destroyed: its thread runs until exit
+  return *c;
+}
+
+// ~2 s at 120 fps. The first hardware frame on each camera is checked too.
+constexpr long kCheckEvery = 240;
+
+// One hardware decoder per camera thread (a decoder isn't thread-safe; PhotonVision decodes
+// each camera's frames on that camera's own thread).
+struct NvjpgThread {
+  SnjDecoder *dec = nullptr;
+  bool unavailable = false;  // no decoder, or this camera's JPEGs can't use the engine
+  int unsupported_in_a_row = 0;
+  long frames = 0;
+  ~NvjpgThread() {
+    if (dec) LoadNvjpg()->destroy(dec);
+  }
+};
+thread_local NvjpgThread nvjpg_thread;
+
+std::atomic<int> nvjpg_errors_logged{0};
+
+// Test hook for the safety net: while /tmp/spectrum-jpeg-fault exists (checked every 30 frames),
+// every hardware-decoded frame gets one pixel changed, so the next check must find it and turn
+// the hardware decoder off.
+bool JpegFaultActive() {
+  static std::atomic<int> calls{0};
+  static std::atomic<bool> active{false};
+  if (calls++ % 30 == 0) active = access("/tmp/spectrum-jpeg-fault", F_OK) == 0;
+  return active;
+}
+
+// SNJ_OK, or why libjpeg-turbo has to decode this frame instead.
+int NvjpgDecodeGray(const uint8_t *jpeg, size_t size, cv::Mat &gray) {
+  NvjpgThread &t = nvjpg_thread;
+  if (t.unavailable) return SNJ_UNSUPPORTED;
+  const Nvjpg *api = LoadNvjpg();
+  if (!api) {
+    t.unavailable = true;
+    return SNJ_UNSUPPORTED;
+  }
+  if (!t.dec && !(t.dec = api->create())) {
+    std::cout << "971 jpeg: no hardware decoder (" << api->create_error()
+              << "); using libjpeg-turbo on this camera" << std::endl;
+    t.unavailable = true;
+    return SNJ_UNSUPPORTED;
+  }
+  const int rc = api->decode(t.dec, jpeg, size, gray.data, gray.cols, gray.rows, gray.step);
+  if (rc == SNJ_OK) {
+    t.unsupported_in_a_row = 0;
+    if (JpegFaultActive()) gray.data[0] ^= 0x80;
+    if (t.frames++ % kCheckEvery == 0) {
+      Checker().Submit(jpeg, size, gray.data, gray.cols, gray.rows, gray.step);
+    }
+    return rc;
+  }
+  if (nvjpg_errors_logged++ < 20) {
+    std::cout << "971 jpeg: hardware decode failed (" << rc << ": " << api->error(t.dec)
+              << "); libjpeg-turbo decodes this frame" << std::endl;
+  }
+  if (rc == SNJ_UNSUPPORTED && ++t.unsupported_in_a_row >= 30) {
+    std::cout << "971 jpeg: this camera's JPEGs can't use the hardware decoder; using "
+                 "libjpeg-turbo on this camera"
+              << std::endl;
+    t.unavailable = true;
+  }
+  if (rc == SNJ_CUDA && !nvjpg_off.exchange(true)) {
+    std::cout << "971 jpeg: CUDA failed in the hardware decoder; libjpeg-turbo decodes "
+                 "everything until PhotonVision restarts"
+              << std::endl;
+  }
+  return rc;
+}
+
+// A "971 jpeg" line every 10 s (not "971 stats", which health-check.sh parses per detector).
+void CountJpeg(JpegDecoder used, int fallback, std::chrono::steady_clock::time_point t0) {
+  static std::mutex mu;
+  static std::chrono::steady_clock::time_point start = t0;
+  static long frames[2] = {0, 0}, fallbacks[5] = {0, 0, 0, 0, 0};
+  static double ms[2] = {0, 0};
+  const auto t1 = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(mu);
+  const int i = used == JpegDecoder::kNvjpg ? 1 : 0;
+  frames[i]++;
+  ms[i] += std::chrono::duration<double, std::milli>(t1 - t0).count();
+  if (fallback < 0 && fallback >= -4) fallbacks[-fallback]++;
+  const double window = std::chrono::duration<double>(t1 - start).count();
+  if (window < 10) return;
+  std::cout << "971 jpeg " << static_cast<int>(window + 0.5) << " s: nvjpg "
+            << frames[1] / window << " frames/s";
+  if (frames[1]) std::cout << " (" << ms[1] / frames[1] << " ms)";
+  std::cout << ", libjpeg-turbo " << frames[0] / window << " frames/s";
+  if (frames[0]) std::cout << " (" << ms[0] / frames[0] << " ms)";
+  if (long f = fallbacks[1] + fallbacks[3] + fallbacks[4]) {
+    std::cout << "; " << f << " fell back (bad JPEG " << fallbacks[1] << ", unsupported "
+              << fallbacks[3] << ", CUDA " << fallbacks[4] << ")";
+  }
+  std::cout << "; checks since start " << checks_ok << " ok, " << checks_differ << " differ";
+  if (checks_skipped) std::cout << ", " << checks_skipped << " skipped (corrupt frame)";
+  if (nvjpg_off) std::cout << "; hardware decoder OFF";
+  std::cout << std::endl;
+  start = t1;
+  frames[0] = frames[1] = 0;
+  ms[0] = ms[1] = 0;
+  for (auto &f : fallbacks) f = 0;
+}
+
 }  // namespace
 
 extern "C" {
@@ -310,16 +639,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
 //     0 ok, -1 not an MJPEG frame, -2 bad/unsupported JPEG, -3 Mat isn't WxH 8-bit mono
 // Why: cscore's own gray path decodes every JPEG to full-colour BGR and then converts it
 // (Frame::ConvertImpl), ~8.9 ms a frame on the Orin Nano; this is ~2.6 ms (libjpeg-turbo,
-// grayscale output: only the Y component is inverse-DCT'd, no colour conversion).
-struct JpegError {
-  jpeg_error_mgr mgr;
-  std::jmp_buf jump;
-};
-void JpegErrorExit(j_common_ptr c) {  // libjpeg's default calls exit(): never in a JVM
-  std::longjmp(reinterpret_cast<JpegError *>(c->err)->jump, 1);
-}
-void JpegSilent(j_common_ptr, int) {}
-
+// grayscale output: only the Y component is inverse-DCT'd, no colour conversion), or 0.7 ms of
+// CPU on the NVJPG hardware engine (see "MJPEG -> gray" above).
 JNIEXPORT jint JNICALL Java_org_photonvision_jni_GpuDetectorJNI_decodeMjpegGray(
     JNIEnv *, jclass, jlong raw_ptr, jlong mat_ptr) {
   auto *frame = reinterpret_cast<WPI_RawFrame *>(raw_ptr);
@@ -327,38 +648,22 @@ JNIEXPORT jint JNICALL Java_org_photonvision_jni_GpuDetectorJNI_decodeMjpegGray(
   if (!frame || !mat) return -2;
   if (frame->pixelFormat != WPI_PIXFMT_MJPEG || !frame->data || frame->size < 4) return -1;
   if (mat->type() != CV_8UC1 || !mat->isContinuous()) return -3;
+  const auto *data = reinterpret_cast<const uint8_t *>(frame->data);
+  const size_t size = static_cast<size_t>(frame->size);
 
-  jpeg_decompress_struct c;
-  JpegError err;
-  c.err = jpeg_std_error(&err.mgr);
-  err.mgr.error_exit = JpegErrorExit;
-  err.mgr.emit_message = JpegSilent;
-  if (setjmp(err.jump)) {
-    jpeg_destroy_decompress(&c);
-    return -2;
+  const auto t0 = std::chrono::steady_clock::now();
+  int fallback = SNJ_OK;
+  if (WantedJpegDecoder() == JpegDecoder::kNvjpg) {
+    fallback = NvjpgDecodeGray(data, size, *mat);
+    if (fallback == SNJ_OK) {
+      CountJpeg(JpegDecoder::kNvjpg, SNJ_OK, t0);
+      return 0;
+    }
+    if (fallback == SNJ_WRONG_SIZE) return -3;
   }
-  jpeg_create_decompress(&c);
-  jpeg_mem_src(&c, frame->data, frame->size);
-  if (jpeg_read_header(&c, TRUE) != JPEG_HEADER_OK) {
-    jpeg_destroy_decompress(&c);
-    return -2;
-  }
-  c.out_color_space = JCS_GRAYSCALE;
-  c.dct_method = JDCT_ISLOW;  // accurate: tag corners depend on clean edges
-  jpeg_start_decompress(&c);
-  if (static_cast<int>(c.output_width) != mat->cols ||
-      static_cast<int>(c.output_height) != mat->rows || c.output_components != 1) {
-    jpeg_abort_decompress(&c);
-    jpeg_destroy_decompress(&c);
-    return -3;
-  }
-  while (c.output_scanline < c.output_height) {
-    JSAMPROW row = mat->ptr<uchar>(static_cast<int>(c.output_scanline));
-    jpeg_read_scanlines(&c, &row, 1);
-  }
-  jpeg_finish_decompress(&c);
-  jpeg_destroy_decompress(&c);
-  return 0;
+  const int rc = TurboDecodeGray(data, size, mat->data, mat->cols, mat->rows, mat->step);
+  if (rc == 0) CountJpeg(JpegDecoder::kTurbo, fallback, t0);
+  return rc;
 }
 
 JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *) {

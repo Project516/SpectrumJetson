@@ -423,6 +423,40 @@ Full write-up in [VISION-RESEARCH.md](VISION-RESEARCH.md).
 - **Camera stuck after rapid restarts.** After 4 PhotonVision restarts in 3 minutes, TopRight sent only corrupt frames: cscore logged "invalid JPEG image received from camera" 120 times a second, and nothing reached the pipeline. One more restart fixed it. `health-check.sh` now warns about this, and when fewer detectors report than cameras are plugged in.
 - **Exposure 50 (5 ms), decision margin 15** (team-tuned), now the new-camera defaults (`photonvision-10`). `tests/flicker-check`: 0.6% average and 1% maximum frame-to-frame brightness change under the shop LEDs, so no flicker.
 
+### Hardware JPEG decode: NVJPG (2026-09-24)
+
+The camera JPEGs can be decoded on the Orin Nano's two NVJPG engines instead of the CPU. It's on for this Jetson (`08-select-detector.sh bos --mwbd 20 --jpeg nvjpg`), with libjpeg-turbo as the fallback. The research and the pitfalls are in [VISION-RESEARCH.md](VISION-RESEARCH.md).
+
+- **How it works.** It's the same Java call, `decodeMjpegGray`, so the jar is unchanged. The detector library hands each JPEG to `libspectrumnvjpg.so` (`detector/NvJpgDecoder.cc`):
+  - libnvjpeg decodes into its own buffer (`IsVendorbuf`), and CUDA copies the Y plane into PhotonVision's Mat (0.24 ms).
+  - libnvjpeg cycles through 4 buffers behind one fd number. Each gets its own CUDA registration, keyed by its dmabuf inode.
+  - It's a separate library because libnvjpeg exports libjpeg-turbo's function names. `lib971apriltag.so` loads it with `dlopen(RTLD_DEEPBIND)`.
+  - There's one decoder per camera thread.
+- **Measured in PhotonVision** (2 cameras at 122 fps, bench scene, no tags):
+
+  | Decoder | PhotonVision CPU | Decode per frame |
+  |---|---|---|
+  | libjpeg-turbo | 0.84–0.86 cores | 2.0 ms |
+  | NVJPG | **0.52 cores** | 2.6 ms |
+
+  The engine takes ~2.3 ms whatever the scene; it already runs at its 499.2 MHz maximum. libjpeg-turbo's time grows with detail: 2.9 ms on our recorded frames, 2.0 ms on this plain bench scene. Detect times and fps didn't change.
+- **Safety net.**
+  - A frame the hardware can't decode goes to libjpeg-turbo. After a decode error the decoder is re-created.
+  - Every 240 hardware frames per camera (~2 s), a low-priority thread decodes the same JPEG with libjpeg-turbo and compares every pixel. Any difference turns the hardware decoder off until PhotonVision restarts (`971 jpeg: HARDWARE DECODE DIFFERS`). Frames libjpeg-turbo warns about (corrupt ones) aren't compared.
+  - A CUDA error in the decoder also turns it off. The detector's watchdog handles a broken context as before.
+  - `health-check.sh` shows the decoder in use, its checks, fallbacks and any difference.
+- **Logs.** A `971 jpeg` line every 10 s: frames/s and ms for each decoder, fallbacks, and checks since start.
+- **Tested.**
+  - `tests/jpeg-hw/run.sh`: every frame of the Rewind recordings (2,856) identical to libjpeg-turbo; bad input (truncated, corrupted, garbage, not a JPEG, wrong size, empty), each followed by a good frame that decodes on the hardware; 4 decoders at once. **Run it after every L4T update.**
+  - Safety net: `touch /tmp/spectrum-jpeg-fault` changes one pixel of every hardware frame. The next check caught it, the hardware turned off, and both cameras stayed at 122 fps.
+  - Sticky CUDA fault (`echo sticky > /tmp/spectrum-971-fault-every`): the decoder fell back to libjpeg-turbo, the watchdog restarted PhotonVision after 1 s, and it came back on the hardware.
+- **Switches.**
+  - `SPECTRUM_JPEG_DECODER=nvjpg`, set by `08-select-detector.sh --jpeg nvjpg`. Without it, libjpeg-turbo.
+  - A/B without a restart: `echo turbo > /tmp/spectrum-jpeg-decoder` (or `nvjpg`). It's read every 2 s; `rm` it to go back to the setting.
+- **Rollback.** `08-select-detector.sh bos --mwbd 20` without `--jpeg` goes back to libjpeg-turbo. The library from before this change is `/usr/lib/lib971apriltag.so.pre-nvjpg`.
+- **Measured and dropped: the detector reading the decoder's buffer directly.** bos's `Detect(host, device)` takes a GPU pointer, and detections were identical on 2,856 frames. Against this path it skips the copy into PhotonVision's Mat (0.27 ms) and the detector's upload (0.16 ms). But the detector's first kernel reads the decoder's buffer 3x slower (0.21 against 0.07 ms), and its CPU step reads that uncached buffer too (+0.13 ms). Net: ~0.15 ms and ~0.1 ms of CPU a frame, plus ~0.15 ms more from PhotonVision skipping its full-size copies. Not worth a PhotonVision patch. (End-to-end totals in the harness were noisy: our test decodes queued behind PhotonVision's live decodes on the same engines. The per-step times above are consistent between runs.)
+- **Not done yet:** 4 real cameras, and the colour camera.
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.

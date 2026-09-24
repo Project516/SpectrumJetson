@@ -58,6 +58,33 @@ if [[ -n $badjpeg ]]; then
     warn "${cam%:} sent $n invalid JPEGs in 10 s (restart PhotonVision; if it persists, replug that camera)"
   done <<<"$badjpeg"
 fi
+# JPEG decoder ("971 jpeg" lines every 10 s): NVJPG hardware or libjpeg-turbo. Every ~2 s per
+# camera one hardware frame is re-decoded by libjpeg-turbo; a difference turns the hardware off.
+if grep -q "HARDWARE DECODE DIFFERS" <<<"$LOG"; then
+  warn "hardware JPEG decode differed from libjpeg-turbo, so it's off until PhotonVision restarts (run tests/jpeg-hw/run.sh)"
+elif grep -q "CUDA failed in the hardware decoder" <<<"$LOG"; then
+  warn "the hardware JPEG decoder hit a CUDA error; libjpeg-turbo until PhotonVision restarts"
+fi
+jline=$(journalctl _PID="$P" --no-pager -o cat --since "-15 s" 2>/dev/null | grep '^971 jpeg [0-9]' | tail -1)
+if [[ -n $jline ]]; then
+  hw=$(awk '{for(i=1;i<=NF;i++) if($i=="nvjpg") {print int($(i+1)); exit}}' <<<"$jline")
+  sw=$(awk '{for(i=1;i<=NF;i++) if($i=="libjpeg-turbo") {print int($(i+1)); exit}}' <<<"$jline")
+  fell=$(grep -oE "[0-9]+ fell back" <<<"$jline" | awk '{print $1}')
+  checks=$(grep -oE "[0-9]+ ok, [0-9]+ differ" <<<"$jline")
+  wanted=$(grep '^971 jpeg decoder:' <<<"$LOG" | tail -1)
+  if [[ $jline == *"hardware decoder OFF"* ]]; then
+    pass "JPEG decode: libjpeg-turbo, $sw frames/s (hardware decoder off, see above; checks: $checks)"
+  elif [[ ${hw:-0} -gt 0 ]]; then
+    msg="JPEG decode: NVJPG hardware, $hw frames/s (checks: $checks)"
+    [[ ${sw:-0} -gt 0 ]] && msg+=", libjpeg-turbo $sw frames/s"
+    if [[ -n $fell ]]; then warn "$msg; $fell frames fell back to libjpeg-turbo in 10 s"; else pass "$msg"; fi
+  elif [[ $wanted == *nvjpg* ]]; then
+    why=$(grep -oE "971 jpeg: (can't load|no hardware decoder|this camera's JPEGs).*" <<<"$LOG" | tail -1)
+    warn "hardware JPEG decode is switched on but not decoding (${why:-see journalctl -u photonvision}); libjpeg-turbo $sw frames/s"
+  else
+    pass "JPEG decode: libjpeg-turbo, $sw frames/s"
+  fi
+fi
 calib8=$(grep -c "setparams handle .*(8 dist coeffs)" <<<"$LOG")
 calib5=$(grep -c "setparams handle .*(5 dist coeffs)\|sending 5 of 8" <<<"$LOG")
 if [[ $calib8 -ge $EXPECT ]]; then pass "calibration loaded for $calib8 detector(s), 8 lens coefficients"

@@ -45,10 +45,33 @@ set_target_properties(971apriltag_jni PROPERTIES OUTPUT_NAME 971apriltag)
 target_include_directories(971apriltag_jni PRIVATE ${BOS_DIR} ${JNI_INCLUDE_DIRS}
                                                    ${OpenCV_INCLUDE_DIRS})
 # bos uses ABSL_FLAG (use_neon, debug_blob_index) but its CMake does not link absl::flags.
+find_package(Threads REQUIRED)
 target_link_libraries(971apriltag_jni PRIVATE 971apriltag absl::flags wpiutil CUDA::cudart JPEG::JPEG
-                                              ${JNI_LIBRARIES})
+                                              ${JNI_LIBRARIES} Threads::Threads ${CMAKE_DL_LIBS})
 # Fail at link time, not in the JVM, if a symbol is missing.
 target_link_options(971apriltag_jni PRIVATE -Wl,--no-undefined)
+
+# SpectrumJetson: NVJPG hardware JPEG decode (libspectrumnvjpg.so), which lib971apriltag.so
+# loads with dlopen when SPECTRUM_JPEG_DECODER=nvjpg. Its own library because libnvjpeg exports
+# the same jpeg_* names as libjpeg-turbo (nvjpg_decoder.h). It must never link libjpeg-turbo, and
+# it takes jpeglib.h from the Jetson Multimedia API (libnvjpeg's struct layout).
+set(JETSON_MMAPI /usr/src/jetson_multimedia_api CACHE PATH "Jetson Multimedia API (nvidia-l4t-jetson-multimedia-api)")
+set(TEGRA_LIBDIR /usr/lib/aarch64-linux-gnu/nvidia)
+find_library(NVJPEG_LIB nvjpeg PATHS ${TEGRA_LIBDIR} NO_DEFAULT_PATH)
+find_library(NVBUFSURFACE_LIB nvbufsurface PATHS ${TEGRA_LIBDIR} NO_DEFAULT_PATH)
+find_library(EGL_LIB EGL)
+if(NVJPEG_LIB AND NVBUFSURFACE_LIB AND EGL_LIB AND EXISTS ${JETSON_MMAPI}/include/libjpeg-8b/jpeglib.h)
+  add_library(spectrumnvjpg SHARED NvJpgDecoder.cc)
+  target_include_directories(spectrumnvjpg BEFORE PRIVATE ${JETSON_MMAPI}/include/libjpeg-8b
+                                                          ${JETSON_MMAPI}/include)
+  target_compile_definitions(spectrumnvjpg PRIVATE EGL_NO_X11)
+  set_target_properties(spectrumnvjpg PROPERTIES CXX_VISIBILITY_PRESET hidden)
+  target_link_libraries(spectrumnvjpg PRIVATE ${NVJPEG_LIB} ${NVBUFSURFACE_LIB} ${EGL_LIB}
+                                              CUDA::cuda_driver CUDA::cudart)
+  target_link_options(spectrumnvjpg PRIVATE -Wl,--no-undefined -Wl,-rpath,${TEGRA_LIBDIR})
+else()
+  message(STATUS "libnvjpeg or the Jetson Multimedia API not found: skipping libspectrumnvjpg.so")
+endif()
 
 # SpectrumJetson: TensorRT YOLO object detection (libspectrumtrt.so) for PhotonVision's
 # object-detection pipeline (TensorRtYoloJNI.cu; Java side in the photonvision-13 patch).

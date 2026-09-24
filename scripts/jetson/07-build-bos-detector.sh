@@ -3,9 +3,13 @@
 # (frc971/bos third_party/971apriltag) with our JNI bridge (detector/).
 # Drop-in replacement for the FRC-Team-4143 GpuDetectorJNI build (05-*.sh): same Java API.
 #
+# Also builds libspectrumnvjpg.so, the optional NVJPG hardware JPEG decoder that
+# lib971apriltag.so loads when SPECTRUM_JPEG_DECODER=nvjpg (detector/nvjpg_decoder.h).
+#
 # Run ON THE JETSON after 04-build-allwpilib.sh. Builds only; does NOT install.
-# Install (and roll back) with:
+# Install with 08-select-detector.sh bos (it installs both libraries), or by hand:
 #   sudo install -m 755 ~/build/bos-detector/lib971apriltag.so /usr/lib/lib971apriltag.so
+#   sudo install -m 755 ~/build/bos-detector/libspectrumnvjpg.so /usr/lib/libspectrumnvjpg.so
 #   sudo systemctl restart photonvision
 #   (rollback: rerun 05-build-gpudetector.sh, which installs the 4143 build)
 set -euo pipefail
@@ -36,8 +40,9 @@ for p in "$REPO_ROOT"/patches/bos-*.patch; do
 done
 
 cmake -S "$REPO_ROOT/detector" -B "$OUT" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBOS_DIR="$SRC"
-cmake --build "$OUT" --parallel 4 --target 971apriltag_jni spectrumtrt_jni
+cmake --build "$OUT" --parallel 4 --target 971apriltag_jni spectrumtrt_jni spectrumnvjpg
 
 echo
 ldd "$OUT/lib971apriltag.so" | grep -E "not found|wpiutil|apriltag|cudart" || true
-echo "Built $OUT/lib971apriltag.so (not installed)"
+echo "Built $OUT/lib971apriltag.so and $OUT/libspectrumnvjpg.so (not installed)"
+echo "Check the hardware JPEG decoder with tests/jpeg-hw/run.sh"
