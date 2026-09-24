@@ -8,6 +8,11 @@
 #   4. Clocks locked at boot  - jetson_clocks after nvpmodel, before PhotonVision
 #                               (MAXN SUPER persists; jetson_clocks does not)
 #   5. No USB autosuspend     - for every UVC camera, so cameras never suspend/reconnect
+#   6. Power-cut safety       - the robot is switched off, never shut down:
+#                               written data reaches the SSD within ~3 s (default up to 30 s), and
+#                               the system log is kept on the SSD, synced every 5 s (default: RAM
+#                               only, so it vanished at every power cut, taking brownout clues).
+#                               ext4's journal keeps the filesystem itself consistent.
 #
 # Usage: 09-robot-tuning.sh [--undo]
 set -euo pipefail
@@ -16,11 +21,15 @@ APT_CONF=/etc/apt/apt.conf.d/99spectrum-no-auto-updates
 CLOCKS_UNIT=/etc/systemd/system/jetson-clocks.service
 UDEV_RULE=/etc/udev/rules.d/90-spectrum-camera-power.rules
 SNAP_UNITS=(snapd.service snapd.socket snapd.seeded.service)
+SYSCTL_CONF=/etc/sysctl.d/90-spectrum-writeback.conf
+JOURNALD_CONF=/etc/systemd/journald.conf.d/90-spectrum-persistent.conf
 
 sudo -v
 
 if [[ ${1:-} == --undo ]]; then
-  sudo rm -f "$APT_CONF" "$UDEV_RULE"
+  sudo rm -f "$APT_CONF" "$UDEV_RULE" "$SYSCTL_CONF" "$JOURNALD_CONF"
+  sudo sysctl -q vm.dirty_expire_centisecs=3000 vm.dirty_writeback_centisecs=500
+  sudo systemctl restart systemd-journald   # logs already on the SSD stay in /var/log/journal
   sudo systemctl enable apt-daily.timer apt-daily-upgrade.timer
   sudo systemctl unmask "${SNAP_UNITS[@]}"
   sudo systemctl enable snapd.service snapd.socket snapd.seeded.service
@@ -44,7 +53,10 @@ APT::Periodic::AutocleanInterval "0";
 EOF
 
 echo "==> 2. snapd off"
-if snap list 2>/dev/null | grep -qv "^Name"; then
+# (Already masked on a re-run: then `snap list` waits forever for snapd, so skip it.)
+if [[ $(systemctl is-enabled snapd.service 2>/dev/null || true) == masked ]]; then
+  echo "    already off"
+elif timeout 20 snap list 2>/dev/null | grep -qv "^Name"; then
   echo "    snaps are installed; leaving snapd alone"
 else
   sudo systemctl disable --now "${SNAP_UNITS[@]}" 2>/dev/null || true
@@ -86,6 +98,26 @@ for intf in /sys/bus/usb/drivers/uvcvideo/*:*; do
   echo on | sudo tee "$dev/power/control" >/dev/null
 done
 
+echo "==> 6. Power-cut safety"
+sudo tee "$SYSCTL_CONF" >/dev/null <<'CONF'
+# SpectrumJetson: the robot is switched off, not shut down. Write data to the SSD within ~3 s
+# (defaults: 30 s / 5 s), so a power cut loses at most a few seconds.
+vm.dirty_expire_centisecs = 300
+vm.dirty_writeback_centisecs = 100
+CONF
+sudo sysctl -q -p "$SYSCTL_CONF"
+sudo mkdir -p /var/log/journal "$(dirname "$JOURNALD_CONF")"
+sudo tee "$JOURNALD_CONF" >/dev/null <<'CONF'
+# SpectrumJetson: keep logs across power cuts (brownout debugging), synced every 5 s, capped.
+[Journal]
+Storage=persistent
+SyncIntervalSec=5s
+SystemMaxUse=300M
+CONF
+sudo systemd-tmpfiles --create --prefix /var/log/journal
+sudo systemctl restart systemd-journald
+sudo journalctl --flush
+
 echo
 echo "Summary:"
 # (|| true: systemctl is-enabled exits non-zero for disabled/masked units, which is the goal.)
@@ -98,4 +130,6 @@ for intf in /sys/bus/usb/drivers/uvcvideo/*:1.0; do
   dev=$(dirname "$(readlink -f "$intf")")
   echo "  camera $(basename "$dev"): power/control=$(cat "$dev/power/control")"
 done
+echo "  writeback: $(sysctl -n vm.dirty_expire_centisecs vm.dirty_writeback_centisecs | paste -sd/) centisecs (expire/interval)"
+echo "  journal: $( [[ -d /var/log/journal ]] && echo "on the SSD (/var/log/journal)" || echo "RAM only")"
 echo "Reboot to apply the boot changes: sudo reboot"

@@ -122,6 +122,18 @@ avail=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
 [[ $avail -ge 1500 ]] && pass "memory available ${avail} MB" || warn "memory available only ${avail} MB"
 disk=$(df -P / | awk 'NR == 2 {print int($5)}')
 [[ $disk -lt 85 ]] && pass "disk ${disk}% used" || warn "disk ${disk}% used"
+# Filesystem errors ext4 has recorded (world-readable counter; a power cut alone shouldn't cause any).
+fsdev=$(basename "$(findmnt -no SOURCE /)")
+fserr=$(cat "/sys/fs/ext4/$fsdev/errors_count" 2>/dev/null || echo "?")
+if [[ $fserr == 0 ]]; then pass "filesystem: no ext4 errors recorded"
+elif [[ $fserr == "?" ]]; then warn "filesystem: could not read the ext4 error count"
+else fail "filesystem: $fserr ext4 error(s) recorded (see docs/TECHNICAL.md, power-cut safety)"; fi
+if [[ -d /var/log/journal ]]; then
+  boots=$(journalctl --list-boots --no-pager 2>/dev/null | wc -l)
+  pass "system log kept across power cuts ($boots boot(s) on file)"
+else
+  warn "system log is RAM-only: it's lost at every power cut (run 09-robot-tuning.sh)"
+fi
 boot=$(systemd-analyze 2>/dev/null | grep -oE '= [0-9.]+s' | tr -d '= ')
 [[ -n $boot ]] && echo "        boot time: ${boot} ($(systemctl get-default))"
 

@@ -329,6 +329,18 @@ JVM (`tests/jvm-check.sh`, 2 cameras at ~90 fps): 28 MB peak heap of 512 MB, 0 G
 - **Download** (`GET /api/rewind/download?session=NAME`, the button in the Rewind card). `RewindExport` streams a zip: stored entries (deflate level 0), with each AVI's layout computed from the CSV index first so it's written in one pass. The handler thread runs at nice 10 while sending. Its AVI is byte-for-byte identical to `rewind-export.py`'s (checked on a 1,005-frame recording). The response has no `Content-Encoding`, so Javalin doesn't gzip it. Speed: 70 MB/s single, 125 MB/s back to back over USB. Cost while downloading: detector fps 93 → 78 (TopLeft) and 105 → 92 (TopRight), from kernel network/softirq time that nice doesn't cover. Not throttled: downloads only happen with the robot disabled.
 - **Not yet verified:** `robot_us` (Jetson time + `TimeSyncManager.getOffset()`) needs the robot network.
 
+### Power-cut safety (2026-09-24)
+
+The robot is switched off, never shut down, so every power-off is a power cut.
+
+- **Filesystem.** ext4 with its journal (default `data=ordered`, barriers on), and the NVMe's volatile write cache honors flushes. A cut leaves the filesystem consistent; the kernel replays the journal at the next mount.
+- **No boot-time fsck.** The L4T initrd mounts root read-write itself (`init` `_mount_root`), so `systemd-fsck-root` is skipped, and the initrd has no `e2fsck`. Adding one means modifying NVIDIA's initrd, which an L4T update would overwrite, so it isn't done. Instead, `health-check.sh` FAILs if `/sys/fs/ext4/<dev>/errors_count` is non-zero. The repair is restoring the backup image.
+- **Writeback.** Changed from 30 s / 5 s to `vm.dirty_expire_centisecs=300` and `vm.dirty_writeback_centisecs=100` (`09-robot-tuning.sh` step 6): written data reaches the SSD within ~3 s.
+- **System log.** It was RAM-only (`/var/log/journal` didn't exist), so every cut erased it, including the log of a brownout. Now `Storage=persistent`, `SyncIntervalSec=5s`, `SystemMaxUse=300M`.
+- **Rewind.** The video file, then the index, are forced to the SSD every 2 s and on close; `session.json` is synced too. Cost: ~0.7% of the recording's frames come late (5 of 704) when a sync blocks the recorder thread. Detector fps is unchanged.
+- **Test.** `tests/power-cut/run.sh` (laptop): records, you pull the plug, then after boot it checks the ext4 errors and journal replay, the log from before the cut, PhotonVision's health, and the seconds of video lost.
+- **Clock.** No RTC battery on the devkit: after a cut, the clock starts from the last saved time until NTP (Wi-Fi) corrects it. Rewind names carry that clock; their leading number is what orders them.
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.

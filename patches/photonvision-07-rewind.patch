@@ -467,10 +467,10 @@ index 00000000..603f326c
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
 new file mode 100644
-index 00000000..496b3462
+index 00000000..5f497347
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,505 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -782,8 +782,12 @@ index 00000000..496b3462
 +            m.put("endJetsonUs", NetworkTablesJNI.now());
 +            m.put("endReason", endReason);
 +        }
-+        try {
-+            json.writeValue(s.dir().resolve("session.json").toFile(), m);
++        try (var out = new java.io.FileOutputStream(s.dir().resolve("session.json").toFile())) {
++            json.writeValue(new java.io.FilterOutputStream(out) {
++                @Override
++                public void close() {} // keep the file open for the sync below
++            }, m);
++            out.getFD().sync();
 +        } catch (IOException e) {
 +            logger.error("Rewind: cannot write session.json", e);
 +        }
@@ -974,10 +978,10 @@ index 00000000..496b3462
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java b/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java
 new file mode 100644
-index 00000000..693fdde5
+index 00000000..934aab42
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,340 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -1002,9 +1006,12 @@ index 00000000..693fdde5
 +import edu.wpi.first.util.PixelFormat;
 +import edu.wpi.first.util.RawFrame;
 +import java.io.BufferedWriter;
++import java.io.FileOutputStream;
 +import java.io.IOException;
++import java.io.OutputStreamWriter;
 +import java.nio.ByteBuffer;
 +import java.nio.channels.FileChannel;
++import java.nio.charset.StandardCharsets;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
 +import java.nio.file.StandardOpenOption;
@@ -1027,6 +1034,7 @@ index 00000000..693fdde5
 + */
 +public class RewindRecorder {
 +    private static final long SEGMENT_US = 60_000_000L;
++    private static final long SYNC_US = 2_000_000L;
 +
 +    /** A 1280x800 MJPEG frame is ~50-60 KB; 4 MB covers any mode these cameras have. */
 +    private static final int FRAME_BUFFER_BYTES = 4 << 20;
@@ -1056,7 +1064,8 @@ index 00000000..693fdde5
 +    private BufferedWriter index = null;
 +    private long dataOffset = 0;
 +    private long lastKeptUs = 0;
-+    private long lastIndexFlushUs = 0;
++    private long lastSyncUs = 0;
++    private FileOutputStream indexFile = null;
 +    private long fpsWindowStartUs = 0;
 +    private int fpsWindowFrames = 0;
 +
@@ -1172,7 +1181,8 @@ index 00000000..693fdde5
 +                        StandardOpenOption.CREATE,
 +                        StandardOpenOption.WRITE,
 +                        StandardOpenOption.TRUNCATE_EXISTING);
-+        index = Files.newBufferedWriter(cameraDir.resolve(base + ".csv"));
++        indexFile = new FileOutputStream(cameraDir.resolve(base + ".csv").toFile());
++        index = new BufferedWriter(new OutputStreamWriter(indexFile, StandardCharsets.US_ASCII));
 +        index.write("# frame,offset,size,width,height,jetson_us,robot_us\n");
 +        dataOffset = 0;
 +        segmentStartUs = t;
@@ -1205,9 +1215,11 @@ index 00000000..693fdde5
 +        dataOffset += size;
 +        framesWritten++;
 +        bytesWritten += size;
-+        if (t - lastIndexFlushUs > 1_000_000) {
-+            index.flush();
-+            lastIndexFlushUs = t;
++        // Power cuts: the robot is switched off, not shut down. Force the files to the SSD every
++        // 2 s, so a cut loses at most the last ~2 s of video (the Linux default is up to 30 s).
++        if (t - lastSyncUs > SYNC_US) {
++            syncFiles();
++            lastSyncUs = t;
 +        }
 +        fpsWindowFrames++;
 +        if (t - fpsWindowStartUs >= 2_000_000) {
@@ -1217,7 +1229,21 @@ index 00000000..693fdde5
 +        }
 +    }
 +
++    /** Index and video to the SSD, video first: an index line never points past the video. */
++    private void syncFiles() throws IOException {
++        if (data != null) data.force(true);
++        if (index != null) {
++            index.flush();
++            indexFile.getFD().sync();
++        }
++    }
++
 +    private void closeFiles() {
++        try {
++            syncFiles();
++        } catch (IOException e) {
++            logger.error("Rewind: syncing files", e);
++        }
 +        try {
 +            if (index != null) index.close();
 +        } catch (IOException e) {
@@ -1229,6 +1255,7 @@ index 00000000..693fdde5
 +            logger.error("Rewind: closing data", e);
 +        }
 +        index = null;
++        indexFile = null;
 +        data = null;
 +    }
 +
