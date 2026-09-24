@@ -119,7 +119,7 @@ systemctl is-active --quiet nfs-kernel-server || sudo systemctl start nfs-kernel
 mkdir -p "$REPO_ROOT/logs"
 LOG=$REPO_ROOT/logs/backup-$STAMP.log
 echo "==> Backing up the Jetson's SSD (nvme0n1). Log: $LOG"
-echo "    About 10-20 minutes. Do not unplug the Jetson."
+echo "    About 10 minutes (7 for 21 GB used). Do not unplug the Jetson."
 cd "$L4T_DIR"
 sudo ./tools/backup_restore/l4t_backup_restore.sh -e nvme0n1 -b "$BOARD" 2>&1 | tee "$LOG"
 
@@ -127,9 +127,12 @@ sudo ./tools/backup_restore/l4t_backup_restore.sh -e nvme0n1 -b "$BOARD" 2>&1 | 
 [[ -d $IMAGES ]] || { echo "Backup failed: no $IMAGES (see $LOG)." >&2; exit 1; }
 sudo mv "$IMAGES" "$OUT/l4t-backup-images"
 sudo chown -R "$(id -u):$(id -g)" "$OUT"
-(cd "$OUT/l4t-backup-images" && sha256sum -- * > SHA256SUMS)
+# NVIDIA's tool leaves an empty tmp/ folder behind; hash only the image files.
+find "$OUT/l4t-backup-images" -mindepth 1 -type d -empty -delete
+(cd "$OUT/l4t-backup-images" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' \
+  | sort -z | xargs -0 sha256sum -- > SHA256SUMS)
 echo
 echo "Backup done: $OUT ($(du -sh "$OUT" | cut -f1))"
 ls -la "$OUT/l4t-backup-images" | sed 's/^/    /'
-echo "The Jetson reboots normally on its own (or power-cycle it)."
+echo "The Jetson stays in NVIDIA's backup mode: power-cycle it (no jumper) to boot normally."
 echo "Restore with: scripts/host/05-restore-ssd.sh $OUT"

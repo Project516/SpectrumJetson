@@ -369,6 +369,7 @@ The robot is switched off, never shut down, so every power-off is a power cut.
   - This kernel logs a re-plug as `new high-speed USB device number N`, not `New USB device found`.
 - **Backups.**
   - `scripts/host/04-backup-ssd.sh` wraps NVIDIA's `tools/backup_restore/l4t_backup_restore.sh -e nvme0n1 -b`: the Jetson boots a small system over the USB-C cable in recovery mode and NFS-mounts `tools/backup_restore`. The APP partition is saved as a `tar.zst` of its files, the rest with `dd`. The script also saves PhotonVision's settings export, `jetson-info.txt` and `SHA256SUMS`, and refuses to run with more than 1 GB of Rewind recordings on the SSD.
+  - First backup (2026-09-24): 21 GB used on the SSD → 8.7 GB backup, about 7 minutes. Afterwards the Jetson stays in NVIDIA's backup system (USB `0955:7035`) until it's power-cycled.
   - `05-restore-ssd.sh` checks the checksums and asks you to type `restore`. It *moves* the backup into `tools/backup_restore/images` for the restore (a symlink wouldn't resolve over NFS on the Jetson) and moves it back afterwards.
   - Both need the same host tweaks as flashing (NetworkManager, ufw) plus udisks2 stopped.
   - A restore can target a blank spare SSD. The QSPI bootloader isn't in the backup, so a replacement *module* needs `02-flash-nvme.sh` first. **Not run yet.**
