@@ -101,7 +101,8 @@ None of this code was written for our exact setup, so we found and fixed several
 | Memory leak | The detector leaked two small matrices every time it decoded a tag. Over a long event it could run the Jetson out of memory. | Applied Austin's upstream fix (`3e570d5a`). |
 | Detector slots | The C++ code had 10 detector slots and never reused them. The 11th pipeline change got handle `-1` and then read past the start of an array, which is undefined behavior. | Reuse slots, check every handle, free detectors properly (`gpudetector-03`). A stress test creates and destroys 300 detectors. |
 | Stale CUDA error | CUDA's error flag stays set until someone reads it. Newer CUDA libraries (CUB) fail on *any* leftover error, so one unchecked call broke a later, unrelated call on every frame. | Clear leftover errors before each frame, and check the calls that weren't checked. |
-| One GPU error crashed everything | Austin's code aborts the whole program on any CUDA error, which takes PhotonVision down with it. | A CUDA error now skips one frame. Only a truly broken GPU (errors for 1 s straight) restarts PhotonVision (`bos-01`). |
+| One GPU error crashed everything | Austin's code aborts the whole program on any CUDA error, which takes PhotonVision down with it. | A CUDA error now skips one frame. PhotonVision restarts only if the whole GPU context is broken (`cudaDeviceSynchronize` fails for 1 s); a failure on one camera never takes the others down (`bos-01` + `detector/`). |
+| Blank frames failed every time | With nothing to detect (covered lens, dark pit, plain wall), the detector launched a GPU kernel with 0 blocks, an invalid launch that broke the next step on every frame. Combined with the old watchdog, that restarted PhotonVision in a loop. | Return "no detections" early when there are no candidate blobs (`bos-02`). Reproduced and verified with `tests/detector-frame-sizes`: blank frames failed at 5 resolutions before, pass at all of them now. |
 | 62-second restart | Aborting triggered Ubuntu's crash reporter, which spent 28 s writing a 156 MB crash file before the restart could begin. | Exit cleanly instead, and turn off JVM core dumps. Worst-case vision outage went from about 62 s to about 8 s. |
 | Blank AprilCudaTag tab | The fork's settings tab was written for an older version of the web framework (Vue 2) and couldn't render in Vue 3. | Ported it to Vue 3, showing only settings that actually do something (`photonvision-01`). |
 | Missing Device Control card | PhotonVision used a brand-new browser feature (`Intl.DurationFormat`) to format the uptime. Firefox 130 doesn't have it, so the whole card, including the Restart button, disappeared. | Check for the feature and fall back (`photonvision-03`). Also: keep your browser updated. |
@@ -142,6 +143,8 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 - Low Latency Mode **off** (or on, for 3–4 cameras)
 - Stream Resolution: small, to save CPU (it only affects the video you watch in the browser)
 - AprilTag field layout: **2026 Rebuilt AndyMark**. The robot code must use the same layout.
+
+**New cameras start with these settings automatically.** A camera PhotonVision has never seen gets AprilTagCuda, 1280x800 MJPEG, exposure 83, brightness 100, white balance 2800 K and Low Latency off (`TeamCameraDefaults` in `photonvision-06`). Existing cameras keep their saved settings.
 
 **Cameras are named after their USB port.** Every Thriftiest Cam reports the same name and serial number, so PhotonVision tells them apart only by the port they're plugged into, and each name (and its calibration) stays with its port. The robot code uses the same names, e.g. `new PhotonCamera("TopLeft")`.
 

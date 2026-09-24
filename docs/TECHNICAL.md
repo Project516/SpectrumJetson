@@ -292,6 +292,22 @@ coefficients). `health-check.sh` reports READY; the only warnings are no robot a
 JVM (`tests/jvm-check.sh`, 2 cameras at ~90 fps): 28 MB peak heap of 512 MB, 0 GCs in
 20 s, 787 MB RSS (native frame memory). `-Xmx512m` stays.
 
+### Blank frames and the watchdog (2026-09-24)
+
+- **Bug:** with zero candidate blobs, `num_selected_blobs_host == 0`, and `FitLines` computed
+  `kBlocks = 0` and launched `<<<0, 128>>>`. That invalid configuration surfaced in the
+  peak-filter `cub::DeviceSelect::If` (apriltag.cc:1013) as status 101 on every frame.
+  `bos-02-empty-frame.patch` returns no detections early and guards `FitLines`.
+  `tests/detector-frame-sizes/run.sh`: blank frames at 1280x800, 640x480, 320x240, 800x600
+  and 1280x720 all failed before; all pass after. Noise frames always passed.
+- **Watchdog:** on failure, the JNI calls `cudaDeviceSynchronize()`. It exits (for a systemd
+  restart) only if the context stays broken for 1 s. Fault tests: 1 error per 100 frames →
+  no restart; an error on every frame → **no restart**, 94 fps with 0 errors once it stops;
+  sticky null-pointer kernel fault → exit after 1.3 s, detecting again 6.5 s later.
+- **Team defaults:** `photonvision-06` now picks the resolution once the camera reports its
+  video modes (they're empty when the pipeline is first created). Verified: "team default
+  resolution 1280x800 kMJPEG @ 120 fps (mode 13)".
+
 ### CUDA error handling (bos build)
 
 - `patches/bos-01-nonfatal-cuda.patch`: `CHECK_CUDA` throws instead of `LOG(FATAL)`.
