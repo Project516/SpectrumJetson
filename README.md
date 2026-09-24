@@ -349,6 +349,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
 - [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
 - [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
+- [ ] Field calibration mode: push the robot by hand to 10–20 spots, then solve for the event's real tag positions, every camera's mount and the best camera settings ([docs/FIELD-CALIBRATION-PLAN.md](docs/FIELD-CALIBRATION-PLAN.md)). Test in the shop first.
+- [ ] Add the camera controls PhotonVision's UI doesn't show (contrast, gamma, sharpness, backlight compensation), then measure whether they help
 - [ ] Cheap wins from other teams' systems: Rewind starting itself on enable and named by match, auto-resetting a stuck camera (same doc). Robot-side items, like trusting tags less near the image edge, are in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10)
 - [x] Full backup image of the SSD with PhotonVision's settings (`scripts/host/04-backup-ssd.sh`: 8.7 GB, 7 min). Keep it on the team drive, never GitHub (it holds the Wi-Fi password and SSH keys)
 - [x] GitHub release [v2026.09.24](https://github.com/Spectrum3847/SpectrumJetson/releases/tag/v2026.09.24): the PhotonVision jar, TensorRT backend, camera driver and settings
