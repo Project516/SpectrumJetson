@@ -651,6 +651,22 @@ only goes out when it changes.
 - **Not changed yet:** test it with tags in view first.
 - **Deployed build passes** `tests/jpeg-hw/run.sh`.
 
+**`photonvision-26`: tuning guide.**
+- **Where:** a collapsible "Tuning guide: what to set, in order" at the top of the Input tab (`TuningGuide.vue`).
+- **AprilTag pipelines, in order:**
+  1. resolution
+  2. auto exposure off
+  3. exposure, as short as tags still decode (5 ms), with blur numbers and the 120 Hz flicker rule
+  4. brightness 100
+  5. decision margin 15
+  6. leave the rest
+  7. 3D and multi-tag
+  8. check on the field, and copy to the other cameras
+- **Object Detection pipelines:** a shorter version.
+- **Tooltips:** auto exposure, exposure, brightness, gain, low latency, resolution, stream resolution and both decision-margin sliders now lead with the recommended value.
+- **Calibration card:** says its long exposure is only for a still board.
+- **Blur numbers:** from f ≈ 737 px: 3 rad/s × 5 ms = 0.015 rad ≈ 11 px; 20 ms ≈ 44 px.
+
 ## Changes from the handoff
 
 - **JetPack 6.2 → 6.2.3 (L4T 36.4.3 → 36.5.2).** Same Ubuntu 22.04 / CUDA 12 line,

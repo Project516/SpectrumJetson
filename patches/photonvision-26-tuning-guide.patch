@@ -1,0 +1,242 @@
+diff --git a/photon-client/src/components/cameras/CameraCalibrationCard.vue b/photon-client/src/components/cameras/CameraCalibrationCard.vue
+index d991ced1..5b4854d0 100644
+--- a/photon-client/src/components/cameras/CameraCalibrationCard.vue
++++ b/photon-client/src/components/cameras/CameraCalibrationCard.vue
+@@ -619,6 +619,10 @@ const setSelectedVideoFormat = (format: VideoFormat) => {
+             </v-btn>
+           </v-col>
+         </div>
++        <p v-if="isCalibrating" class="pt-3 text-caption">
++          A long exposure (about 15 ms) is fine for calibrating because the board is held still. Don't copy it into the
++          vision pipelines: on a moving robot they need a short one (see the Input tab's tuning guide).
++        </p>
+         <div v-if="isCalibrating" class="d-flex pt-3">
+           <v-col cols="12" class="pa-0">
+             <v-btn
+diff --git a/photon-client/src/components/dashboard/tabs/AprilTagCudaTab.vue b/photon-client/src/components/dashboard/tabs/AprilTagCudaTab.vue
+index 0bdff032..bd7f0871 100644
+--- a/photon-client/src/components/dashboard/tabs/AprilTagCudaTab.vue
++++ b/photon-client/src/components/dashboard/tabs/AprilTagCudaTab.vue
+@@ -36,7 +36,7 @@ const interactiveCols = computed(() =>
+       v-model="currentPipelineSettings.decisionMargin"
+       :slider-cols="interactiveCols"
+       label="Decision Margin Cutoff"
+-      tooltip="Tags with a 'margin' (decoding quality score) less than this will be rejected. Lower it if tags flicker at short exposures; raise it to reduce false positives"
++      tooltip="Recommended: 15 at 5 ms exposure. Tags with a 'margin' (decoding quality score) below this are rejected. Set it a little below what real tags score at your longest distance; lower it if tags flicker at short exposures, raise it if false tags appear"
+       :min="0"
+       :max="250"
+       @update:modelValue="
+@@ -55,8 +55,8 @@ const interactiveCols = computed(() =>
+       "
+     />
+     <p class="text-caption pt-2">
+-      The CUDA detector runs at full resolution with fixed parameters; decimate, blur, threads and
+-      refine edges do not apply.
++      The CUDA detector runs at full resolution with fixed parameters; decimate, blur, threads and refine edges do not
++      apply.
+     </p>
+   </div>
+ </template>
+diff --git a/photon-client/src/components/dashboard/tabs/AprilTagTab.vue b/photon-client/src/components/dashboard/tabs/AprilTagTab.vue
+index 249f8060..d02fc2d1 100644
+--- a/photon-client/src/components/dashboard/tabs/AprilTagTab.vue
++++ b/photon-client/src/components/dashboard/tabs/AprilTagTab.vue
+@@ -61,7 +61,7 @@ const interactiveCols = computed(() =>
+       v-model="currentPipelineSettings.decisionMargin"
+       :slider-cols="interactiveCols"
+       label="Decision Margin Cutoff"
+-      tooltip="Tags with a 'margin' (decoding quality score) less than this wil be rejected. Increase this to reduce the number of false positive detections"
++      tooltip="Recommended: 15 at 5 ms exposure. Tags with a 'margin' (decoding quality score) below this are rejected. Set it a little below what real tags score at your longest distance; raise it if false tags appear"
+       :min="0"
+       :max="250"
+       @update:modelValue="
+diff --git a/photon-client/src/components/dashboard/tabs/InputTab.vue b/photon-client/src/components/dashboard/tabs/InputTab.vue
+index e49b9f13..3f3fb8aa 100644
+--- a/photon-client/src/components/dashboard/tabs/InputTab.vue
++++ b/photon-client/src/components/dashboard/tabs/InputTab.vue
+@@ -8,6 +8,7 @@ import { useSettingsStore } from "@/stores/settings/GeneralSettingsStore";
+ import { useStateStore } from "@/stores/StateStore";
+ import { getResolutionString } from "@/lib/PhotonUtils";
+ import { useDisplay } from "vuetify";
++import TuningGuide from "./TuningGuide.vue";
+ 
+ // Due to something with libcamera or something else IDK much about, the 90° rotations need to be disabled if the libcamera drivers are being used.
+ // SpectrumJetson: USB (UVC) cameras take exposure in the UVC standard's units of 100 us, so
+@@ -21,7 +22,7 @@ const exposureLabel = computed(() => {
+ const exposureTooltip = computed(() =>
+   useCameraSettingsStore().currentCameraSettings.matchedCameraInfo?.PVUsbCameraInfo === undefined
+     ? "Directly controls how long the camera shutter remains open. Units are dependant on the underlying driver."
+-    : "How long the shutter stays open, in units of 100 µs (the USB camera standard): 50 = 5 ms, 83 = 8.3 ms. Shorter means less motion blur but a darker image; exposure also caps the frame rate (10 ms or more cannot reach 100 fps)."
++    : "Recommended for AprilTags on a robot: 5 ms (50), as short as far tags still decode. How long the shutter stays open, in units of 100 µs (the USB camera standard): 50 = 5 ms, 83 = 8.3 ms. Shorter means less motion blur but a darker image (spinning at 3 rad/s smears a tag ~11 px at 5 ms, ~44 px at 20 ms). Exposure also caps the frame rate: 10 ms or more cannot reach 100 fps."
+ );
+ 
+ const cameraRotations = computed(() =>
+@@ -86,11 +87,12 @@ const interactiveCols = computed(() =>
+ 
+ <template>
+   <div>
++    <tuning-guide />
+     <pv-switch
+       v-model="useCameraSettingsStore().currentPipelineSettings.cameraAutoExposure"
+       label="Auto Exposure"
+       :switch-cols="interactiveCols"
+-      tooltip="Enables or Disables camera automatic adjustment for current lighting conditions"
++      tooltip="Recommended: off on a robot. Auto exposure picks long exposures, which look great standing still and blur when the robot moves. It's fine for driver cameras."
+       @update:modelValue="
+         (args) => useCameraSettingsStore().changeCurrentPipelineSetting({ cameraAutoExposure: args }, false)
+       "
+@@ -111,6 +113,7 @@ const interactiveCols = computed(() =>
+     <pv-slider
+       v-model="useCameraSettingsStore().currentPipelineSettings.cameraBrightness"
+       label="Brightness"
++      tooltip="Recommended: 100 with a short exposure, to make up for it. If tag edges wash out, the decision margin drops: back off."
+       :min="0"
+       :max="100"
+       :slider-cols="interactiveCols"
+@@ -122,7 +125,7 @@ const interactiveCols = computed(() =>
+       v-if="useCameraSettingsStore().currentPipelineSettings.cameraGain >= 0"
+       v-model="useCameraSettingsStore().currentPipelineSettings.cameraGain"
+       label="Camera Gain"
+-      tooltip="Controls camera gain, similar to brightness"
++      tooltip="Amplifies the sensor signal: brighter, but noisier. Thrifty Bot Thriftiest Cams report no gain control, so this may do nothing on them; test before relying on it."
+       :min="0"
+       :max="100"
+       :slider-cols="interactiveCols"
+@@ -177,7 +180,7 @@ const interactiveCols = computed(() =>
+       :disabled="!useCameraSettingsStore().currentCameraSettings.matchedCameraInfo.PVUsbCameraInfo"
+       label="Low Latency Mode"
+       :switch-cols="interactiveCols"
+-      tooltip="When enabled, USB cameras wait for the next camera frame for lowest latency. When disabled, uses the most recent available frame for higher FPS."
++      tooltip="Recommended: off (full frame rate on this Jetson). When enabled, USB cameras wait for the next camera frame for lowest latency. When disabled, uses the most recent available frame for higher FPS."
+       @update:modelValue="
+         (args) => useCameraSettingsStore().changeCurrentPipelineSetting({ blockForFrames: args }, false)
+       "
+@@ -195,7 +198,7 @@ const interactiveCols = computed(() =>
+     <pv-select
+       v-model="useCameraSettingsStore().currentPipelineSettings.cameraVideoModeIndex"
+       label="Resolution"
+-      tooltip="Resolution and FPS the camera should directly capture at"
++      tooltip="Recommended: 1280x800 at 120 FPS, MJPEG, the resolution the camera is calibrated at (YUYV only manages ~5 fps at this size). Resolution and FPS the camera should directly capture at."
+       :items="cameraResolutions"
+       :select-cols="interactiveCols"
+       @update:modelValue="(args) => handleResolutionChange(args)"
+@@ -203,7 +206,7 @@ const interactiveCols = computed(() =>
+     <pv-select
+       v-model="useCameraSettingsStore().currentPipelineSettings.streamingFrameDivisor"
+       label="Stream Resolution"
+-      tooltip="Resolution to which camera frames are downscaled for streaming to the dashboard"
++      tooltip="Recommended: the smallest. Resolution to which camera frames are downscaled for streaming to the dashboard; it doesn't affect detection, and bigger costs CPU."
+       :items="streamResolutions"
+       :select-cols="interactiveCols"
+       @update:modelValue="(args) => handleStreamResolutionChange(args)"
+diff --git a/photon-client/src/components/dashboard/tabs/TuningGuide.vue b/photon-client/src/components/dashboard/tabs/TuningGuide.vue
+new file mode 100644
+index 00000000..556450d5
+--- /dev/null
++++ b/photon-client/src/components/dashboard/tabs/TuningGuide.vue
+@@ -0,0 +1,105 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-26): what to set, in what order, and why, right above the camera
++// settings. The numbers are this team's bench results with Thrifty Bot Thriftiest Cams (OV9281,
++// 1280x800, f ~737 px); see the SpectrumJetson README.
++import { computed } from "vue";
++import { useCameraSettingsStore } from "@/stores/settings/CameraSettingsStore";
++import { PipelineType } from "@/types/PipelineTypes";
++
++const pipelineType = computed(() => useCameraSettingsStore().currentPipelineSettings.pipelineType);
++const isAprilTag = computed(
++  () => pipelineType.value === PipelineType.AprilTag || pipelineType.value === PipelineType.AprilTagCuda
++);
++const isObjectDetection = computed(() => pipelineType.value === PipelineType.ObjectDetection);
++</script>
++
++<template>
++  <v-expansion-panels v-if="isAprilTag || isObjectDetection" class="pb-3" variant="accordion">
++    <v-expansion-panel>
++      <v-expansion-panel-title>
++        <v-icon start size="small">mdi-map-marker-path</v-icon>
++        Tuning guide: what to set, in order
++      </v-expansion-panel-title>
++      <v-expansion-panel-text>
++        <ol v-if="isAprilTag" class="pl-4 guide">
++          <li>
++            <b>Resolution: 1280x800 at 120 FPS, MJPEG</b>, the resolution the camera is calibrated at. YUYV only manages
++            about 5 fps at this size.
++          </li>
++          <li>
++            <b>Auto Exposure: off.</b> Auto exposure picks long exposures, which look great with the robot standing
++            still and blur as soon as it moves or turns. So does an image tuned by eye while standing still.
++          </li>
++          <li>
++            <b>Exposure: as short as tags still decode.</b> Start at <b>5 ms (50)</b>.
++            <ul>
++              <li>
++                Blur grows with exposure. Spinning at 3 rad/s smears a tag about 11 px in 5 ms and 44 px in 20 ms.
++                Driving at 4 m/s moves the camera 2 cm in 5 ms.
++              </li>
++              <li>Go shorter (3 ms) if tags blur while driving; longer only if far tags drop out.</li>
++              <li>
++                Under event lights, run the flicker check. If frames pulse in brightness, use 8.3 ms (83), which matches
++                the lights' 120 Hz flicker.
++              </li>
++            </ul>
++          </li>
++          <li>
++            <b>Brightness: 100</b>, to make up for the short exposure. These cameras report no gain control, so
++            brightness is what's left. If tag edges wash out, the decision margin drops: back off.
++          </li>
++          <li>
++            <b>Decision margin cutoff (AprilTag tab): 15</b> at 5 ms. Tags scoring below it are dropped. Set it a little
++            below what real tags score at your longest distance, and raise it if false tags appear.
++          </li>
++          <li>
++            <b>Leave the rest:</b> Low Latency Mode off (full frame rate), Stream Resolution smallest (it only affects
++            this view, and bigger costs CPU), white balance doesn't matter on a mono camera.
++          </li>
++          <li>
++            <b>3D and multi-tag on (Output tab)</b>, once this resolution is calibrated. The robot's pose code needs
++            both.
++          </li>
++          <li>
++            <b>Check it on the field:</b> drive and spin past tags and watch that they don't drop out. Retune at every
++            venue; lighting differs. Keep an Event and a Practice pipeline at the same numbers on every camera, and use
++            the pipeline menu's <i>Copy settings from…</i> to set the other cameras.
++          </li>
++        </ol>
++        <ol v-else class="pl-4 guide">
++          <li><b>Resolution:</b> the one the model and calibration expect. The model sees a 640x640 letterbox.</li>
++          <li>
++            <b>Auto Exposure: off. Exposure: short</b>, about 5–10 ms. Moving game pieces blur like tags do, and blurred
++            pieces score lower.
++          </li>
++          <li>
++            <b>Colour cameras:</b> Auto White Balance off with a fixed temperature, so a piece's colour doesn't drift
++            between frames.
++          </li>
++          <li>
++            <b>Frame rate:</b> Object Detection is capped at 30 fps on this Jetson by default, so it doesn't take GPU
++            time from the AprilTag cameras.
++          </li>
++          <li>
++            <b>Confidence (Object Detection tab):</b> start at the model's default, then lower it until real pieces are
++            found at your longest distance without false ones.
++          </li>
++        </ol>
++        <p class="pt-2 text-caption">
++          Calibrating? The calibration uses its own settings. A long exposure (about 15 ms) is fine there because the
++          board is held still. Don't copy it into these settings.
++        </p>
++      </v-expansion-panel-text>
++    </v-expansion-panel>
++  </v-expansion-panels>
++</template>
++
++<style scoped lang="scss">
++.guide li {
++  padding-bottom: 6px;
++}
++.guide ul {
++  padding-left: 18px;
++  padding-top: 4px;
++}
++</style>
