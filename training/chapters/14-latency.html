@@ -121,26 +121,9 @@
     </div>
   </div>
 
-  <h3 class="full">How the pose estimator rewinds time</h3>
-  <div class="split flip full">
-    <div class="prose">
-      <p>WPILib's pose estimator keeps a short history of odometry poses (about the last 1.5 seconds). When a vision measurement arrives with a timestamp in the past:</p>
-      <ol>
-        <li>It finds the odometry pose at that timestamp.</li>
-        <li>It blends the vision pose in <em>there</em>, trusting each by its standard deviations (a <span class="term">Kalman filter</span>-style update).</li>
-        <li>It re-applies every wheel movement since then on top of the corrected pose.</li>
-      </ol>
-      <p>In Java it's one line: <code>poseEstimator.addVisionMeasurement(pose, timestampSeconds)</code>. The whole trick lives in that second argument.</p>
-    </div>
-    <figure class="fig" style="margin:0">
-      <canvas id="l-rewind" aria-label="Animation: the pose history, a late vision measurement matched to its capture time, the correction, and the odometry replayed forward"></canvas>
-      <figcaption id="l-rw-cap">Simplified illustration, latency exaggerated so you can see it.</figcaption>
-    </figure>
-  </div>
-
   <h3 class="full">Which instant is "the moment of capture"?</h3>
   <div class="prose full">
-    <p>This sounds easy until you look closely. A frame isn't taken in an instant. The sensor collects light for the whole <span class="term">exposure</span> (5 ms on our cameras), and a moving tag smears across that window. The blur's middle is where the tag was at the <em>middle</em> of the exposure. So that's the honest timestamp.</p>
+    <p>That fix needs to know exactly when each frame was captured. This sounds easy until you look closely. A frame isn't taken in an instant. The sensor collects light for the whole <span class="term">exposure</span> (5 ms on our cameras), and a moving tag smears across that window. The blur's middle is where the tag was at the <em>middle</em> of the exposure. So that's the honest timestamp.</p>
     <p>But the Jetson can't see the exposure happen. The first thing it notices is the frame's <strong>first USB packet</strong> arriving. Linux's camera <span class="term">driver</span> stamps the frame right then. By that moment the whole exposure is over, and the camera has also spent some time reading out the sensor and starting the JPEG.</p>
   </div>
 
@@ -229,6 +212,63 @@
   </div>
   <div class="callout spectrum full"><h5>Rewind uses the robot's clock too</h5><p>Every frame Rewind records to the SSD is stamped twice: <code>jetson_us</code> (the Jetson's clock) and <code>robot_us</code> (the robot's clock, from time sync). Because <code>robot_us</code> is the same timebase as the AdvantageKit log, you can line up a video frame with exactly what the robot code was doing at that moment.</p></div>
 
+  <div class="deeper full">
+    <a class="video" href="https://www.youtube.com/watch?v=BAo5C2qbLq8" target="_blank" rel="noopener">Computerphile: Network Time Protocol (10:40)</a>
+  </div>
+
+
+  <h3 class="full">How the pose estimator rewinds time</h3>
+  <div class="split flip full">
+    <div class="prose">
+      <p>Now each result carries a timestamp on the robot's own clock, and the pose estimator can use it. WPILib's pose estimator keeps a short history of odometry poses (about the last 1.5 seconds). When a vision measurement arrives with a timestamp in the past:</p>
+      <ol>
+        <li>It finds the odometry pose at that timestamp.</li>
+        <li>It blends the vision pose in <em>there</em>, trusting each by its standard deviations (a <span class="term">Kalman filter</span>-style update).</li>
+        <li>It re-applies every wheel movement since then on top of the corrected pose.</li>
+      </ol>
+      <p>In Java it's one line: <code>poseEstimator.addVisionMeasurement(pose, timestampSeconds)</code>. The whole trick lives in that second argument.</p>
+    </div>
+    <figure class="fig" style="margin:0">
+      <canvas id="l-rewind" aria-label="Animation: the pose history, a late vision measurement matched to its capture time, the correction, and the odometry replayed forward"></canvas>
+      <figcaption id="l-rw-cap">Simplified illustration, latency exaggerated so you can see it.</figcaption>
+    </figure>
+  </div>
+
+  <h3 class="full">Using the timestamp: the gyro heading at capture time</h3>
+  <div class="prose full">
+    <p>The same idea works for anything that changes while a frame is in flight. Chapter 13's <a href="#gyro">heading-constrained solves</a> pair a frame's corners with the gyro's heading. But by the time robot code sees the corners, the robot has turned a little more, so pairing them with the heading <em>now</em> mixes two different moments.</p>
+    <p>The fix: remember the recent headings, and look up the one from the exact moment the frame was captured. PhotonLib does this for you. Every loop, robot code calls <code>addHeadingData(timestamp, heading)</code>, which fills a 1-second <code>TimeInterpolatableBuffer</code>. The heading-based solvers then read the heading at the frame's capture <span class="term">timestamp</span>, interpolating between the two nearest samples.</p>
+  </div>
+
+  <div class="lab full">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Look up the past</h4></div>
+    <div class="lab-grid">
+      <div>
+        <canvas id="l-gy-time" aria-label="Timeline of heading samples, the frame's capture time, and when its result arrives"></canvas>
+      </div>
+      <div>
+        <div class="ctl"><label>Robot spinning at <output></output></label><input type="range" id="l-gy-t-w" min="0" max="6" step="0.1" value="3"></div>
+        <div class="ctl"><label>Capture to result, total <output></output></label><input type="range" id="l-gy-t-l" min="5" max="80" step="1" value="30"></div>
+        <div class="ctl"><label>Tag distance <output></output></label><input type="range" id="l-gy-t-d" min="1" max="8" step="0.1" value="4"></div>
+        <div class="readout">
+          <div><small>Heading "now" is off by</small><b id="l-gy-t-err">–</b></div>
+          <div><small>Sideways miss</small><b id="l-gy-t-miss">–</b></div>
+          <div><small>Looked up at capture</small><b id="l-gy-t-ok">–</b></div>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Dots are gyro samples every 4 ms (250 Hz, like a fast odometry thread). The latency slider is an example; the timeline at the top of this chapter shows ours. The lookup error comes only from interpolating between samples.</p>
+  </div>
+
+  <div class="callout spectrum full">
+    <h5>What changes for us</h5>
+    <p>Our off-season robot used Limelights. Its notes say Limelight's MegaTag2 used whatever heading was pushed last, not the heading at the frame's time. That's why the robot code has a gate that checks the yaw rate over the last 0.3 s. With PhotonLib, the heading is looked up at the frame's capture time, so that latency error goes away. We'll keep a looser gate anyway, for motion blur.</p>
+  </div>
+  <div class="callout idea full">
+    <h5>Turret cameras</h5>
+    <p>A camera on a turret moves relative to the robot, so its <code>robotToCamera</code> changes all the time. Same fix, same idea: before each estimate, set the camera's transform from the turret's angle <em>at the result's timestamp</em>. That gives the turret camera a heading-held solve too, which the default Limelight mode couldn't do.</p>
+  </div>
+
   <h3 class="full">Why frame rate matters too</h3>
   <div class="split full">
     <div class="prose">
@@ -252,10 +292,6 @@
     </div>
   </div>
 
-  <div class="deeper full">
-    <a class="video" href="https://www.youtube.com/watch?v=BAo5C2qbLq8" target="_blank" rel="noopener">Computerphile: Network Time Protocol (10:40)</a>
-  </div>
-
   <div class="recap reveal short">
     <h5>Chapter 14 recap</h5>
     <ul>
@@ -274,6 +310,7 @@
       <li>Our timestamps mark the middle of the exposure (<code>photonvision-13</code>). The camera's own delay is still to be measured.</li>
       <li>Time sync puts Jetson timestamps on the robot's clock.</li>
       <li class="full">The monotonic clock times vision; the wall clock only names files.</li>
+      <li class="full">The same lookup gives the gyro heading at capture time: <code>addHeadingData</code> keeps a 1 s buffer of headings.</li>
       <li class="full">Higher fps means fresher data and more samples.</li>
     </ul>
   </div>

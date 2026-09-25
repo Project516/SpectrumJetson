@@ -152,6 +152,24 @@
     </ul>
   </div></details>
 
+  <h3 class="full">Four ports, four names</h3>
+  <div class="split full">
+    <div class="prose">
+      <p>Here's a strange fact: <strong>every Thriftiest Cam reports the same name and the same serial number.</strong> To software, two of them are identical. So PhotonVision tells them apart by the only thing that differs: which USB port each is plugged into. We named the cameras after their ports, and the robot code uses the same names.</p>
+      <div class="callout pitfall"><h5>Swap two cables, swap two calibrations</h5><p>A calibration belongs to one physical camera and lens. If TopLeft's camera ends up in TopRight's port, PhotonVision happily uses the wrong calibration and the wrong mount position, with no error. That's why the ports and cables get labels, and why the plugs get hot glue.</p></div>
+    </div>
+    <div>
+      <p class="small muted" style="margin-bottom:8px">The Jetson's four USB-A ports, looking at them. Tap one.</p>
+      <div class="ports" id="n-ports">
+        <button class="port" data-n="TopLeft" data-p="2.1"><div class="sock"></div><b>TopLeft</b><small>hub port 2.1</small></button>
+        <button class="port" data-n="TopRight" data-p="2.3"><div class="sock"></div><b>TopRight</b><small>hub port 2.3</small></button>
+        <button class="port" data-n="BottomLeft" data-p="2.2"><div class="sock"></div><b>BottomLeft</b><small>hub port 2.2</small></button>
+        <button class="port" data-n="BottomRight" data-p="2.4"><div class="sock"></div><b>BottomRight</b><small>hub port 2.4 (expected)</small></button>
+      </div>
+      <p class="port-note" id="n-port-note">Notice the hub numbers don't go in reading order: top-left is 2.1, but bottom-left is 2.2. That's how the Jetson's internal hub is wired.</p>
+    </div>
+  </div>
+
   <h3 class="full">The robot side: PhotonLib</h3>
   <div class="split top full">
     <div class="prose">
@@ -187,24 +205,6 @@
 }</pre>
   </div>
   <p class="small muted full">Checked against PhotonLib <code>v2027.0.0-alpha-2</code> (the <code>PhotonPoseEstimator(layout, robotToCamera)</code> constructor and the <code>estimate…Pose</code> methods) and WPILib's 2026 field list. The mount numbers are made up. In WPILib's <code>Rotation3d</code>, positive pitch points the camera down, so a camera tilted up has a negative pitch.</p>
-
-  <h3 class="full">Four ports, four names</h3>
-  <div class="split full">
-    <div class="prose">
-      <p>Here's a strange fact: <strong>every Thriftiest Cam reports the same name and the same serial number.</strong> To software, two of them are identical. So PhotonVision tells them apart by the only thing that differs: which USB port each is plugged into. We named the cameras after their ports, and the robot code uses the same names.</p>
-      <div class="callout pitfall"><h5>Swap two cables, swap two calibrations</h5><p>A calibration belongs to one physical camera and lens. If TopLeft's camera ends up in TopRight's port, PhotonVision happily uses the wrong calibration and the wrong mount position, with no error. That's why the ports and cables get labels, and why the plugs get hot glue.</p></div>
-    </div>
-    <div>
-      <p class="small muted" style="margin-bottom:8px">The Jetson's four USB-A ports, looking at them. Tap one.</p>
-      <div class="ports" id="n-ports">
-        <button class="port" data-n="TopLeft" data-p="2.1"><div class="sock"></div><b>TopLeft</b><small>hub port 2.1</small></button>
-        <button class="port" data-n="TopRight" data-p="2.3"><div class="sock"></div><b>TopRight</b><small>hub port 2.3</small></button>
-        <button class="port" data-n="BottomLeft" data-p="2.2"><div class="sock"></div><b>BottomLeft</b><small>hub port 2.2</small></button>
-        <button class="port" data-n="BottomRight" data-p="2.4"><div class="sock"></div><b>BottomRight</b><small>hub port 2.4 (expected)</small></button>
-      </div>
-      <p class="port-note" id="n-port-note">Notice the hub numbers don't go in reading order: top-left is 2.1, but bottom-left is 2.2. That's how the Jetson's internal hub is wired.</p>
-    </div>
-  </div>
 
   <h3 class="full">The other direction: robot → Jetson</h3>
   <p class="prose full">NetworkTables works both ways. The robot code doesn't just listen; it also tells the Jetson things.</p>

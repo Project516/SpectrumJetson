@@ -99,6 +99,8 @@
     <p class="hint full">80 simulated frames, each with fresh corner noise, solved both ways. Spread is the radius holding 95% of the unflipped dots. "Only 2 corners" can't be done with full PnP at all (4 numbers can't pin 6 unknowns), so the full-PnP cloud disappears. Push the gyro error up to see the trade: now the lever arm works against you, so the gyro has to be good.</p>
   </div>
 
+  <p class="prose full">One catch: the heading has to be the one from the moment the frame was captured, not the latest one. <a href="#latency">Chapter 14</a> shows how the frame's timestamp makes that lookup work.</p>
+
   <div class="full">
 
   <div class="callout idea full">
@@ -106,40 +108,6 @@
     <p>The heading-constrained solve doesn't ask vision the question it's worst at. It uses vision only for what it's good at, direction and distance, and asks the gyro the question the gyro is best at. Each sensor covers the other's weakness.</p>
   </div>
 
-  <h3>Timing: the heading when the picture was taken</h3>
-  <div class="prose full">
-    <p>There's a trap. A frame is captured, then it spends some milliseconds being sent over USB, decoded, searched for tags and sent over the network. By the time robot code sees the corners, the robot has turned a little more. Pairing those corners with the gyro's heading <em>now</em> mixes two different moments.</p>
-    <p>The fix: remember the recent headings, and look up the one from the exact moment the frame was captured. PhotonLib does this for you. Every loop, robot code calls <code>addHeadingData(timestamp, heading)</code>, which fills a 1-second <code>TimeInterpolatableBuffer</code>. The heading-based solvers then read the heading at the frame's capture <span class="term">timestamp</span>, interpolating between the two nearest samples.</p>
-  </div>
-
-  <div class="lab full">
-    <div class="lab-head"><span class="tag">Lab</span><h4>Look up the past</h4></div>
-    <div class="lab-grid">
-      <div>
-        <canvas id="gy-time" aria-label="Timeline of heading samples, the frame's capture time, and when its result arrives"></canvas>
-      </div>
-      <div>
-        <div class="ctl"><label>Robot spinning at <output></output></label><input type="range" id="gy-t-w" min="0" max="6" step="0.1" value="3"></div>
-        <div class="ctl"><label>Capture to result, total <output></output></label><input type="range" id="gy-t-l" min="5" max="80" step="1" value="30"></div>
-        <div class="ctl"><label>Tag distance <output></output></label><input type="range" id="gy-t-d" min="1" max="8" step="0.1" value="4"></div>
-        <div class="readout">
-          <div><small>Heading "now" is off by</small><b id="gy-t-err">–</b></div>
-          <div><small>Sideways miss</small><b id="gy-t-miss">–</b></div>
-          <div><small>Looked up at capture</small><b id="gy-t-ok">–</b></div>
-        </div>
-      </div>
-    </div>
-    <p class="hint">Dots are gyro samples every 4 ms (250 Hz, like a fast odometry thread). The latency slider is an example; chapter 14 measures ours. The lookup error comes only from interpolating between samples.</p>
-  </div>
-
-  <div class="callout spectrum full">
-    <h5>What changes for us</h5>
-    <p>Our off-season robot used Limelights. Its notes say Limelight's MegaTag2 used whatever heading was pushed last, not the heading at the frame's time. That's why the robot code has a gate that checks the yaw rate over the last 0.3 s. With PhotonLib, the heading is looked up at the frame's capture time, so that latency error goes away. We'll keep a looser gate anyway, for motion blur. Getting the timestamps right is the whole of chapter 14: <a href="#latency">latency and timestamps</a>.</p>
-  </div>
-  <div class="callout idea full">
-    <h5>Turret cameras</h5>
-    <p>A camera on a turret moves relative to the robot, so its <code>robotToCamera</code> changes all the time. Same fix, same idea: before each estimate, set the camera's transform from the turret's angle <em>at the result's timestamp</em>. That gives the turret camera a heading-held solve too, which the default Limelight mode couldn't do.</p>
-  </div>
 
   <h3 class="full">MegaTag1, MegaTag2 and PhotonLib</h3>
   <div class="prose full"><p>You'll hear Limelight's names everywhere in FRC. Here's how they map to PhotonLib, which our robot uses:</p></div>
@@ -209,7 +177,7 @@ var est = estimator.estimateConstrainedSolvepnpPose(result,
       <li>The gyro measures heading accurately; vision's weakest estimate from one tag is heading.</li>
       <li>Lever arm: sideways miss ≈ distance × angle. 1° at 5 m ≈ 8.7 cm.</li>
       <li>Heading-constrained solves (MegaTag2) take heading from the gyro, leaving 2 unknowns. One tag, even two corners, gives a stable position, and the flip can't happen.</li>
-      <li>Use the heading at the frame's capture time: <code>addHeadingData</code> fills a 1 s interpolating buffer.<span class="full"> Turret cameras: the turret angle at the result's timestamp.</span></li>
+      <li>Use the heading at the frame's capture time (<a href="#latency">chapter 14</a>).</li>
       <li class="full">MT1 = full pose from tags (PhotonLib multi-tag / lowest ambiguity). MT2 = heading held (constrained solvePnP / trig solve).</li>
     </ul>
   </div>

@@ -271,9 +271,24 @@
     <figcaption><strong>Watch: Camera calibration</strong> (First Principles of Computer Vision, 7:46). Columbia professor Shree Nayar shows how one photo of an object with known 3D points pins down the camera's intrinsic and extrinsic numbers. He uses a 3D target instead of many photos of a flat board, but the idea is the same as the lab you just ran: known points in, lens numbers out.</figcaption>
   </figure>
 
+  <div class="split top full">
+    <div class="prose">
+      <h3 style="margin-top:0">Reading the result</h3>
+      <p>Under about <strong>0.5 px</strong> is ideal, and under <strong>1 px</strong> is fine for FRC. We couldn't get below 0.5 px with a hand-held board, and that's okay: the remaining ~0.8–0.9 px is mostly noise from the camera's JPEG compression.</p>
+      <p><strong>Outliers are the better warning sign.</strong> The solver throws out corners that don't fit at all. Only 3–4% were thrown out in our good calibrations. Our second try threw out 42%, because many snapshots had the board mostly outside the frame. For edge coverage, keep most of the board in the image and just touch the edge.</p>
+      <p>We check every calibration with <code>tests/calibration-check/check_calibration.py</code>, which reads the saved calibration and reports the error, the outliers and the coverage.</p>
+    </div>
+    <div class="cards tips" style="margin:0">
+      <div class="card"><div class="icon">📸</div><h4>100+ snapshots</h4><p>PhotonVision requires 100. Turn on <b>Auto Snapshots</b> (one a second) and keep the board moving slowly.</p></div>
+      <div class="card"><div class="icon">↖️</div><h4>Cover the corners</h4><p>Every part of the image needs corners, especially the edges.</p></div>
+      <div class="card"><div class="icon">📐</div><h4>Tilt and vary distance</h4><p>Tilt up to about 45°, near and far. Flat, same-distance shots can't separate focal length from distance.</p></div>
+      <div class="card"><div class="icon">💡</div><h4>Exposure ~150</h4><p>Only for calibration: the board is still, so blur doesn't matter. Never copy it into a vision pipeline.</p></div>
+    </div>
+  </div>
+
   <h3 class="full">Our real calibration: TopLeft's 43 snapshots</h3>
   <div class="prose full">
-    <p class="full">That was a simulation. Here's the real thing: the calibration file our Jetson saved for the TopLeft camera, with every snapshot, every detected corner and every leftover error. First, three of the snapshot images, with the corners the calibration used.</p>
+    <p class="full">Now the real thing, to judge with those rules: the calibration file our Jetson saved for the TopLeft camera, with every snapshot, every detected corner and every leftover error. First, three of the snapshot images, with the corners the calibration used.</p>
   </div>
   <div class="lab">
     <div class="lab-head"><span class="tag">Real data</span><h4>Three of TopLeft's calibration snapshots</h4></div>
@@ -324,21 +339,6 @@
     <div class="stat"><b>0.97<small>px</small></b><span>TopRight mean reprojection error, 96% of corners kept</span></div>
     <div class="stat"><b>737<small>px</small></b><span>focal length, the same in all three of camera 1's calibrations</span></div>
     <div class="stat"><b>3,486</b><span>corners in TopLeft's calibration, from 43 snapshots</span></div>
-  </div>
-
-  <div class="split top full">
-    <div class="prose">
-      <h3 style="margin-top:0">Reading the result</h3>
-      <p>Under about <strong>0.5 px</strong> is ideal, and under <strong>1 px</strong> is fine for FRC. We couldn't get below 0.5 px with a hand-held board, and that's okay: the remaining ~0.8–0.9 px is mostly noise from the camera's JPEG compression.</p>
-      <p><strong>Outliers are the better warning sign.</strong> The solver throws out corners that don't fit at all. Only 3–4% were thrown out in our good calibrations. Our second try threw out 42%, because many snapshots had the board mostly outside the frame. For edge coverage, keep most of the board in the image and just touch the edge.</p>
-      <p>We check every calibration with <code>tests/calibration-check/check_calibration.py</code>, which reads the saved calibration and reports the error, the outliers and the coverage.</p>
-    </div>
-    <div class="cards tips" style="margin:0">
-      <div class="card"><div class="icon">📸</div><h4>100+ snapshots</h4><p>PhotonVision requires 100. Turn on <b>Auto Snapshots</b> (one a second) and keep the board moving slowly.</p></div>
-      <div class="card"><div class="icon">↖️</div><h4>Cover the corners</h4><p>Every part of the image needs corners, especially the edges.</p></div>
-      <div class="card"><div class="icon">📐</div><h4>Tilt and vary distance</h4><p>Tilt up to about 45°, near and far. Flat, same-distance shots can't separate focal length from distance.</p></div>
-      <div class="card"><div class="icon">💡</div><h4>Exposure ~150</h4><p>Only for calibration: the board is still, so blur doesn't matter. Never copy it into a vision pipeline.</p></div>
-    </div>
   </div>
 
   <details class="deep">

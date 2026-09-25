@@ -149,6 +149,15 @@
 
   </div>
 
+  <h3>One thread per camera</h3>
+  <div class="split">
+    <div class="prose">
+      <p>That was one frame from one camera. With several cameras, PhotonVision gives each one its own <span class="term">thread</span>, called a <code>VisionRunner</code>. Each one loops forever: grab a frame, decode, detect, solve, publish. The Linux scheduler spreads the threads over the 6 CPU cores, and they all share the one GPU.</p>
+      <p>That's why a second camera costs about as much as the first, and why a slow camera can't hold up the others. <a href="#speed">Chapter 10</a> digs into what happens when four cameras line up for the GPU at the same moment.</p>
+    </div>
+    <div class="lab thr" style="margin:0"><svg id="d-thr" viewBox="0 0 460 250" role="img" aria-label="Two camera threads, TopLeft and TopRight, each looping through grab, decode, detect and solve, sharing one GPU"></svg><p class="hint">Illustration, slowed down about 40×. The two cameras aren't synchronized, so their frames arrive at different moments.</p></div>
+  </div>
+
   <h3>Why a GPU beats a Raspberry Pi's CPU</h3>
   <div class="prose">
     <p>A CPU core is a genius: it can do anything, fast, one step at a time. A GPU core is a helper that only follows simple instructions, and more slowly. But the Jetson has 1,024 of them, and they all work at once.</p>
@@ -187,14 +196,6 @@
 
   <div class="callout pitfall"><h5>Comparing fairly with an Orange Pi 5</h5><p>Many FRC teams run stock PhotonVision on an Orange Pi 5, which finds AprilTags on its CPU cores. It works, and it's cheaper. The CPU simply has more to do per frame, so frame rate, resolution and the number of cameras have to be balanced against each other. On the Jetson, the heavy per-pixel work moves to the GPU and JPEG engines, which is why our CPU has room for four cameras at 120 fps at full resolution. We haven't benchmarked an Orange Pi ourselves, so we don't quote numbers for it.</p></div>
 
-  <h3>One thread per camera</h3>
-  <div class="split">
-    <div class="prose">
-      <p>PhotonVision gives every camera its own <span class="term">thread</span>, called a <code>VisionRunner</code>. Each one loops forever: grab a frame, decode, detect, solve, publish. The Linux scheduler spreads the threads over the 6 CPU cores, and they all share the one GPU.</p>
-      <p>That's why a second camera costs about as much as the first, and why a slow camera can't hold up the others. Chapter 10 digs into what happens when four cameras line up for the GPU at the same moment.</p>
-    </div>
-    <div class="lab thr" style="margin:0"><svg id="d-thr" viewBox="0 0 460 250" role="img" aria-label="Two camera threads, TopLeft and TopRight, each looping through grab, decode, detect and solve, sharing one GPU"></svg><p class="hint">Illustration, slowed down about 40×. The two cameras aren't synchronized, so their frames arrive at different moments.</p></div>
-  </div>
 
   </div>
 

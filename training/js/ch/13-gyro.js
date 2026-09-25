@@ -224,48 +224,4 @@ Site.chapter('gyro', (root) => {
     Site.range($('#gy-m-g'), (v) => { P.g = v; compute(); }, (v) => v.toFixed(1) + '°');
   }
 
-  /* ── Timing: heading lookup at the capture time ───── */
-  {
-    const cv = $('#gy-time'); let st = null; const P = { w: 3, l: 30, d: 4 };
-    const draw = () => {
-      if (!st || !st.w) return;
-      const { ctx, w, h } = st;
-      const t0 = -110, t1 = 12, L = 44, Rr = w - 14, top = 26, bot = h - 34;
-      const X = (t) => L + ((t - t0) / (t1 - t0)) * (Rr - L);
-      const acc = 8; // rad/s², a gentle change in spin so interpolation isn't trivially exact
-      const th = (t) => { const s = t / 1000; return P.w * s + 0.5 * acc * s * s; };
-      const lo = Math.min(th(t0), th(t1)), hi = Math.max(th(t0), th(t1)), span = Math.max(0.02, hi - lo), mid = (hi + lo) / 2;
-      const Y = (a) => (top + bot) / 2 - ((a - mid) / span) * (bot - top - 30);
-      ctx.fillStyle = LAB; ctx.fillRect(0, 0, w, h);
-      ctx.strokeStyle = 'rgba(196,181,253,.25)'; line(ctx, [L, bot], [Rr, bot]);
-      ctx.font = '10px JetBrains Mono'; ctx.fillStyle = MUTED;
-      const stepT = w < 500 ? 50 : 20; for (let t = -100; t <= 0; t += stepT) { line(ctx, [X(t), bot], [X(t), bot + 4]); ctx.fillText(t + ' ms', X(t) - 16, bot + 16); }
-      ctx.fillText('heading', 4, top - 8);
-      ctx.strokeStyle = 'rgba(163,230,53,.35)'; ctx.beginPath(); for (let t = t0; t <= t1; t += 1) { const p = [X(t), Y(th(t))]; t === t0 ? ctx.moveTo(...p) : ctx.lineTo(...p); } ctx.stroke();
-      for (let t = -108; t <= 0; t += 4) dot(ctx, [X(t), Y(th(t))], 2.2, GREEN);
-      const tc = -P.l;
-      // capture and now
-      ctx.setLineDash([4, 4]); ctx.strokeStyle = LAV; line(ctx, [X(tc), top], [X(tc), bot]); ctx.strokeStyle = '#fff'; line(ctx, [X(0), top], [X(0), bot]); ctx.setLineDash([]);
-      ctx.font = '600 11px Plus Jakarta Sans'; ctx.fillStyle = '#fff'; ctx.textAlign = 'right'; ctx.fillText('result arrives', X(0) + 4, top - 8); ctx.fillStyle = LAV; ctx.fillText('frame captured', X(tc) - 4, top + 8); ctx.textAlign = 'left';
-      // the frame's journey
-      ctx.strokeStyle = 'rgba(196,181,253,.6)'; ctx.lineWidth = 2; line(ctx, [X(tc), bot - 12], [X(0) - 4, bot - 12]); ctx.lineWidth = 1;
-      ctx.fillStyle = LAV; ctx.beginPath(); ctx.moveTo(X(0) - 2, bot - 12); ctx.lineTo(X(0) - 9, bot - 16); ctx.lineTo(X(0) - 9, bot - 8); ctx.fill();
-      // the two headings
-      const a0 = Math.floor(tc / 4) * 4, a1 = a0 + 4, f = (tc - a0) / 4, interp = th(a0) + (th(a1) - th(a0)) * f;
-      dot(ctx, [X(0), Y(th(0))], 6, AMBER); dot(ctx, [X(tc), Y(interp)], 6, GREEN);
-      ctx.strokeStyle = AMBER; ctx.setLineDash([2, 3]); line(ctx, [X(tc), Y(th(0))], [X(0), Y(th(0))]); ctx.setLineDash([]);
-      ctx.strokeStyle = RED; ctx.lineWidth = 2; line(ctx, [X(tc) - 10, Y(interp)], [X(tc) - 10, Y(th(0))]); ctx.lineWidth = 1;
-      ctx.fillStyle = AMBER; ctx.fillText('heading "now"', Math.min(X(0) - 90, w - 100), Y(th(0)) - 10);
-      ctx.fillStyle = GREEN; ctx.fillText('heading at capture', Math.max(4, X(tc) - 60), Y(interp) + 20);
-      if (X(tc) - 16 > 60) { ctx.fillStyle = RED; ctx.textAlign = 'right'; ctx.fillText('error', X(tc) - 16, (Y(interp) + Y(th(0))) / 2 + 4); ctx.textAlign = 'left'; }
-      const err = th(0) - th(tc), look = interp - th(tc);
-      $('#gy-t-err').textContent = (err / D2R).toFixed(2) + '°';
-      $('#gy-t-miss').textContent = (P.d * Math.tan(Math.abs(err)) * 100).toFixed(1) + ' cm';
-      $('#gy-t-ok').textContent = Math.abs(look / D2R) < 0.01 ? '< 0.01°' : (Math.abs(look) / D2R).toFixed(2) + '°';
-    };
-    st = Site.canvas(cv, 0.62, later(draw));
-    Site.range($('#gy-t-w'), (v) => { P.w = v; draw(); }, (v) => v.toFixed(1) + ' rad/s');
-    Site.range($('#gy-t-l'), (v) => { P.l = v; draw(); }, (v) => v + ' ms');
-    Site.range($('#gy-t-d'), (v) => { P.d = v; draw(); }, (v) => v.toFixed(1) + ' m');
-  }
 });
