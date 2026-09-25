@@ -1,7 +1,7 @@
 # Historical JetPack 6 port notes
 
 These notes describe the tested 2026 PhotonVision port that used the former numbered
-`photonvision-00` through `photonvision-30` patch series. The experimental alpha-7 branch replaces
+`photonvision-00` through `photonvision-34` patch series. The experimental alpha-7 branch replaces
 that source replay with one reproducible migration patch.
 
 The measured FPS, latency, memory, camera recovery, Rewind, and robot-network results below belong
@@ -19,10 +19,11 @@ PhotonVision source `1f419c9de3a6a0787571648d18211537a83fdca9` or WPILib
 ## Historical changes
 
 - `photonvision-00` merged upstream PhotonVision `v2026.3.4` into the 4143 CUDA fork.
-- `photonvision-01` through `photonvision-30` added the CUDA tab, camera defaults, Rewind, robot-clock
+- `photonvision-01` through `photonvision-34` added the CUDA tab, camera defaults, Rewind, robot-clock
   synchronization, direct JPEG decode, exposure units, TensorRT detection, telemetry, mount
   estimates, calibration, excluded tags, settings snapshots, copying settings, tuning help, decode
-  recovery, camera controls, stuck-camera recovery, and field calibration.
+  recovery, camera controls, stuck-camera recovery, field calibration with its 3D view and tuning
+  locks, USB bandwidth reporting and allocation, quieter frame-error logging, and the focus score.
 - `gpudetector-01` through `gpudetector-03` added CUDA error clearing, timing output, and safe handle
   reuse.
 - `bos-01` and `bos-02` made CUDA errors recoverable and handled empty detector frames.

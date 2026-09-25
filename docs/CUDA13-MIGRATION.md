@@ -29,6 +29,8 @@ SpectrumJetson commit that packaged it.
 The migration applies one reproducible patch,
 `patches/photonvision-2027-alpha7-migration.patch`, to the pinned PhotonVision source. It carries
 the current SpectrumJetson behavior onto alpha-7 instead of replaying the old 2026 patch series.
+It covers the numbered series through `photonvision-34`, as of SpectrumJetson `dcbf1af`. A change
+to a numbered patch on `main` must be ported into the migration patch too.
 
 The port includes these compatibility changes:
 
