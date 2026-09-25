@@ -95,7 +95,7 @@ we don't use.
 
 ## WPILib 2027 alpha-7 migration
 
-The current fork and robot pins stay on their tested 2026-era combination.
+The current fork and robot pins stay on their current bench-tested 2026-era combination.
 PhotonVision `v2027.0.0-alpha-2` pins WPILib 2027.0.0-alpha-6. The current
 PhotonVision `main` commit pins 2027.0.0-alpha-7. Alpha-7 changed the native
 headers, timestamp handling, and the PhotonLib message layout. The CUDA port is

@@ -3,7 +3,7 @@
 # on the x86-64 host. No sudo: Node 22, pnpm 10 and Temurin 17 go in ~/build/tools,
 # matching upstream CI for this commit.
 #
-# The current fork is a tested 2026-era build. Its serde hashes and time-sync
+# The current fork is a bench-tested 2026-era build. Its serde hashes and time-sync
 # packets match the alpha-2 robot vendordep. The alpha-7 CUDA port must rebase
 # the fork and requires Jetson and robot-network testing. See
 # docs/WPILIB-2027-ALPHA-7.md.

@@ -2,8 +2,8 @@
 # Install upstream PhotonVision (CPU AprilTag detection) as a boot-time systemd service.
 # Run ON THE JETSON. Needs internet.
 #
-# Current tested robot-facing pin. The WPILib 2027 alpha-7 migration target is
-# recorded in config.env and docs/WPILIB-2027-ALPHA-7.md. Alpha-6 and earlier
+# Current bench-tested robot-facing pin. The WPILib 2027 alpha-7 migration target is
+# recorded in docs/WPILIB-2027-ALPHA-7.md. Alpha-6 and earlier
 # vendordeps do not work with alpha-7, so do not point this script at a dev asset.
 # Usage: scripts/jetson/03-photonvision.sh [version]
 set -euo pipefail
