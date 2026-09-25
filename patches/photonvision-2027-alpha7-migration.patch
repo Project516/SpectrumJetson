@@ -12,6 +12,234 @@ index deb43d6b004eea5b540480425b4fa8707d39d8fa..5af91ef1fba48b31f5ae93688dd1553f
        <v-list-item link to="/docs" prepend-icon="mdi-bookshelf">
          <v-list-item-title>Documentation</v-list-item-title>
        </v-list-item>
+diff --git a/photon-client/src/components/app/usb-bandwidth-card.vue b/photon-client/src/components/app/usb-bandwidth-card.vue
+new file mode 100644
+index 0000000000000000000000000000000000000000..0ad69c383e3246e25f12967df88d2026d8d5558b
+--- /dev/null
++++ b/photon-client/src/components/app/usb-bandwidth-card.vue
+@@ -0,0 +1,222 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-32): the USB bandwidth every camera reserves and really uses, against
++// the one budget all the Jetson's USB 2.0 ports share, with a setting per camera for what it may
++// reserve.
++import axios from "axios";
++import { computed, onBeforeUnmount, ref } from "vue";
++import { useStateStore } from "@/stores/StateStore";
++import {
++  frameFits,
++  mbPerSec,
++  refreshUsbBandwidth,
++  usbSurvey,
++  watchUsbBandwidth,
++  type UsbCamera
++} from "@/lib/UsbBandwidth";
++
++const stop = watchUsbBandwidth();
++onBeforeUnmount(stop);
++
++const COLOURS = ["#4caf50", "#2196f3", "#ff9800", "#ab47bc", "#26c6da", "#ec407a", "#9ccc65", "#ffca28"];
++const s = computed(() => usbSurvey.value);
++const cams = computed(() => s.value?.cameras ?? []);
++const name = (c: UsbCamera) => c.camera ?? c.product;
++const colour = (i: number) => COLOURS[i % COLOURS.length];
++const pct = (bytes: number) => (s.value ? (100 * bytes) / s.value.budgetBytes : 0);
++const used = (c: UsbCamera) => (c.usedBytesPerSec ?? 0) / 8000; // bytes per microframe
++const free = computed(() => (s.value ? s.value.budgetBytes - s.value.wantBytes : 0));
++const canChange = computed(() => s.value?.driver === "capped");
++
++const fmtMB = (bps: number | null) => (bps === null ? "…" : `${(bps / 1e6).toFixed(1)} MB/s`);
++const fitClass = (x: number | null) => (x === null ? "" : x < 1.15 ? "text-error" : x < 1.3 ? "text-warning" : "");
++// A camera that needs more than its allocation can't take it: it squeezes its JPEGs to fit.
++const share = (c: UsbCamera) => used(c) / Math.max(1, c.wantBytes);
++const squeezed = (c: UsbCamera) => c.usedBytesPerSec !== null && share(c) >= 0.9;
++
++// The allocation choices: the camera's alternate settings, each with what it means here.
++const choices = (c: UsbCamera) => {
++  if (!s.value) return [];
++  const others = s.value.wantBytes - c.wantBytes;
++  const out: { title: string; value: number | null; props: { disabled: boolean; subtitle: string } }[] = c.altBytes.map(
++    (b) => {
++      const fits = frameFits(c, b);
++      const over = others + b > s.value!.budgetBytes;
++      const notes = [
++        fits !== null ? `largest frame fits ${fits.toFixed(1)}x` : "",
++        fits !== null && c.recentMaxFrameBytes
++          ? `${((1000 * c.recentMaxFrameBytes) / (b * 8000)).toFixed(1)} ms on USB`
++          : "",
++        over ? "over the budget" : ""
++      ].filter(Boolean);
++      return {
++        title: `${b} B · ${mbPerSec(b).toFixed(1)} MB/s`,
++        value: b,
++        props: { disabled: over, subtitle: notes.join(", ") }
++      };
++    }
++  );
++  if (c.capFrom === "port") {
++    out.push({
++      title: "Back to this model's default",
++      value: null,
++      props: { disabled: false, subtitle: "the cap set for every camera of this model" }
++    });
++  }
++  return out;
++};
++
++const busy = ref<string | null>(null);
++const setAllocation = async (c: UsbCamera, bytes: number | null) => {
++  busy.value = c.port;
++  try {
++    const r = await axios.post("/usb/bandwidth", { port: c.port, bytes });
++    useStateStore().showSnackbarMessage({ message: r.data, color: "success" });
++  } catch (e: any) {
++    useStateStore().showSnackbarMessage({ message: e?.response?.data || "Request failed", color: "error" });
++  } finally {
++    busy.value = null;
++    refreshUsbBandwidth();
++  }
++};
++</script>
++
++<template>
++  <v-card color="surface" class="rounded-12">
++    <v-card-title>USB bandwidth</v-card-title>
++    <v-card-subtitle class="text-wrap">
++      Every USB 2.0 port (the four USB-A ports, USB-C, and hubs on them) shares one budget. A camera reserves its
++      allocation whatever it sends, and one that doesn't fit can't start.
++    </v-card-subtitle>
++    <v-card-text v-if="!s" class="pt-3">Reading the USB cameras…</v-card-text>
++    <v-card-text v-else class="pt-3">
++      <div class="budget">
++        <div
++          v-for="(c, i) in cams"
++          :key="c.port"
++          class="seg"
++          :style="{ width: `${pct(c.wantBytes)}%`, background: colour(i) + '55', borderColor: colour(i) }"
++          :title="`${name(c)}: ${c.wantBytes} B allocated, ${used(c).toFixed(0)} B used`"
++        >
++          <div
++            class="seg-used"
++            :style="{ width: `${c.wantBytes ? (100 * used(c)) / c.wantBytes : 0}%`, background: colour(i) }"
++          />
++        </div>
++      </div>
++      <div class="text-body-2 mt-2">
++        Allocated <b>{{ s.wantBytes }}</b> of ~{{ s.budgetBytes }} bytes per 125 µs ({{
++          mbPerSec(s.wantBytes).toFixed(1)
++        }}
++        of {{ mbPerSec(s.budgetBytes).toFixed(1) }} MB/s), using <b>{{ fmtMB(s.usedBytesPerSec) }}</b
++        >.
++        <span v-if="free > 0">{{ free }} bytes free.</span>
++        <span v-else-if="free === 0">Full: to give a camera more, lower another first.</span>
++        <span v-else class="text-error">Over the budget by {{ -free }} bytes: a camera won't start.</span>
++      </div>
++      <v-alert v-if="s.driver !== 'capped'" density="compact" variant="tonal" color="warning" class="mt-2">
++        {{
++          s.driver === "stock"
++            ? "The stock camera driver is loaded: allocations can't be capped. Install ours:"
++            : "This build of our camera driver can't change allocations while running. Reinstall it:"
++        }}
++        <code>scripts/jetson/11-uvcvideo-payload-cap.sh --install</code>
++      </v-alert>
++
++      <v-table density="compact" class="mt-2">
++        <thead>
++          <tr>
++            <th></th>
++            <th>Camera</th>
++            <th>FPS</th>
++            <th>Using</th>
++            <th>Largest frame</th>
++            <th style="min-width: 250px">Allocation</th>
++          </tr>
++        </thead>
++        <tbody>
++          <tr v-for="(c, i) in cams" :key="c.port">
++            <td><span class="dot" :style="{ background: colour(i) }" /></td>
++            <td>
++              {{ name(c) }}
++              <div class="text-caption">port {{ c.port }} · {{ c.id }}</div>
++              <div v-if="c.problem" class="text-caption text-error">{{ c.problem }}</div>
++              <div v-else-if="!c.streaming" class="text-caption text-warning">not streaming</div>
++            </td>
++            <td>{{ c.fps === null ? "" : c.fps.toFixed(0) }}</td>
++            <td>
++              <template v-if="c.usedBytesPerSec !== null">
++                {{ fmtMB(c.usedBytesPerSec) }}
++                <div class="text-caption" :class="squeezed(c) ? 'text-warning' : ''">
++                  {{ Math.round(100 * share(c)) }}% of its allocation{{ squeezed(c) ? ": squeezed" : "" }}
++                </div>
++              </template>
++            </td>
++            <td>
++              <template v-if="c.recentMaxFrameBytes">
++                {{ (c.recentMaxFrameBytes / 1000).toFixed(1) }} KB
++                <div class="text-caption" :class="fitClass(frameFits(c, c.wantBytes))">
++                  <template v-if="frameFits(c, c.wantBytes) !== null"
++                    >fits {{ frameFits(c, c.wantBytes)!.toFixed(1) }}x,
++                  </template>
++                  {{ ((1000 * c.recentMaxFrameBytes) / (c.wantBytes * 8000)).toFixed(1) }} ms on USB
++                </div>
++              </template>
++            </td>
++            <td>
++              <v-select
++                :model-value="c.wantBytes"
++                :items="choices(c)"
++                density="compact"
++                variant="outlined"
++                hide-details
++                :disabled="!canChange || busy !== null"
++                :loading="busy === c.port"
++                @update:model-value="(v: number | null) => setAllocation(c, v)"
++              >
++                <template #selection>
++                  {{ c.wantBytes }} B · {{ mbPerSec(c.wantBytes).toFixed(1) }} MB/s
++                  <span class="text-caption ml-1"
++                    >({{
++                      c.capFrom === "port" ? "set here" : c.capFrom === "model" ? "model default" : "uncapped"
++                    }})</span
++                  >
++                </template>
++              </v-select>
++            </td>
++          </tr>
++        </tbody>
++      </v-table>
++      <div class="text-caption mt-2">
++        A camera can't send more than its allocation, and never takes another camera's. When its frames don't fit, the
++        cameras we tested keep their frame rate and compress harder: smaller, lower-quality JPEGs, each taking longer to
++        cross USB. "Squeezed" (using 90% or more) means that's happening. "Fits" is how many times the largest recent
++        frame fits in one frame time; the ms is how long a frame takes to cross USB. Changes are saved for the next
++        boot, and the camera is reset to apply them (a second or two without frames).
++      </div>
++    </v-card-text>
++  </v-card>
++</template>
++
++<style scoped>
++.budget {
++  display: flex;
++  height: 22px;
++  border-radius: 6px;
++  overflow: hidden;
++  background: rgba(128, 128, 128, 0.15);
++}
++.seg {
++  height: 100%;
++  border-right: 2px solid;
++  position: relative;
++}
++.seg-used {
++  height: 100%;
++}
++.dot {
++  display: inline-block;
++  width: 10px;
++  height: 10px;
++  border-radius: 50%;
++}
++</style>
 diff --git a/photon-client/src/components/cameras/CameraCalibrationCard.vue b/photon-client/src/components/cameras/CameraCalibrationCard.vue
 index fbe3eda084ee9eb7f0b7c611c92cfafec1c08d40..d924c078f97a911bf029aac06ad60479ecd97ec9 100644
 --- a/photon-client/src/components/cameras/CameraCalibrationCard.vue
@@ -115,6 +343,131 @@ index fbe3eda084ee9eb7f0b7c611c92cfafec1c08d40..d924c078f97a911bf029aac06ad60479
        </v-card-text>
      </v-card>
      <v-dialog v-model="showCalibEndDialog" width="500px" :persistent="true">
+diff --git a/photon-client/src/components/cameras/CameraFocusCard.vue b/photon-client/src/components/cameras/CameraFocusCard.vue
+new file mode 100644
+index 0000000000000000000000000000000000000000..594f3b801e78e4ed335b69f7b772b2d7e4029760
+--- /dev/null
++++ b/photon-client/src/components/cameras/CameraFocusCard.vue
+@@ -0,0 +1,119 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-34): a focus score while turning a camera's lens, like Limelight's.
++// The Jetson measures the image's sharpness on a 3x3 grid (FocusMeter, GET /api/focus) while this
++// is on. Each cell is shown against its own best since "Reset", which doesn't depend on how much
++// detail that part of the scene has.
++import axios from "axios";
++import { computed, onBeforeUnmount, ref, watch } from "vue";
++import { useCameraSettingsStore } from "@/stores/settings/CameraSettingsStore";
++
++interface Reading {
++  grid: number[]; // row-major, cell 4 is the centre
++  centre: number;
++  best: number;
++  width: number;
++  height: number;
++  ageMs: number;
++}
++
++const on = ref(false);
++const reading = ref<Reading | null>(null);
++const cellBest = ref<number[]>(Array(9).fill(0));
++const camera = computed(() => useCameraSettingsStore().currentCameraSettings.uniqueName);
++
++let timer: ReturnType<typeof setTimeout> | undefined;
++const poll = async (reset = false) => {
++  clearTimeout(timer);
++  if (reset) cellBest.value = Array(9).fill(0);
++  try {
++    const r = await axios.get(`/focus?camera=${encodeURIComponent(camera.value)}${reset ? "&reset=1" : ""}`);
++    reading.value = r.status === 200 ? r.data : null;
++    if (reading.value) cellBest.value = cellBest.value.map((b, i) => Math.max(b, reading.value!.grid[i]));
++  } catch {
++    reading.value = null;
++  }
++  if (on.value) timer = setTimeout(() => poll(), 250);
++};
++watch(on, (v) => {
++  if (v) poll(true);
++  else {
++    clearTimeout(timer);
++    reading.value = null;
++  }
++});
++watch(camera, () => {
++  if (on.value) poll(true);
++});
++onBeforeUnmount(() => clearTimeout(timer));
++
++const share = (v: number, best: number) => (best > 0 ? Math.min(1, v / best) : 0);
++const centrePct = computed(() => (reading.value ? 100 * share(reading.value.centre, reading.value.best) : 0));
++const colour = (pct: number) => (pct >= 97 ? "success" : pct >= 85 ? "warning" : "error");
++const status = computed(() => {
++  if (!reading.value) return "Measuring…";
++  if (centrePct.value >= 97) return "At the sharpest so far.";
++  if (centrePct.value >= 85) return "Close to the sharpest so far.";
++  return "Softer than the sharpest so far: turn back.";
++});
++const cells = computed(() =>
++  (reading.value?.grid ?? Array(9).fill(0)).map((v, i) => Math.round(100 * share(v, cellBest.value[i])))
++);
++</script>
++
++<template>
++  <v-card color="surface" class="rounded-12 mt-3">
++    <v-card-title class="d-flex align-center">
++      Focus
++      <v-spacer />
++      <v-switch v-model="on" label="Measure" color="primary" density="compact" hide-details class="flex-grow-0" />
++    </v-card-title>
++    <v-card-text v-if="!on" class="pt-0 text-body-2">
++      Turn on while focusing the lens: it scores how sharp this camera's image is, like Limelight's focus tool.
++    </v-card-text>
++    <v-card-text v-else class="pt-0">
++      <div class="d-flex align-end" style="gap: 20px">
++        <div>
++          <div class="text-caption">Centre</div>
++          <div class="text-h4">{{ reading ? Math.round(reading.centre) : "…" }}</div>
++        </div>
++        <div>
++          <div class="text-caption">Sharpest so far</div>
++          <div class="text-h6">{{ reading ? Math.round(reading.best) : "" }}</div>
++        </div>
++        <v-spacer />
++        <v-btn size="small" variant="tonal" @click="poll(true)">Reset</v-btn>
++      </div>
++      <v-progress-linear :model-value="centrePct" :color="colour(centrePct)" height="10" rounded class="mt-2" />
++      <div class="text-caption mt-1">{{ status }}</div>
++
++      <div class="text-caption mt-3">Each part of the image, against its own sharpest so far:</div>
++      <div class="grid mt-1">
++        <div v-for="(pct, i) in cells" :key="i" class="cell" :class="`text-${colour(pct)}`">{{ pct }}%</div>
++      </div>
++
++      <div class="text-caption mt-3">
++        Point the camera at something detailed that stays still: a tag or the calibration board, about as far away as
++        the tags you care about most. Press Reset, turn the lens slowly past the sharpest point, then back to it. When
++        the centre is at 100%, the corners should be close to 100% too; a corner well below means a tilted lens or a
++        soft corner. Then lock the lens (glue or silicone) and recalibrate. The numbers depend on the scene and light,
++        so only compare them without moving the camera.
++      </div>
++    </v-card-text>
++  </v-card>
++</template>
++
++<style scoped>
++.grid {
++  display: grid;
++  grid-template-columns: repeat(3, 1fr);
++  gap: 4px;
++  max-width: 240px;
++}
++.cell {
++  text-align: center;
++  padding: 6px 0;
++  border: 1px solid rgba(128, 128, 128, 0.35);
++  border-radius: 6px;
++  font-variant-numeric: tabular-nums;
++}
++</style>
 diff --git a/photon-client/src/components/dashboard/CameraAndPipelineSelectCard.vue b/photon-client/src/components/dashboard/CameraAndPipelineSelectCard.vue
 index 3aa06c7a31474aa876d8627a607f1f8885cbd1d2..d9e5c93d02869217e0c4e1a637b86527930158df 100644
 --- a/photon-client/src/components/dashboard/CameraAndPipelineSelectCard.vue
@@ -860,6 +1213,629 @@ index 0000000000000000000000000000000000000000..8c55e5b5beb36887ea2b191a45553b01
 +  padding-top: 4px;
 +}
 +</style>
+diff --git a/photon-client/src/components/fieldcal/CameraTuneCard.vue b/photon-client/src/components/fieldcal/CameraTuneCard.vue
+new file mode 100644
+index 0000000000000000000000000000000000000000..cecf8bb90878b700dfa226d8881118d513fb4984
+--- /dev/null
++++ b/photon-client/src/components/fieldcal/CameraTuneCard.vue
+@@ -0,0 +1,258 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-30): one camera in the field-calibration settings step. Its stream,
++// the tags it sees right now, sliders to set each control by hand (saved to the pipeline in use,
++// like the Input tab), a lock per control that the tuner leaves alone, and its own Tune / Apply.
++import { computed, ref, watch } from "vue";
++import PhotonCameraStream from "@/components/app/photon-camera-stream.vue";
++import { useCameraSettingsStore } from "@/stores/settings/CameraSettingsStore";
++import type { Control, TuneCamera } from "@/types/FieldCalTypes";
++
++const props = defineProps<{
++  name: string;
++  controls?: Record<string, Control | number | boolean>;
++  preview?: { margins: Record<string, number>; ageMs: number };
++  tune?: TuneCamera;
++  locks?: string[];
++  tuningRunning: boolean;
++  phase: string;
++  progress: number;
++  disabled: boolean;
++  act: (body: object, done?: string) => Promise<void>;
++}>();
++
++const ORDER = ["exposure", "gain", "brightness", "contrast", "gamma", "sharpness", "backlight"];
++const LABEL: Record<string, string> = {
++  exposure: "Exposure",
++  gain: "Gain",
++  brightness: "Brightness",
++  contrast: "Contrast",
++  gamma: "Gamma",
++  sharpness: "Sharpness",
++  backlight: "Backlight comp."
++};
++const HINT: Record<string, string> = {
++  exposure: "Shorter means less motion blur. Set it first.",
++  gain: "Brightens without longer exposure, but adds noise.",
++  brightness: "An offset on every pixel.",
++  contrast: "The camera's contrast curve.",
++  gamma: "Brightens the darks.",
++  sharpness: "The camera's edge sharpening; too much puts halos on tag edges.",
++  backlight: "Brightens for bright backgrounds. Usually off for tags."
++};
++
++const ctl = computed(() =>
++  ORDER.filter((k) => typeof props.controls?.[k] === "object").map((k) => ({
++    key: k,
++    ...(props.controls![k] as Control)
++  }))
++);
++const pipelineIndex = computed(() => props.controls?.pipelineIndex as number | undefined);
++const autoExposure = computed(() => props.controls?.autoExposure === true);
++
++// What the camera sees right now (the page's preview, a few times a second).
++const seen = computed(() =>
++  props.preview && props.preview.ageMs < 2000
++    ? Object.entries(props.preview.margins).map(([id, m]) => ({ id: Number(id), margin: m }))
++    : []
++);
++const fresh = computed(() => !!props.preview && props.preview.ageMs < 2000);
++
++// Locks live on the Jetson (every browser sees the same ones, and the tuner uses them).
++const locked = computed(() => new Set(props.locks ?? []));
++const toggleLock = (k: string) =>
++  props.act({ action: "setLock", camera: props.name, control: k, on: !locked.value.has(k) });
++
++// A control keeps its dragged value until the change has been saved (the status poll mustn't
++// snap the slider back mid-drag).
++const drag = ref<Record<string, number>>({});
++const toSlider = (k: string, v: number) => (k === "exposure" ? Math.log10(Math.max(1, v)) : v);
++const fromSlider = (k: string, s: number) => (k === "exposure" ? Math.round(10 ** s) : Math.round(s));
++const sliderValue = (c: { key: string; value: number }) => drag.value[c.key] ?? toSlider(c.key, c.value);
++const shown = (c: { key: string; value: number }) => fromSlider(c.key, sliderValue(c));
++const fmt = (k: string, v: number) => (k === "exposure" ? `${v} (${(v / 10).toFixed(1)} ms)` : String(v));
++const forget = (k: string) => {
++  const d = { ...drag.value };
++  delete d[k];
++  drag.value = d;
++};
++const setControl = async (k: string, s: number) => {
++  await props.act({ action: "setControl", camera: props.name, control: k, value: fromSlider(k, s) });
++  setTimeout(() => forget(k), 3000); // in case the camera never reports exactly that value
++};
++// Let go of a dragged value once the camera reports it.
++watch(
++  () => props.controls,
++  (cs) => {
++    for (const k of Object.keys(drag.value)) {
++      const c = cs?.[k];
++      if (typeof c === "object" && Math.abs(c.value - fromSlider(k, drag.value[k])) < 1) forget(k);
++    }
++  }
++);
++// Controls the pipeline can leave at the camera's own default (-1).
++const HAS_DEFAULT = new Set(["contrast", "gamma", "sharpness", "backlight"]);
++const resetControl = (k: string) =>
++  props.act({ action: "setControl", camera: props.name, control: k, value: -1 }, `${LABEL[k]}: camera default`);
++
++const busyHere = computed(() => props.tuningRunning && !!props.tune?.tuning);
++const hasRecommendations = computed(
++  () =>
++    !!props.tune &&
++    !props.tune.tuning &&
++    Object.entries(props.tune.recommended).some(([k, v]) => v !== props.tune!.startValues[k])
++);
++const tried = (k: string) => (props.tune?.results ?? []).filter((r) => r.control === k);
++const startTune = () => props.act({ action: "tune", camera: props.name });
++
++const cameraSettings = computed(() =>
++  Object.values(useCameraSettingsStore().cameras).find((c) => c.nickname === props.name)
++);
++const showStream = ref(true);
++</script>
++
++<template>
++  <v-card variant="outlined" class="pa-3 h-100">
++    <div class="d-flex align-center flex-wrap" style="gap: 8px">
++      <span class="text-h6">{{ name }}</span>
++      <v-chip v-if="pipelineIndex !== undefined" size="small">pipeline {{ pipelineIndex }}</v-chip>
++      <v-chip v-if="!fresh" size="small" color="grey">no recent frames</v-chip>
++      <v-chip v-else-if="seen.length" size="small" color="success">
++        sees {{ seen.map((s) => `${s.id} (${s.margin})`).join(", ") }}
++      </v-chip>
++      <v-chip v-else size="small" color="warning">sees no tags: turn the robot</v-chip>
++      <v-spacer />
++      <v-btn
++        size="x-small"
++        variant="text"
++        :icon="showStream ? 'mdi-eye-off' : 'mdi-eye'"
++        @click="showStream = !showStream"
++      />
++    </div>
++
++    <photon-camera-stream
++      v-if="showStream && cameraSettings"
++      :id="`fieldcal-stream-${name}`"
++      :camera-settings="cameraSettings"
++      stream-type="Processed"
++      class="mt-2 mx-auto"
++      style="width: 100%; max-width: 560px; height: auto; display: block"
++    />
++
++    <div class="d-flex align-center flex-wrap mt-3" style="gap: 8px">
++      <v-btn
++        v-if="!busyHere"
++        color="primary"
++        size="small"
++        prepend-icon="mdi-tune"
++        :disabled="disabled || tuningRunning || !seen.length"
++        @click="startTune"
++        >Tune {{ name }}</v-btn
++      >
++      <template v-else>
++        <span class="text-caption">{{ phase }}</span>
++        <v-progress-linear :model-value="progress" color="primary" height="6" style="max-width: 160px" />
++        <v-btn size="x-small" variant="tonal" @click="act({ action: 'cancelTune' })">Stop</v-btn>
++      </template>
++      <v-btn
++        v-if="hasRecommendations"
++        size="small"
++        color="success"
++        prepend-icon="mdi-content-save"
++        :disabled="disabled || tuningRunning"
++        @click="act({ action: 'applyTuning', camera: name }, `Saved ${name}'s recommended settings`)"
++        >Apply recommended</v-btn
++      >
++      <span v-if="tune?.outcome && !busyHere" class="text-caption">{{ tune.outcome }}</span>
++    </div>
++    <div v-if="tune?.baseline && tune.baselineTags.length && !busyHere" class="text-caption mt-1">
++      Measured on tags {{ tune.baselineTags.join(", ") }}: margin {{ Math.round(tune.baseline.margin) }}, jitter
++      {{ tune.baseline.jitterPx.toFixed(2) }} px at the start.
++    </div>
++    <v-alert v-if="autoExposure" density="compact" variant="tonal" color="warning" class="mt-2">
++      Auto exposure is on for this pipeline: setting exposure here (or tuning it) turns it off.
++    </v-alert>
++
++    <v-table density="compact" class="mt-2 controls">
++      <thead>
++        <tr>
++          <th title="Locked settings are left as they are when tuning">
++            <v-icon size="small">mdi-lock</v-icon>
++          </th>
++          <th>Setting</th>
++          <th style="min-width: 150px"></th>
++          <th>Now</th>
++          <th>Tuned</th>
++        </tr>
++      </thead>
++      <tbody>
++        <tr v-for="c in ctl" :key="c.key">
++          <td>
++            <v-checkbox-btn
++              :model-value="locked.has(c.key)"
++              density="compact"
++              :disabled="busyHere"
++              @update:model-value="toggleLock(c.key)"
++            />
++          </td>
++          <td :title="HINT[c.key]">{{ LABEL[c.key] }}</td>
++          <td>
++            <v-slider
++              :model-value="sliderValue(c)"
++              :min="toSlider(c.key, c.min)"
++              :max="toSlider(c.key, c.max)"
++              :step="c.key === 'exposure' ? 0.01 : 1"
++              density="compact"
++              hide-details
++              :disabled="disabled || busyHere"
++              @update:model-value="(v: number) => (drag = { ...drag, [c.key]: v })"
++              @end="(v: number) => setControl(c.key, v)"
++            />
++          </td>
++          <td class="text-no-wrap">
++            {{ fmt(c.key, shown(c)) }}
++            <v-btn
++              v-if="HAS_DEFAULT.has(c.key)"
++              size="x-small"
++              variant="text"
++              icon="mdi-restore"
++              :title="`Camera default (${c.default})`"
++              :disabled="disabled || busyHere"
++              @click="resetControl(c.key)"
++            />
++          </td>
++          <td class="text-caption">
++            <template v-if="tune && tune.recommended[c.key] !== undefined">
++              <b v-if="tune.recommended[c.key] !== tune.startValues[c.key]">{{
++                fmt(c.key, tune.recommended[c.key])
++              }}</b>
++              <span v-else>keep</span>
++            </template>
++            <span v-else-if="tune?.locked?.includes(c.key)">locked when tuned</span>
++            <span v-if="tune?.notes[c.key]"> ({{ tune.notes[c.key] }})</span>
++            <div v-if="tried(c.key).length" class="tried">
++              {{
++                tried(c.key)
++                  .map((r) => `${r.value}: ${Math.round(100 * r.found)}%/${Math.round(r.margin)}`)
++                  .join("  ")
++              }}
++            </div>
++          </td>
++        </tr>
++      </tbody>
++    </v-table>
++    <div class="text-caption mt-1">
++      Tried: value: tags found / decision margin. Changes here save to pipeline {{ pipelineIndex }}, like the Camera
++      page's Input tab.
++    </div>
++  </v-card>
++</template>
++
++<style scoped>
++.controls td {
++  padding: 0 6px !important;
++}
++.tried {
++  opacity: 0.75;
++  white-space: normal;
++}
++</style>
+diff --git a/photon-client/src/components/fieldcal/FieldCal3D.vue b/photon-client/src/components/fieldcal/FieldCal3D.vue
+new file mode 100644
+index 0000000000000000000000000000000000000000..6d31f124d9a3d9fc9a0b6bf97d7f3d9b9d2c679a
+--- /dev/null
++++ b/photon-client/src/components/fieldcal/FieldCal3D.vue
+@@ -0,0 +1,353 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-30): the field in 3D for the field-calibration page, with simplified
++// field elements placed by their tags (lib/FieldElements.ts). Tags are coloured like the 2D map;
++// live cameras, captured spots and (on results) each tag's solved offset, drawn 10x.
++// @ts-expect-error Intellisense says these conflict with the dynamic imports below
++import type { Group, Object3D, PerspectiveCamera, Scene, WebGLRenderer } from "three";
++import { onBeforeUnmount, onMounted, ref, watch } from "vue";
++import { useTheme } from "vuetify";
++import type { AprilTagFieldLayout } from "@/types/PhotonTrackingTypes";
++import type { MapCamera, MapOffset, MapPoint } from "@/types/FieldCalTypes";
++import { buildField, detectGame, FIELD_GAMES, fieldModelUrl } from "@/lib/FieldElements";
++import { anchorFieldModel, loadFieldModel } from "@/lib/FieldModel";
++
++const T = await import("three");
++const { OrbitControls } = await import("three/examples/jsm/controls/OrbitControls");
++
++const props = defineProps<{
++  layout: AprilTagFieldLayout;
++  tagSpots?: Record<string, number>;
++  inView?: number[];
++  cameras?: MapCamera[];
++  spots?: MapPoint[];
++  offsets?: Record<string, MapOffset>;
++}>();
++
++const theme = useTheme();
++const container = ref<HTMLDivElement | null>(null);
++const game = ref(detectGame(props.layout));
++let scene: Scene | undefined;
++let camera: PerspectiveCamera | undefined;
++let renderer: WebGLRenderer | undefined;
++let controls: InstanceType<typeof OrbitControls> | undefined;
++let fieldGroup: Group | undefined;
++let modelGroup: Group | undefined; // shares the cached model's geometry: removed, never disposed
++const modelNote = ref("");
++let tagGroup: Group | undefined;
++let liveGroup: Group | undefined;
++let frame = 0;
++let resize: ResizeObserver | undefined;
++
++const TAG = 0.1651;
++const tagTexture = new Map<number, InstanceType<typeof T.CanvasTexture>>();
++const textureFor = (id: number) => {
++  let t = tagTexture.get(id);
++  if (t) return t;
++  const c = document.createElement("canvas");
++  c.width = c.height = 128;
++  const x = c.getContext("2d")!;
++  x.fillStyle = "#fff";
++  x.fillRect(0, 0, 128, 128);
++  x.fillStyle = "#000";
++  x.fillRect(10, 10, 108, 108);
++  x.fillStyle = "#fff";
++  x.fillRect(26, 26, 76, 76);
++  x.fillStyle = "#000";
++  x.font = "bold 56px sans-serif";
++  x.textAlign = "center";
++  x.textBaseline = "middle";
++  x.fillText(String(id), 64, 68);
++  t = new T.CanvasTexture(c);
++  tagTexture.set(id, t);
++  return t;
++};
++
++const statusColor = (id: number): number => {
++  if (props.offsets) {
++    const o = props.offsets[String(id)];
++    return o ? (o.moved ? 0xe53935 : 0x43a047) : 0x9e9e9e;
++  }
++  const n = props.tagSpots?.[String(id)] ?? 0;
++  if (n >= 2) return 0x43a047;
++  if (n === 1) return 0xfb8c00;
++  return props.inView?.includes(id) ? 0x1e88e5 : 0x9e9e9e;
++};
++
++// A plane faces +Z with +X right and +Y up; a tag faces its +x, with +y to the viewer's right and +z up.
++const TAG_BASIS = new T.Quaternion().setFromRotationMatrix(
++  new T.Matrix4().makeBasis(new T.Vector3(0, 1, 0), new T.Vector3(0, 0, 1), new T.Vector3(1, 0, 0))
++);
++
++const disposeGroup = (g: Object3D | undefined) => {
++  if (!g || !scene) return;
++  scene.remove(g);
++  g.traverse((o: any) => {
++    o.geometry?.dispose?.();
++    o.material?.dispose?.(); // tag textures are shared and kept (disposed on unmount)
++  });
++};
++
++let fieldToken = 0;
++const drawField = async () => {
++  if (!scene) return;
++  const token = ++fieldToken;
++  disposeGroup(fieldGroup);
++  if (modelGroup) scene.remove(modelGroup);
++  modelGroup = undefined;
++  const url = fieldModelUrl(game.value);
++  // The walls and carpet at once; the CAD model replaces them when it has loaded.
++  fieldGroup = buildField(T, props.layout, url ? "none" : game.value);
++  scene.add(fieldGroup);
++  modelNote.value = "";
++  if (!url) return;
++  modelNote.value = "Loading FIRST's field CAD…";
++  const model = await loadFieldModel(T, url);
++  if (token !== fieldToken || !scene) return; // redrawn meanwhile
++  if (!model) {
++    modelNote.value = "The field CAD didn't load: showing simple shapes.";
++    disposeGroup(fieldGroup);
++    fieldGroup = buildField(T, props.layout, "2026");
++    scene.add(fieldGroup);
++  } else {
++    anchorFieldModel(T, model, props.layout);
++    disposeGroup(fieldGroup);
++    fieldGroup = undefined;
++    modelGroup = model;
++    scene.add(model);
++    modelNote.value = "";
++  }
++  renderNow();
++};
++
++const drawTags = () => {
++  if (!scene) return;
++  disposeGroup(tagGroup);
++  tagGroup = new T.Group();
++  for (const t of props.layout.tags) {
++    const q = t.pose.rotation.quaternion;
++    const quat = new T.Quaternion(q.X, q.Y, q.Z, q.W).multiply(TAG_BASIS);
++    const pos = new T.Vector3(t.pose.translation.x, t.pose.translation.y, t.pose.translation.z);
++    const normal = new T.Vector3(1, 0, 0).applyQuaternion(new T.Quaternion(q.X, q.Y, q.Z, q.W));
++    // coloured frame behind, the tag in front (both just off the element's face)
++    const frameMesh = new T.Mesh(
++      new T.PlaneGeometry(TAG * 1.7, TAG * 1.7),
++      new T.MeshBasicMaterial({ color: statusColor(t.ID), side: T.DoubleSide })
++    );
++    frameMesh.quaternion.copy(quat);
++    frameMesh.position.copy(pos).addScaledVector(normal, 0.01);
++    const face = new T.Mesh(
++      new T.PlaneGeometry(TAG * 1.25, TAG * 1.25),
++      new T.MeshBasicMaterial({ map: textureFor(t.ID) })
++    );
++    face.quaternion.copy(quat);
++    face.position.copy(pos).addScaledVector(normal, 0.015);
++    tagGroup.add(frameMesh, face);
++    const o = props.offsets?.[String(t.ID)];
++    if (o) {
++      const d = new T.Vector3(o.dxCm / 10, o.dyCm / 10, 0); // cm drawn 10x: /100 * 10
++      if (d.length() > 0.01) {
++        tagGroup.add(
++          new T.ArrowHelper(d.clone().normalize(), pos, d.length(), o.moved ? 0xe53935 : 0x43a047, 0.12, 0.08)
++        );
++      }
++    }
++  }
++  scene.add(tagGroup);
++};
++
++const drawLive = () => {
++  if (!scene) return;
++  disposeGroup(liveGroup);
++  liveGroup = new T.Group();
++  for (const s of props.spots ?? []) {
++    const disc = new T.Mesh(
++      new T.CircleGeometry(0.18, 24),
++      new T.MeshBasicMaterial({ color: 0x1e88e5, transparent: true, opacity: 0.6 })
++    );
++    disc.position.set(s.x, s.y, 0.01);
++    liveGroup.add(disc);
++  }
++  for (const c of props.cameras ?? []) {
++    if (!c.pose) continue;
++    const cone = new T.Mesh(new T.ConeGeometry(0.1, 0.25, 16), new T.MeshLambertMaterial({ color: 0x00acc1 }));
++    // cone points along +y; turn it to the camera's heading
++    cone.rotation.z = c.pose[2] - Math.PI / 2;
++    cone.position.set(c.pose[0], c.pose[1], 0.45);
++    liveGroup.add(cone);
++    const ray = new T.ArrowHelper(
++      new T.Vector3(Math.cos(c.pose[2]), Math.sin(c.pose[2]), 0),
++      new T.Vector3(c.pose[0], c.pose[1], 0.45),
++      1.2,
++      0x00acc1,
++      0.15,
++      0.08
++    );
++    liveGroup.add(ray);
++  }
++  scene.add(liveGroup);
++};
++
++// Draw now, not just on the next animation frame (which a hidden tab never gets).
++const renderNow = () => {
++  if (renderer && scene && camera) renderer.render(scene, camera);
++};
++
++const setBackground = () => {
++  if (scene) scene.background = new T.Color(theme.global.current.value.dark ? 0x101418 : 0xd9dde1);
++};
++
++const view = (which: "blue" | "red" | "top") => {
++  if (!camera || !controls) return;
++  const L = props.layout.field.length,
++    W = props.layout.field.width;
++  if (which === "top") {
++    // High enough that the whole field fits the canvas, whichever way it's shaped.
++    const t = Math.tan((camera.fov * Math.PI) / 360);
++    const h = 1.1 * Math.max(L / 2 / (t * camera.aspect), W / 2 / t);
++    camera.position.set(L / 2, W / 2 - 0.01, h);
++    controls.target.set(L / 2, W / 2, 0);
++  } else if (which === "blue") {
++    camera.position.set(-4, W / 2, 5.5);
++    controls.target.set(L * 0.3, W / 2, 0);
++  } else {
++    camera.position.set(L + 4, W / 2, 5.5);
++    controls.target.set(L * 0.7, W / 2, 0);
++  }
++  controls.update();
++  renderNow();
++};
++
++onMounted(() => {
++  const el = container.value;
++  if (!el) return;
++  scene = new T.Scene();
++  setBackground();
++  camera = new T.PerspectiveCamera(50, el.clientWidth / Math.max(1, el.clientHeight), 0.05, 200);
++  camera.up.set(0, 0, 1);
++  renderer = new T.WebGLRenderer({ antialias: true });
++  renderer.setPixelRatio(window.devicePixelRatio);
++  renderer.setSize(el.clientWidth, el.clientHeight);
++  el.appendChild(renderer.domElement);
++  controls = new OrbitControls(camera, renderer.domElement);
++  controls.enableDamping = true;
++  // Onshape's default mouse: right-drag turns, middle-drag (or Ctrl + right-drag) moves, the wheel
++  // zooms toward the cursor. Left-drag also turns (there's nothing to select), for trackpads.
++  controls.mouseButtons = { LEFT: T.MOUSE.ROTATE, MIDDLE: T.MOUSE.PAN, RIGHT: T.MOUSE.ROTATE };
++  controls.zoomToCursor = true;
++  controls.screenSpacePanning = true;
++  controls.maxPolarAngle = Math.PI / 2 - 0.03; // stay above the carpet
++  scene.add(new T.HemisphereLight(0xffffff, 0x444444, 1.2));
++  scene.add(new T.AmbientLight(0xffffff, 0.8));
++  const sun = new T.DirectionalLight(0xffffff, 1.4);
++  sun.position.set(5, -3, 10);
++  scene.add(sun);
++  drawField();
++  drawTags();
++  drawLive();
++  view(
++    props.layout.tags.some(
++      (t) => (props.tagSpots?.[String(t.ID)] ?? 0) > 0 && t.pose.translation.x > props.layout.field.length / 2
++    )
++      ? "red"
++      : "blue"
++  );
++  resize = new ResizeObserver(() => {
++    if (!renderer || !camera || !el) return;
++    renderer.setSize(el.clientWidth, el.clientHeight);
++    camera.aspect = el.clientWidth / Math.max(1, el.clientHeight);
++    camera.updateProjectionMatrix();
++  });
++  resize.observe(el);
++  const loop = () => {
++    frame = requestAnimationFrame(loop);
++    controls?.update();
++    if (renderer && scene && camera) renderer.render(scene, camera);
++  };
++  loop();
++});
++
++onBeforeUnmount(() => {
++  cancelAnimationFrame(frame);
++  resize?.disconnect();
++  disposeGroup(fieldGroup);
++  if (modelGroup) scene?.remove(modelGroup);
++  disposeGroup(tagGroup);
++  disposeGroup(liveGroup);
++  tagTexture.forEach((t) => t.dispose());
++  controls?.dispose();
++  renderer?.dispose();
++  renderer?.domElement.remove();
++});
++
++watch(
++  () => [props.layout, game.value],
++  () => {
++    drawField();
++    renderNow();
++  }
++);
++watch(
++  () => [props.layout, props.tagSpots, props.inView, props.offsets],
++  () => {
++    drawTags();
++    renderNow();
++  },
++  { deep: true }
++);
++watch(
++  () => [props.cameras, props.spots],
++  () => {
++    drawLive();
++    renderNow();
++  },
++  { deep: true }
++);
++watch(
++  () => theme.global.current.value.dark,
++  () => {
++    setBackground();
++    renderNow();
++  }
++);
++</script>
++
++<template>
++  <div>
++    <div class="d-flex align-center flex-wrap mb-1" style="gap: 6px">
++      <v-btn size="x-small" variant="tonal" @click="view('blue')">Blue wall</v-btn>
++      <v-btn size="x-small" variant="tonal" @click="view('red')">Red wall</v-btn>
++      <v-btn size="x-small" variant="tonal" @click="view('top')">Top</v-btn>
++      <v-select
++        v-model="game"
++        :items="FIELD_GAMES"
++        item-title="name"
++        item-value="id"
++        density="compact"
++        hide-details
++        variant="outlined"
++        style="max-width: 220px"
++        class="ml-2"
++      />
++    </div>
++    <div ref="container" class="fieldcal-3d" />
++    <div class="text-caption">
++      Like Onshape: right-drag to turn, middle-drag or Ctrl + right-drag to move, scroll to zoom.
++      {{
++        modelNote ||
++        (game === "2026cad"
++          ? "The field is FIRST's official CAD, each element placed by its tags."
++          : "Field elements are simplified.")
++      }}
++    </div>
++  </div>
++</template>
++
++<style scoped>
++.fieldcal-3d {
++  width: 100%;
++  height: 55vh;
++  min-height: 320px;
++  border-radius: 8px;
++  overflow: hidden;
++}
++</style>
 diff --git a/photon-client/src/components/fieldcal/FieldCalMap.vue b/photon-client/src/components/fieldcal/FieldCalMap.vue
 new file mode 100644
 index 0000000000000000000000000000000000000000..b70eea25b888af7333e8f25c55f94b2c53513043
@@ -1597,6 +2573,377 @@ index 0000000000000000000000000000000000000000..9fd9ee91d13278d0b6d6371a0058b0b2
 +    </v-card-text>
 +  </v-card>
 +</template>
+diff --git a/photon-client/src/lib/FieldElements.ts b/photon-client/src/lib/FieldElements.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..733d924ded3a4bf34a758ec2fd4c529adcf5206e
+--- /dev/null
++++ b/photon-client/src/lib/FieldElements.ts
+@@ -0,0 +1,223 @@
++// SpectrumJetson (photonvision-30): simplified 3D field elements, like Limelight's field view.
++// Each element is placed by the tags mounted on it, not by fixed coordinates: the same code draws
++// the AndyMark and welded fields, and after a field calibration the elements sit where their tags
++// really are (a misplaced hub shows up misplaced). Dimensions: the 2026 game manual (arena section).
++import type * as ThreeNS from "three";
++import type { AprilTagFieldLayout } from "@/types/PhotonTrackingTypes";
++
++type Three = typeof ThreeNS;
++type TagPose = { x: number; y: number; z: number; yaw: number };
++
++export type FieldGame = { id: string; name: string };
++export const FIELD_GAMES: FieldGame[] = [
++  { id: "2026cad", name: "2026 REBUILT: FIRST's field CAD" },
++  { id: "2026", name: "2026 REBUILT: simple shapes" },
++  { id: "none", name: "Tags and walls only" }
++];
++
++/** Which game a layout is for, from its size and tags. */
++export const detectGame = (layout: AprilTagFieldLayout): string =>
++  layout.tags.length === 32 && Math.abs(layout.field.length - 16.54) < 0.1 && Math.abs(layout.field.width - 8.05) < 0.1
++    ? "2026cad"
++    : "none";
++
++/** The CAD model for a game, if there is one (served from PhotonVision's web root). */
++export const fieldModelUrl = (game: string): string | null =>
++  game === "2026cad" ? "fieldmodels/2026-rebuilt.glb" : null;
++
++const IN = 0.0254;
++const BLUE = 0x1e63d6;
++const RED = 0xd63a2f;
++const GREY = 0x9aa0a6;
++
++// 2026 REBUILT: which tags sit on which element (blue, red).
++const REBUILT = {
++  hubs: [
++    [18, 19, 20, 21, 24, 25, 26, 27],
++    [2, 3, 4, 5, 8, 9, 10, 11]
++  ],
++  trenches: [
++    [17, 28],
++    [22, 23],
++    [1, 12],
++    [6, 7]
++  ],
++  outposts: [
++    [29, 30],
++    [13, 14]
++  ],
++  towers: [
++    [31, 32],
++    [15, 16]
++  ]
++};
++const HUB = { size: 47 * IN, height: 72 * IN };
++const TRENCH = {
++  width: 65.65 * IN,
++  depth: 47.0 * IN,
++  height: 40.25 * IN,
++  openWidth: 50.34 * IN,
++  openHeight: 22.25 * IN
++};
++const BUMP = { depth: 44.4 * IN, height: 6.513 * IN };
++const TOWER = { width: 49.25 * IN, depth: 45.0 * IN, height: 78.25 * IN, upright: 72.1 * IN, spacing: 32.25 * IN };
++const RUNGS = [27.0 * IN, 45.0 * IN, 63.0 * IN];
++const GUARDRAIL = 20.0 * IN;
++const WALL = 78 * IN; // driver station wall with its transparent panel
++
++export const yawOf = (q: { W: number; X: number; Y: number; Z: number }) =>
++  Math.atan2(2 * (q.W * q.Z + q.X * q.Y), 1 - 2 * (q.Y * q.Y + q.Z * q.Z));
++
++/** The field, walls and elements for a layout; tags are drawn by the caller. */
++export function buildField(T: Three, layout: AprilTagFieldLayout, game: string): ThreeNS.Group {
++  const g = new T.Group();
++  const L = layout.field.length,
++    W = layout.field.width;
++  const mat = (color: number, opacity = 1) =>
++    new T.MeshLambertMaterial({ color, transparent: opacity < 1, opacity, side: T.DoubleSide });
++  const box = (
++    sx: number,
++    sy: number,
++    sz: number,
++    x: number,
++    y: number,
++    z: number,
++    yaw: number,
++    m: ThreeNS.Material
++  ) => {
++    const b = new T.Mesh(new T.BoxGeometry(sx, sy, sz), m);
++    b.position.set(x, y, z);
++    b.rotation.z = yaw;
++    g.add(b);
++    return b;
++  };
++
++  // Carpet, alliance zones and centre line.
++  const carpet = new T.Mesh(new T.PlaneGeometry(L, W), mat(0x5a5f63));
++  carpet.position.set(L / 2, W / 2, 0);
++  g.add(carpet);
++  const line = (x: number, color: number) => {
++    const l = new T.Mesh(new T.PlaneGeometry(0.05, W), mat(color));
++    l.position.set(x, W / 2, 0.002);
++    g.add(l);
++  };
++  line(L / 2, 0xffffff);
++  // Guardrails and alliance walls (translucent so the field stays visible).
++  box(L, 0.05, GUARDRAIL, L / 2, -0.025, GUARDRAIL / 2, 0, mat(GREY, 0.35));
++  box(L, 0.05, GUARDRAIL, L / 2, W + 0.025, GUARDRAIL / 2, 0, mat(GREY, 0.35));
++  // Alliance walls: faint, with their edges drawn, so the view through them stays clear.
++  for (const [x, c] of [
++    [-0.025, BLUE],
++    [L + 0.025, RED]
++  ]) {
++    const w = box(0.05, W, WALL, x, W / 2, WALL / 2, 0, mat(c, 0.08));
++    w.add(new T.LineSegments(new T.EdgesGeometry(w.geometry), new T.LineBasicMaterial({ color: c })));
++  }
++
++  if (game !== "2026") return g;
++
++  const tags = new Map<number, TagPose>();
++  for (const t of layout.tags) {
++    tags.set(t.ID, {
++      x: t.pose.translation.x,
++      y: t.pose.translation.y,
++      z: t.pose.translation.z,
++      yaw: yawOf(t.pose.rotation.quaternion)
++    });
++  }
++  const group = (ids: number[]) => ids.map((i) => tags.get(i)).filter((t): t is TagPose => !!t);
++  const mean = (ts: TagPose[]) => ({
++    x: ts.reduce((a, t) => a + t.x, 0) / ts.length,
++    y: ts.reduce((a, t) => a + t.y, 0) / ts.length
++  });
++  const colour = (x: number) => (x < L / 2 ? BLUE : RED);
++
++  // HUBs: a 47 in square, 72 in tall, centred on its tags, square to them.
++  const hubs: { x: number; y: number }[] = [];
++  for (const ids of REBUILT.hubs) {
++    const ts = group(ids);
++    if (ts.length < 3) continue;
++    const c = mean(ts);
++    hubs.push(c);
++    box(HUB.size, HUB.size, HUB.height, c.x, c.y, HUB.height / 2, ts[0].yaw, mat(colour(c.x), 0.55));
++    // the hexagonal opening at the top, as a dark ring
++    const ring = new T.Mesh(new T.CylinderGeometry(0.53, 0.53, 0.04, 6, 1, true), mat(0x222222));
++    ring.rotation.x = Math.PI / 2;
++    ring.position.set(c.x, c.y, HUB.height);
++    g.add(ring);
++  }
++
++  // TRENCHes: against the guardrail, a slab on two legs over a 22.25 in tall tunnel.
++  for (const ids of REBUILT.trenches) {
++    const ts = group(ids);
++    if (!ts.length) continue;
++    const c = mean(ts);
++    const nearZero = c.y < W / 2;
++    const y0 = nearZero ? 0 : W - TRENCH.width;
++    const yc = y0 + TRENCH.width / 2;
++    const m = mat(colour(c.x), 0.6);
++    const slab = TRENCH.height - TRENCH.openHeight;
++    box(TRENCH.depth, TRENCH.width, slab, c.x, yc, TRENCH.openHeight + slab / 2, 0, m);
++    const leg = (TRENCH.width - TRENCH.openWidth) / 2;
++    box(TRENCH.depth, leg, TRENCH.openHeight, c.x, y0 + leg / 2, TRENCH.openHeight / 2, 0, m);
++    box(TRENCH.depth, leg, TRENCH.openHeight, c.x, y0 + TRENCH.width - leg / 2, TRENCH.openHeight / 2, 0, m);
++  }
++
++  // BUMPs: 15-degree ramps either side of each hub, out to the trenches.
++  for (const h of hubs) {
++    for (const [a, b] of [
++      [TRENCH.width, h.y - HUB.size / 2],
++      [h.y + HUB.size / 2, W - TRENCH.width]
++    ]) {
++      if (b - a < 0.2) continue;
++      const shape = new T.Shape();
++      shape.moveTo(-BUMP.depth / 2, 0);
++      shape.lineTo(0, BUMP.height);
++      shape.lineTo(BUMP.depth / 2, 0);
++      shape.lineTo(-BUMP.depth / 2, 0);
++      const geo = new T.ExtrudeGeometry(shape, { depth: b - a, bevelEnabled: false });
++      const bump = new T.Mesh(geo, mat(colour(h.x), 0.8));
++      // shape x -> field x, shape y -> up, extrusion -> field y
++      bump.rotation.x = Math.PI / 2;
++      bump.position.set(h.x, b, 0);
++      g.add(bump);
++    }
++  }
++
++  // TOWERs: on the alliance wall at its tags, a base, two uprights and three rungs.
++  for (const ids of REBUILT.towers) {
++    const ts = group(ids);
++    if (!ts.length) continue;
++    const c = mean(ts);
++    const dir = Math.cos(ts[0].yaw) >= 0 ? 1 : -1; // into the field
++    const m = mat(colour(c.x), 0.85);
++    const xMid = c.x + (dir * TOWER.depth) / 2;
++    box(TOWER.depth, TOWER.width, 0.04, xMid, c.y, 0.02, 0, m);
++    box(0.05, TOWER.width, TOWER.height, c.x + dir * 0.03, c.y, TOWER.height / 2, 0, mat(colour(c.x), 0.3));
++    for (const s of [-1, 1])
++      box(0.06, 0.06, TOWER.upright, xMid, c.y + (s * TOWER.spacing) / 2, TOWER.upright / 2, 0, m);
++    for (const z of RUNGS) {
++      const rung = new T.Mesh(new T.CylinderGeometry(0.03, 0.03, TOWER.spacing, 12), mat(0xdddddd));
++      rung.position.set(xMid, c.y, z);
++      g.add(rung);
++    }
++  }
++
++  // OUTPOSTs: a panel in the alliance wall at its tags, with the low corral in front.
++  for (const ids of REBUILT.outposts) {
++    const ts = group(ids);
++    if (!ts.length) continue;
++    const c = mean(ts);
++    const dir = Math.cos(ts[0].yaw) >= 0 ? 1 : -1;
++    box(0.12, 1.1, 1.2, c.x + dir * 0.06, c.y, 0.6, 0, mat(colour(c.x), 0.5));
++    const cw = 35.8 * IN,
++      cd = 37.6 * IN,
++      ch = 8.13 * IN;
++    const m = mat(colour(c.x), 0.7);
++    const x0 = c.x + dir * 0.12;
++    box(cd, 0.03, ch, x0 + (dir * cd) / 2, c.y - cw / 2, ch / 2, 0, m);
++    box(cd, 0.03, ch, x0 + (dir * cd) / 2, c.y + cw / 2, ch / 2, 0, m);
++    box(0.03, cw, ch, x0 + dir * cd, c.y, ch / 2, 0, m);
++  }
++  return g;
++}
+diff --git a/photon-client/src/lib/FieldModel.ts b/photon-client/src/lib/FieldModel.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1cbfb922ce489e83dd20034a63cdb034a8264edd
+--- /dev/null
++++ b/photon-client/src/lib/FieldModel.ts
+@@ -0,0 +1,65 @@
++// SpectrumJetson (photonvision-30): the real field CAD in the 3D view. The model is built from
++// FIRST's official field STEP by tools/fieldmodel in the SpectrumJetson repo and served from
++// fieldmodels/. Each element's node is named "kind@tag,tag,...#..." and holds only that element's
++// placement: here it's moved to where those tags are in the layout in use, so the model fits the
++// AndyMark and welded layouts, and a calibrated layout moves each element to where it really is.
++// The perimeter's four sides follow the layout's field size; the carpet ("carpet@") stays put.
++import type * as ThreeNS from "three";
++import type { AprilTagFieldLayout } from "@/types/PhotonTrackingTypes";
++import { yawOf } from "@/lib/FieldElements";
++
++type Three = typeof ThreeNS;
++
++const cache = new Map<string, Promise<ThreeNS.Group | null>>();
++
++/** The model for a game, or null if it can't be loaded (the caller falls back to simple shapes). */
++export function loadFieldModel(T: Three, url: string): Promise<ThreeNS.Group | null> {
++  let p = cache.get(url);
++  if (!p) {
++    p = (async () => {
++      try {
++        const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader");
++        const { MeshoptDecoder } = await import("three/examples/jsm/libs/meshopt_decoder.module");
++        const loader = new GLTFLoader();
++        loader.setMeshoptDecoder(MeshoptDecoder);
++        const gltf = await loader.loadAsync(url);
++        return gltf.scene as unknown as ThreeNS.Group;
++      } catch (e) {
++        console.warn("Field model " + url + " not loaded; using simple shapes", e);
++        return null;
++      }
++    })();
++    cache.set(url, p);
++  }
++  return p.then((g) => (g ? (g.clone(true) as ThreeNS.Group) : null));
++}
++
++/**
++ * Moves each element of the model to where its tags are in the layout, and each side of the
++ * perimeter to the layout's field edges (@x0, @xL, @y0, @yW), so it fits AndyMark and welded fields.
++ */
++export function anchorFieldModel(T: Three, model: ThreeNS.Object3D, layout: AprilTagFieldLayout) {
++  const tags = new Map(layout.tags.map((t) => [t.ID, t]));
++  const L = layout.field.length,
++    W = layout.field.width;
++  const edges: Record<string, [number, number]> = { x0: [0, 0], xL: [L, 0], y0: [0, 0], yW: [0, W] };
++  model.traverse((o) => {
++    const m = /^(\w+)@([\w,]*)#/.exec(o.name);
++    if (!m || !m[2]) return;
++    let x: number, y: number, yaw: number;
++    if (edges[m[2]]) {
++      [x, y] = edges[m[2]];
++      yaw = 0;
++    } else {
++      const ts = m[2].split(",").map((i) => tags.get(Number(i)));
++      if (ts.some((t) => !t)) return; // a tag the layout doesn't have: leave the element as drawn
++      x = ts.reduce((a, t) => a + t!.pose.translation.x, 0) / ts.length;
++      y = ts.reduce((a, t) => a + t!.pose.translation.y, 0) / ts.length;
++      yaw = yawOf(ts[0]!.pose.rotation.quaternion);
++    }
++    o.position.set(x, y, 0);
++    o.quaternion.setFromAxisAngle(new T.Vector3(0, 0, 1), yaw);
++    o.scale.set(1, 1, 1);
++    o.updateMatrix();
++  });
++}
+diff --git a/photon-client/src/lib/UsbBandwidth.ts b/photon-client/src/lib/UsbBandwidth.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..71aa8558fcd535be899edd5d59246021ecf1d3b0
+--- /dev/null
++++ b/photon-client/src/lib/UsbBandwidth.ts
+@@ -0,0 +1,65 @@
++// SpectrumJetson (photonvision-32): every USB camera's bandwidth, reserved and really used, from
++// GET /api/usb/bandwidth (UsbBandwidth.java), polled while a page shows it.
++import axios from "axios";
++import { ref } from "vue";
++
++export interface UsbCamera {
++  port: string; // e.g. "1-2.4"
++  id: string; // vid:pid
++  product: string;
++  camera: string | null; // PhotonVision nickname
++  uniqueName: string | null;
++  altBytes: number[]; // the camera's alternate settings, bytes per 125 us microframe
++  reservedBytes: number; // what it reserves now (0: not streaming)
++  streaming: boolean;
++  capBytes: number | null; // its cap (0: uncapped)
++  capFrom: "port" | "model" | null;
++  wantBytes: number; // what it reserves when streaming, under its cap
++  fps: number | null;
++  usedBytesPerSec: number | null;
++  recentMaxFrameBytes: number | null;
++  problem: string;
++}
++
++export interface UsbSurvey {
++  budgetBytes: number; // bytes per microframe every USB 2.0 camera shares
++  microframesPerSecond: number;
++  reservedBytes: number;
++  wantBytes: number;
++  usedBytesPerSec: number | null;
++  driver: "capped" | "capped-readonly" | "stock";
++  payloadCap: string;
++  cameras: UsbCamera[];
++}
++
++export const usbSurvey = ref<UsbSurvey | null>(null);
++
++let users = 0;
++let timer: ReturnType<typeof setTimeout> | undefined;
++const poll = async () => {
++  try {
++    usbSurvey.value = (await axios.get("/usb/bandwidth")).data;
++  } catch {
++    usbSurvey.value = null;
++  }
++  clearTimeout(timer);
++  if (users > 0) timer = setTimeout(poll, 1500);
++};
++
++/** Starts polling (shared by every caller); returns the function that stops it. */
++export const watchUsbBandwidth = () => {
++  if (users++ === 0) poll();
++  return () => {
++    if (--users === 0) clearTimeout(timer);
++  };
++};
++
++/** Polls now (after a change). */
++export const refreshUsbBandwidth = () => poll();
++
++/** Bytes per microframe as MB/s. */
++export const mbPerSec = (bytes: number) => (bytes * 8000) / 1e6;
++
++/** How many times over the recent largest frame fits in one frame time at this allocation. */
++export const frameFits = (c: UsbCamera, bytes: number) =>
++  c.fps && c.recentMaxFrameBytes ? (bytes * 8000) / c.fps / c.recentMaxFrameBytes : null;
 diff --git a/photon-client/src/router/index.ts b/photon-client/src/router/index.ts
 index 1535b16e9f4efffb3e29da26cb39854920a19164..88e5ef1039ac9778d5b45f6afaad6188c7757470 100644
 --- a/photon-client/src/router/index.ts
@@ -1660,15 +3007,40 @@ index 86f83a108a45d0f4737399e23640f66d1d4f413c..0d771f831a4366c605ee8d694ae68be3
          metricsHistorySnapshot.value = metricsHistoryBuffer.getHistory();
 diff --git a/photon-client/src/types/FieldCalTypes.ts b/photon-client/src/types/FieldCalTypes.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..2c62d7d15fc9eae9e4b75d4803e8ec0d530144bb
+index 0000000000000000000000000000000000000000..35ac22602a43f642d63342cd34de5f9fab66d28c
 --- /dev/null
 +++ b/photon-client/src/types/FieldCalTypes.ts
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,30 @@
 +// SpectrumJetson (photonvision-30): shapes the field-calibration map draws.
 +export type MapCamera = { name: string; pose: number[] | null };
 +export type MapPoint = { x: number; y: number; label?: string };
 +export type MapSuggestion = { x: number; y: number; tag: number; faceX: number; faceY: number };
 +export type MapOffset = { dxCm: number; dyCm: number; moved: boolean };
++
++// The settings step (CameraTuneCard).
++export type Control = { min: number; max: number; default: number; value: number };
++export type TuneStep = {
++  control: string;
++  value: number;
++  frames: number;
++  found: number;
++  margin: number;
++  jitterPx: number;
++  brightness: number;
++};
++export type TuneCamera = {
++  problem: string;
++  outcome: string;
++  tuning: boolean;
++  locked: string[];
++  baselineTags: number[];
++  baseline: TuneStep | null;
++  startValues: Record<string, number>;
++  recommended: Record<string, number>;
++  notes: Record<string, string>;
++  results: TuneStep[];
++  pipelineIndex: number;
++};
 diff --git a/photon-client/src/types/PipelineTypes.ts b/photon-client/src/types/PipelineTypes.ts
 index c6f1e2264fdce77b93494a6f0fb583090c8dfbc2..08abecaf84769c717c5f1230a270363b6d002311 100644
 --- a/photon-client/src/types/PipelineTypes.ts
@@ -1847,12 +3219,89 @@ index b806a5bedcdea7123ad97ad606b8b3609fe3a505..13d8432bf4449602c573a3dc8fd9ec59
 +  ObjectDetection = 4,
 +  AprilTagCuda = 5
  }
+diff --git a/photon-client/src/views/CameraMatchingView.vue b/photon-client/src/views/CameraMatchingView.vue
+index bb1658bec2c5a0fba5afebc8ba6ee06cbcaa5841..ae2d64767aad38e678aaf5859a6a664d8651a27e 100644
+--- a/photon-client/src/views/CameraMatchingView.vue
++++ b/photon-client/src/views/CameraMatchingView.vue
+@@ -1,6 +1,6 @@
+ <script setup lang="ts">
+ import { useCameraSettingsStore } from "@/stores/settings/CameraSettingsStore";
+-import { computed, inject, ref } from "vue";
++import { computed, inject, onBeforeUnmount, ref } from "vue";
+ import { useStateStore } from "@/stores/StateStore";
+ import {
+   PlaceholderCameraSettings,
+@@ -15,12 +15,23 @@ import PvDeleteModal from "@/components/common/pv-delete-modal.vue";
+ import PvCameraInfoCard from "@/components/common/pv-camera-info-card.vue";
+ import PvCameraMatchCard from "@/components/common/pv-camera-match-card.vue";
+ import { useTheme } from "vuetify";
++import UsbBandwidthCard from "@/components/app/usb-bandwidth-card.vue";
++import { mbPerSec, usbSurvey, watchUsbBandwidth, type UsbCamera } from "@/lib/UsbBandwidth";
+ 
+ const theme = useTheme();
+ 
+ const backendHostname = inject<string>("backendHostname");
+ const formatUrl = (port: number) => `http://${backendHostname}:${port}/stream.mjpg`;
+ 
++// SpectrumJetson (photonvision-32): each camera's USB bandwidth, on its card and in the card above.
++const stopUsb = watchUsbBandwidth();
++onBeforeUnmount(stopUsb);
++const usbFor = (uniqueName: string) => usbSurvey.value?.cameras.find((c) => c.uniqueName === uniqueName);
++const usbLine = (c: UsbCamera) =>
++  c.streaming
++    ? `${c.usedBytesPerSec === null ? "…" : (c.usedBytesPerSec / 1e6).toFixed(1)} of ${mbPerSec(c.wantBytes).toFixed(1)} MB/s (port ${c.port})`
++    : `not streaming${c.problem ? ": " + c.problem : ""} (port ${c.port})`;
++
+ const activatingModule = ref(false);
+ const activateModule = async (moduleUniqueName: string) => {
+   if (activatingModule.value) return;
+@@ -124,6 +135,9 @@ const getMatchedDevice = (info: PVCameraInfo | undefined): PVCameraInfo => {
+ <template>
+   <div class="pa-3">
+     <v-row>
++      <v-col cols="12" class="pr-0">
++        <usb-bandwidth-card />
++      </v-col>
+       <!-- Active modules -->
+       <v-col
+         v-for="(module, index) in activeVisionModules"
+@@ -165,6 +179,10 @@ const getMatchedDevice = (info: PVCameraInfo | undefined): PVCameraInfo => {
+                     {{ module.nickname }}
+                   </td>
+                 </tr>
++                <tr v-if="usbFor(module.uniqueName)">
++                  <td>USB bandwidth</td>
++                  <td>{{ usbLine(usbFor(module.uniqueName)!) }}</td>
++                </tr>
+                 <tr>
+                   <td>Pipelines</td>
+                   <td>{{ module.pipelineNicknames.join(", ") }}</td>
+diff --git a/photon-client/src/views/CameraSettingsView.vue b/photon-client/src/views/CameraSettingsView.vue
+index 707379750f7cfb7e91b70e5ca27cc3a0dfde75f8..2e41d26bc79b7478c96f6ea0fc9e8c1b6b88ee79 100644
+--- a/photon-client/src/views/CameraSettingsView.vue
++++ b/photon-client/src/views/CameraSettingsView.vue
+@@ -6,6 +6,7 @@ import { computed } from "vue";
+ import CamerasView from "@/components/cameras/CamerasView.vue";
+ import { useStateStore } from "@/stores/StateStore";
+ import CameraControlCard from "@/components/cameras/CameraControlCard.vue";
++import CameraFocusCard from "@/components/cameras/CameraFocusCard.vue";
+ 
+ const cameraViewType = computed<number[]>({
+   get: (): number[] => {
+@@ -50,6 +51,7 @@ const cameraViewType = computed<number[]>({
+       </v-col>
+       <v-col class="pl-md-3 pt-3 pt-md-0" cols="12" md="5">
+         <CamerasView v-model="cameraViewType" />
++        <CameraFocusCard />
+       </v-col>
+     </v-row>
+   </div>
 diff --git a/photon-client/src/views/FieldCalibrationView.vue b/photon-client/src/views/FieldCalibrationView.vue
 new file mode 100644
-index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525f4b01427
+index 0000000000000000000000000000000000000000..5d1b869f53950ced24401c644785cb7e5c04b988
 --- /dev/null
 +++ b/photon-client/src/views/FieldCalibrationView.vue
-@@ -0,0 +1,786 @@
+@@ -0,0 +1,746 @@
 +<script setup lang="ts">
 +// SpectrumJetson (photonvision-30): field calibration. Tune the camera settings at one spot, then
 +// push the robot by hand to still spots while every camera records; the Jetson then solves every
@@ -1862,31 +3311,11 @@ index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525
 +import { useStateStore } from "@/stores/StateStore";
 +import { useSettingsStore } from "@/stores/settings/GeneralSettingsStore";
 +import FieldCalMap from "@/components/fieldcal/FieldCalMap.vue";
-+import type { MapOffset, MapPoint, MapSuggestion } from "@/types/FieldCalTypes";
++import FieldCal3D from "@/components/fieldcal/FieldCal3D.vue";
++import type { Control, MapOffset, MapPoint, MapSuggestion, TuneCamera } from "@/types/FieldCalTypes";
++import CameraTuneCard from "@/components/fieldcal/CameraTuneCard.vue";
 +
 +type Mount = { x: number; y: number; z: number; rollDeg: number; pitchDeg: number; yawDeg: number };
-+type StepResult = {
-+  control: string;
-+  value: number;
-+  frames: number;
-+  found: number;
-+  margin: number;
-+  jitterPx: number;
-+  brightness: number;
-+  tags: number;
-+};
-+type TuneCamera = {
-+  problem: string;
-+  baselineTags: number[];
-+  baseline: StepResult | null;
-+  pipeline: Record<string, number>;
-+  startValues: Record<string, number>;
-+  ranges: Record<string, number[]>;
-+  recommended: Record<string, number>;
-+  notes: Record<string, string>;
-+  results: StepResult[];
-+  pipelineIndex: number;
-+};
 +type Status = {
 +  state: "IDLE" | "RECORDING" | "SOLVING" | "SOLVED" | "FAILED";
 +  session: string;
@@ -1912,6 +3341,9 @@ index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525
 +    result: string;
 +    cameras: Record<string, TuneCamera>;
 +  };
++  controls: Record<string, Record<string, Control | number | boolean>>;
++  preview: Record<string, { margins: Record<string, number>; ageMs: number }>;
++  locks: Record<string, string[]>;
 +  robotMounts: Record<string, Mount>;
 +  robotConnected: boolean;
 +  cameras: Record<string, { calibration: { resolution: string } | null; videoMode?: string }>;
@@ -1958,6 +3390,7 @@ index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525
 +const results = ref<Results | null>(null);
 +const resultsRun = ref("");
 +const beep = ref(true);
++const mapMode = ref<"2d" | "3d">("2d");
 +let timer: ReturnType<typeof setTimeout> | undefined;
 +
 +const layout = computed(() => useSettingsStore().currentFieldLayout);
@@ -2110,24 +3543,15 @@ index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525
 +
 +// ---- tuning
 +const tuning = computed(() => status.value?.tuning);
-+const controlLabel: Record<string, string> = {
-+  exposure: "Exposure (raw)",
-+  gain: "Gain",
-+  brightness: "Brightness",
-+  contrast: "Contrast",
-+  gamma: "Gamma",
-+  sharpness: "Sharpness",
-+  backlight: "Backlight compensation"
-+};
-+const fmtSetting = (control: string, v: number | undefined) => {
-+  if (v === undefined) return "";
-+  if (control === "exposure") return v < 0 ? "auto" : `${v} (${(v / 10).toFixed(1)} ms)`;
-+  return v < 0 ? "camera default" : String(v);
-+};
-+const anyRecommendation = computed(() =>
-+  Object.values(tuning.value?.cameras ?? {}).some((c) => Object.keys(c.recommended).length > 0)
++const tuneProgress = computed(() =>
++  tuning.value?.stepsTotal ? (100 * tuning.value.stepsDone) / tuning.value.stepsTotal : 0
 +);
-+
++const camerasSeeingTags = computed(() =>
++  cameraNames.value.filter((c) => {
++    const p = status.value?.preview[c];
++    return p && p.ageMs < 2000 && Object.keys(p.margins).length > 0;
++  })
++);
 +// ---- results
 +const loadResults = async (run: string) => {
 +  resultsRun.value = run;
@@ -2268,86 +3692,48 @@ index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525
 +
 +    <!-- Step 1: camera settings -->
 +    <v-card v-if="status" class="mb-3 rounded-12" color="surface">
-+      <v-card-title>1. Camera settings (optional, about a minute)</v-card-title>
++      <v-card-title>1. Camera settings (optional, about a minute per camera)</v-card-title>
 +      <v-card-text>
 +        <p class="mb-2">
-+          Park the robot where every camera sees tags, some close and some far, under the lights you'll play under. Keep
-+          people out of view and don't touch the robot. Each camera steps through exposure (as short as still finds
-+          every tag: less motion blur), then gain, brightness, contrast, gamma and sharpness, keeping a value only if it
-+          clearly beats the current one.
++          Under the lights you'll play under, turn the robot so a camera faces tags, some close and some far, and press
++          its <b>Tune</b>. It steps through exposure (the shortest that still finds every tag: less motion blur), then
++          gain, brightness, contrast, gamma and sharpness, keeping a value only if it clearly beats the current one.
++          Keep people out of view and don't touch the robot while it runs. Then turn the robot for the next camera; each
++          camera's results stay until you tune it again.
 +        </p>
-+        <v-btn
-+          v-if="!tuning?.running"
-+          color="primary"
-+          :disabled="busy || recording || status.state === 'SOLVING'"
-+          prepend-icon="mdi-tune"
-+          @click="act({ action: 'tune' })"
-+          >Tune camera settings</v-btn
-+        >
-+        <div v-else>
-+          <div class="mb-1">{{ tuning.phase }}</div>
-+          <v-progress-linear
-+            :model-value="tuning.stepsTotal ? (100 * tuning.stepsDone) / tuning.stepsTotal : 0"
-+            color="primary"
-+            height="8"
-+            class="mb-2"
-+          />
-+          <v-btn size="small" variant="tonal" @click="act({ action: 'cancelTune' })">Stop</v-btn>
++        <p class="mb-3 text-caption">
++          Set any setting by hand with its slider (it saves to the pipeline in use, like the Camera page) and tick its
++          <v-icon size="x-small">mdi-lock</v-icon> to keep it while tuning the rest.
++        </p>
++        <div class="d-flex align-center flex-wrap mb-3" style="gap: 8px">
++          <v-btn
++            size="small"
++            variant="tonal"
++            prepend-icon="mdi-tune-variant"
++            :disabled="
++              busy || recording || status.state === 'SOLVING' || tuning?.running || camerasSeeingTags.length < 2
++            "
++            @click="act({ action: 'tune' })"
++            >Tune every camera that sees tags ({{ camerasSeeingTags.length }})</v-btn
++          >
++          <span v-if="tuning?.result && !tuning.running" class="text-caption">Last tuning: {{ tuning.result }}</span>
 +        </div>
-+        <v-alert v-if="tuning?.result && !tuning.running" class="mt-3" density="compact" variant="tonal">
-+          {{ tuning.result }}
-+        </v-alert>
-+        <template v-for="(c, name) in tuning?.cameras ?? {}" :key="name">
-+          <div class="mt-4 text-subtitle-1">
-+            {{ name }} <span class="text-caption">(pipeline {{ c.pipelineIndex }})</span>
-+          </div>
-+          <div v-if="c.problem" class="text-error">{{ c.problem }}</div>
-+          <template v-else>
-+            <div class="text-caption mb-1">
-+              Tags at the start: {{ c.baselineTags.join(", ") }} · margin {{ fmt(c.baseline?.margin) }} · jitter
-+              {{ fmt(c.baseline?.jitterPx, 2) }} px
-+            </div>
-+            <v-table density="compact">
-+              <thead>
-+                <tr>
-+                  <th>Setting</th>
-+                  <th>Now</th>
-+                  <th>Recommended</th>
-+                  <th>Tried (found % / margin / brightness)</th>
-+                </tr>
-+              </thead>
-+              <tbody>
-+                <tr v-for="(r, control) in c.ranges" :key="control">
-+                  <td>{{ controlLabel[control] ?? control }}</td>
-+                  <td>{{ fmtSetting(String(control), c.pipeline[control]) }}</td>
-+                  <td>
-+                    <b
-+                      v-if="c.recommended[control] !== undefined && c.recommended[control] !== c.startValues[control]"
-+                      >{{ fmtSetting(String(control), c.recommended[control]) }}</b
-+                    >
-+                    <span v-else-if="c.recommended[control] !== undefined">keep</span>
-+                    <span v-if="c.notes[control]" class="text-caption"> ({{ c.notes[control] }})</span>
-+                  </td>
-+                  <td class="text-caption">
-+                    <span v-for="s in c.results.filter((x) => x.control === control)" :key="s.value" class="mr-2">
-+                      {{ s.value }}: {{ Math.round(100 * s.found) }}% / {{ fmt(s.margin, 0) }} /
-+                      {{ fmt(s.brightness, 0) }}
-+                    </span>
-+                  </td>
-+                </tr>
-+              </tbody>
-+            </v-table>
-+          </template>
-+        </template>
-+        <v-btn
-+          v-if="anyRecommendation && !tuning?.running"
-+          class="mt-3"
-+          color="primary"
-+          :disabled="busy"
-+          prepend-icon="mdi-content-save"
-+          @click="act({ action: 'applyTuning' }, 'Settings saved to each camera\'s pipeline')"
-+          >Apply the recommended settings</v-btn
-+        >
++        <v-row>
++          <v-col v-for="c in cameraNames" :key="c" cols="12" lg="6">
++            <CameraTuneCard
++              :name="c"
++              :controls="status.controls[c]"
++              :preview="status.preview[c]"
++              :tune="tuning?.cameras[c]"
++              :locks="status.locks?.[c]"
++              :tuning-running="!!tuning?.running"
++              :phase="tuning?.phase ?? ''"
++              :progress="tuneProgress"
++              :disabled="busy || recording || status.state === 'SOLVING'"
++              :act="act"
++            />
++          </v-col>
++        </v-row>
 +      </v-card-text>
 +    </v-card>
 +
@@ -2388,7 +3774,12 @@ index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525
 +          </v-alert>
 +          <v-row>
 +            <v-col cols="12" md="8">
++              <v-btn-toggle v-model="mapMode" density="compact" mandatory class="mb-2">
++                <v-btn value="2d" size="small">Map</v-btn>
++                <v-btn value="3d" size="small">3D</v-btn>
++              </v-btn-toggle>
 +              <FieldCalMap
++                v-if="mapMode === '2d'"
 +                :layout="layout"
 +                :tag-spots="status.tagSpots"
 +                :in-view="inView"
@@ -2397,6 +3788,16 @@ index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525
 +                :suggestion="suggestion"
 +                focus-seen
 +              />
++              <Suspense v-else>
++                <FieldCal3D
++                  :layout="layout"
++                  :tag-spots="status.tagSpots"
++                  :in-view="inView"
++                  :cameras="liveCameras"
++                  :spots="spotPoints"
++                />
++                <template #fallback>Loading the 3D field…</template>
++              </Suspense>
 +              <div class="text-caption mt-1">
 +                Tags: <span class="text-success">green</span> seen from 2+ spots,
 +                <span class="text-warning">orange</span> from 1, <span class="text-info">blue</span> in view now, grey
@@ -2559,7 +3960,15 @@ index 0000000000000000000000000000000000000000..39cc857b6d5a3352e971aacc25338525
 +          <div class="text-h6 mt-4">Tags</div>
 +          <v-row>
 +            <v-col cols="12" md="6">
-+              <FieldCalMap :layout="layout" :offsets="offsets" focus-seen />
++              <v-btn-toggle v-model="mapMode" density="compact" mandatory class="mb-2">
++                <v-btn value="2d" size="small">Map</v-btn>
++                <v-btn value="3d" size="small">3D</v-btn>
++              </v-btn-toggle>
++              <FieldCalMap v-if="mapMode === '2d'" :layout="layout" :offsets="offsets" focus-seen />
++              <Suspense v-else>
++                <FieldCal3D :layout="layout" :offsets="offsets" />
++                <template #fallback>Loading the 3D field…</template>
++              </Suspense>
 +              <div class="text-caption">
 +                Arrows: each tag's offset from the layout, drawn 10× larger. Red: moved.
 +                <span v-if="results.alignment.tagsIgnored?.length"
@@ -2766,6 +4175,484 @@ index 19499237931978254c9ae22df1d21a7f12b282b3..52b4fc79c0bb18055d0c7340507a8eee
      public PVCameraInfo matchedCameraInfo;
      public boolean mismatch;
  
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/UsbBandwidth.java b/photon-core/src/main/java/org/photonvision/common/hardware/UsbBandwidth.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..31d8b405d9b2cab109d9b209a35a0fbbb14177f3
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/UsbBandwidth.java
+@@ -0,0 +1,393 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.hardware;
++
++import io.avaje.jsonb.Json;
++import java.io.File;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.attribute.PosixFilePermission;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.TreeSet;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++import org.photonvision.vision.processes.VisionModule;
++import org.photonvision.vision.processes.VisionSourceManager;
++
++/**
++ * SpectrumJetson (photonvision-32): the USB bandwidth each camera reserves and really uses, and
++ * changing what a camera may reserve, for the Camera Matching page.
++ *
++ * <p>A USB camera reserves isochronous bandwidth for its alternate setting's packet size, whatever
++ * it actually sends. Every USB 2.0 port on the Jetson (the USB-A hub, USB-C, M.2) shares one
++ * budget: 6720 bytes per 125 us microframe fit, 7400 didn't (measured 2026-09-24). Our camera
++ * driver (kernel/uvcvideo-payload-cap.patch) takes a cap per camera model or per USB port
++ * ("payload_cap", writable at run time) and counts each stream's bytes and largest frames (its
++ * debugfs "stats"). PhotonVision runs as root, so it can read and write both.
++ */
++public final class UsbBandwidth {
++    /** Bytes per microframe the Jetson's USB 2.0 side fit (7400 was refused). */
++    public static final int BUDGET_BYTES = 6720;
++
++    public static final int MICROFRAMES_PER_S = 8000;
++
++    private static final Logger logger = new Logger(UsbBandwidth.class, LogGroup.Camera);
++    private static final Path DEVICES = Path.of("/sys/bus/usb/devices");
++    private static final Path PARAM = Path.of("/sys/module/uvcvideo/parameters/payload_cap");
++    private static final Path CONF = Path.of("/etc/modprobe.d/90-spectrum-uvcvideo.conf");
++    private static final Path STATS = Path.of("/sys/kernel/debug/usb/uvcvideo");
++    private static final Pattern MODEL_CAP = Pattern.compile("^([0-9a-fA-F]{4}):([0-9a-fA-F]{4}):(\\d+)$");
++    private static final Pattern PORT_CAP = Pattern.compile("^(\\d+-[\\d.]+):(\\d+)$");
++    private static final Pattern STAT_LINE =
++            Pattern.compile("(?m)^(frames|bytes):\\s*(\\d+)|^frame bytes: max (\\d+), recent max (\\d+)");
++
++    /**
++     * One camera. Bytes are per 125 us microframe unless named otherwise. {@code wantBytes}: what it
++     * reserves when it streams, under its cap. {@code capFrom}: "port", "model" or null (uncapped).
++     */
++    @Json
++    public record Camera(
++            String port,
++            String id,
++            String product,
++            String camera,
++            String uniqueName,
++            List<Integer> altBytes,
++            int reservedBytes,
++            boolean streaming,
++            Integer capBytes,
++            String capFrom,
++            int wantBytes,
++            Double fps,
++            Double usedBytesPerSec,
++            Integer recentMaxFrameBytes,
++            String problem) {}
++
++    /**
++     * Every camera on the USB 2.0 side. {@code driver}: "capped" (our driver, allocations can be
++     * changed), "capped-readonly" (an older build of it: reinstall with 11-uvcvideo-payload-cap.sh
++     * to change allocations here) or "stock".
++     */
++    @Json
++    public record Survey(
++            int budgetBytes,
++            int microframesPerSecond,
++            int reservedBytes,
++            int wantBytes,
++            Double usedBytesPerSec,
++            String driver,
++            String payloadCap,
++            List<Camera> cameras) {}
++
++    private record Sample(long tNs, long frames, long bytes) {}
++
++    private record Rates(double fps, double bytesPerSec) {}
++
++    private static final Map<String, Sample> samples = new HashMap<>();
++    private static final Map<String, Rates> rates = new HashMap<>();
++
++    private UsbBandwidth() {}
++
++    /** Bytes per microframe of a wMaxPacketSize: the size times the transactions per microframe. */
++    static int packetBytes(int w) {
++        return (w & 0x7ff) * (1 + ((w >> 11) & 3));
++    }
++
++    /** The alternate setting the driver picks under a cap: the smallest one at least that big. */
++    public static int altFor(List<Integer> alts, Integer cap) {
++        int largest = alts.isEmpty() ? 0 : alts.get(alts.size() - 1);
++        if (cap == null || cap <= 0) return largest;
++        for (int a : alts) if (a >= cap) return a;
++        return largest;
++    }
++
++    /** {interface: {alt: bytes of its isochronous IN endpoint}}, from the raw descriptors. */
++    private static Map<Integer, Map<Integer, Integer>> altSettings(Path dev) {
++        Map<Integer, Map<Integer, Integer>> out = new HashMap<>();
++        byte[] d;
++        try {
++            d = Files.readAllBytes(dev.resolve("descriptors"));
++        } catch (IOException e) {
++            return out;
++        }
++        int i = 0;
++        Integer intf = null, alt = null;
++        while (i + 2 <= d.length) {
++            int n = d[i] & 0xff, t = d[i + 1] & 0xff;
++            if (n < 2) break;
++            if (t == 4 && n >= 9 && i + 3 < d.length) { // interface
++                intf = d[i + 2] & 0xff;
++                alt = d[i + 3] & 0xff;
++                out.computeIfAbsent(intf, k -> new HashMap<>()).putIfAbsent(alt, 0);
++            } else if (t == 5 && n >= 7 && intf != null && i + 5 < d.length) { // endpoint
++                int attrs = d[i + 3] & 0xff;
++                if ((attrs & 3) == 1 && (d[i + 2] & 0x80) != 0) { // isochronous IN
++                    int w = (d[i + 4] & 0xff) | ((d[i + 5] & 0xff) << 8);
++                    out.get(intf).merge(alt, packetBytes(w), Math::max);
++                }
++            }
++            i += n;
++        }
++        return out;
++    }
++
++    private static String read(Path p) {
++        try {
++            return Files.readString(p).trim();
++        } catch (IOException e) {
++            return "";
++        }
++    }
++
++    private static int speedMbps(Path dev) {
++        try {
++            return (int) Double.parseDouble(read(dev.resolve("speed")));
++        } catch (NumberFormatException e) {
++            return 0;
++        }
++    }
++
++    private static String param() {
++        return read(PARAM).replace("(null)", "");
++    }
++
++    private static String driver() {
++        if (!Files.exists(PARAM)) return "stock";
++        try {
++            return Files.getPosixFilePermissions(PARAM).contains(PosixFilePermission.OWNER_WRITE)
++                    ? "capped"
++                    : "capped-readonly";
++        } catch (IOException e) {
++            return "capped-readonly";
++        }
++    }
++
++    /** Port -> the camera PhotonVision has on it. */
++    private static Map<String, VisionModule> modulesByPort() {
++        Map<String, VisionModule> out = new HashMap<>();
++        for (var m : VisionSourceManager.getInstance().vmm.getModules()) {
++            var usb = m.usbFrameProvider();
++            String port = usb == null ? null : usb.getUsbPort();
++            if (port != null) out.put(port, m);
++        }
++        return out;
++    }
++
++    /** The driver's stats for one stream: frames, bytes, recent max frame; null if unreadable. */
++    private static long[] stats(String dir) {
++        String s = read(STATS.resolve(dir).resolve("stats"));
++        if (s.isEmpty()) return null;
++        long frames = -1, bytes = -1, recentMax = -1;
++        Matcher m = STAT_LINE.matcher(s);
++        while (m.find()) {
++            if ("frames".equals(m.group(1))) frames = Long.parseLong(m.group(2));
++            else if ("bytes".equals(m.group(1))) bytes = Long.parseLong(m.group(2));
++            else if (m.group(4) != null) recentMax = Long.parseLong(m.group(4));
++        }
++        return frames < 0 || bytes < 0 ? null : new long[] {frames, bytes, recentMax};
++    }
++
++    /** fps and bytes/s since the last look (at least 0.5 s ago), or the last answer. */
++    private static Rates rates(String dir, long frames, long bytes) {
++        long now = System.nanoTime();
++        Sample prev = samples.get(dir);
++        if (prev != null && now - prev.tNs() < 500_000_000L) return rates.get(dir);
++        samples.put(dir, new Sample(now, frames, bytes));
++        if (prev == null || frames < prev.frames() || bytes < prev.bytes() || now - prev.tNs() > 30_000_000_000L) {
++            rates.remove(dir); // first look, or the stream restarted
++            return null;
++        }
++        double dt = (now - prev.tNs()) / 1e9;
++        var r = new Rates((frames - prev.frames()) / dt, (bytes - prev.bytes()) / dt);
++        rates.put(dir, r);
++        return r;
++    }
++
++    /** Every USB video camera: what it reserves, wants, and sends. */
++    public static synchronized Survey survey() {
++        Map<String, Integer> modelCaps = new HashMap<>(), portCaps = new HashMap<>();
++        String cap = param();
++        parseCaps(cap, modelCaps, portCaps);
++        var modules = modulesByPort();
++        List<Camera> cams = new ArrayList<>();
++        int reservedTotal = 0, wantTotal = 0;
++        double usedTotal = 0;
++        boolean anyUsed = false;
++        File[] devs = DEVICES.toFile().listFiles();
++        if (devs == null) devs = new File[0];
++        java.util.Arrays.sort(devs);
++        for (var f : devs) {
++            Path dev = f.toPath();
++            String port = f.getName();
++            if (port.contains(":") || !Files.exists(dev.resolve("idVendor"))) continue;
++            var alts = altSettings(dev);
++            Integer videoIntf = null;
++            int reserved = 0;
++            for (var intfDir : f.listFiles((x, name) -> name.startsWith(port + ":"))) {
++                String cls = read(intfDir.toPath().resolve("bInterfaceClass"));
++                String sub = read(intfDir.toPath().resolve("bInterfaceSubClass"));
++                boolean video = cls.equals("0e") && sub.equals("02"), audio = cls.equals("01") && sub.equals("02");
++                if (!video && !audio) continue;
++                int n = Integer.parseInt(read(intfDir.toPath().resolve("bInterfaceNumber")), 16);
++                int cur = Integer.parseInt(read(intfDir.toPath().resolve("bAlternateSetting")));
++                reserved += alts.getOrDefault(n, Map.of()).getOrDefault(cur, 0);
++                if (video && videoIntf == null) videoIntf = n;
++            }
++            if (videoIntf == null) continue;
++            if (speedMbps(dev) < 480) continue; // USB 2.0 high speed only: that's the shared budget
++            var sizes = new TreeSet<Integer>();
++            alts.getOrDefault(videoIntf, Map.of()).forEach((a, b) -> {
++                if (a != 0 && b > 0) sizes.add(b);
++            });
++            List<Integer> altBytes = new ArrayList<>(sizes);
++            String id = read(dev.resolve("idVendor")) + ":" + read(dev.resolve("idProduct"));
++            Integer capBytes = portCaps.containsKey(port) ? portCaps.get(port) : modelCaps.get(id);
++            String capFrom = portCaps.containsKey(port) ? "port" : modelCaps.containsKey(id) ? "model" : null;
++            boolean streaming = reserved > 0;
++            int want = streaming ? reserved : altFor(altBytes, capBytes);
++            Double fps = null, used = null;
++            Integer recentMax = null;
++            if (streaming) {
++                String dir = read(dev.resolve("busnum")) + "-" + read(dev.resolve("devnum")) + "-" + videoIntf;
++                long[] st = stats(dir);
++                if (st != null) {
++                    var r = rates(dir, st[0], st[1]);
++                    if (r != null) {
++                        fps = r.fps();
++                        used = r.bytesPerSec();
++                        usedTotal += used;
++                        anyUsed = true;
++                    }
++                    if (st[2] >= 0) recentMax = (int) st[2];
++                }
++            }
++            var m = modules.get(port);
++            var usb = m == null ? null : m.usbFrameProvider();
++            cams.add(
++                    new Camera(
++                            port,
++                            id,
++                            read(dev.resolve("product")),
++                            m == null ? null : m.getNickname(),
++                            m == null ? null : m.uniqueName(),
++                            altBytes,
++                            reserved,
++                            streaming,
++                            capBytes,
++                            capFrom,
++                            want,
++                            fps,
++                            used,
++                            recentMax,
++                            usb == null ? "" : usb.getProblem()));
++            reservedTotal += reserved;
++            wantTotal += want;
++        }
++        return new Survey(
++                BUDGET_BYTES,
++                MICROFRAMES_PER_S,
++                reservedTotal,
++                wantTotal,
++                anyUsed ? usedTotal : null,
++                driver(),
++                cap,
++                cams);
++    }
++
++    private static void parseCaps(String cap, Map<String, Integer> modelCaps, Map<String, Integer> portCaps) {
++        for (String part : cap.split(",")) {
++            part = part.trim();
++            Matcher m = MODEL_CAP.matcher(part);
++            if (m.matches()) {
++                modelCaps.put(m.group(1).toLowerCase() + ":" + m.group(2).toLowerCase(), Integer.parseInt(m.group(3)));
++                continue;
++            }
++            m = PORT_CAP.matcher(part);
++            if (m.matches()) portCaps.put(m.group(1), Integer.parseInt(m.group(2)));
++        }
++    }
++
++    /**
++     * Sets the most the camera on {@code port} may reserve: one of its alternate settings' sizes, 0
++     * for uncapped, or null for its model's cap. Saved for the next boot, and applied by resetting the
++     * camera at the USB level (a second or two without frames). Refused if it wouldn't fit.
++     */
++    public static synchronized String setAllocation(String port, Integer bytes) throws IOException {
++        if (!driver().equals("capped")) {
++            throw new IllegalStateException(
++                    "The camera driver can't change allocations while running: reinstall it with"
++                            + " scripts/jetson/11-uvcvideo-payload-cap.sh --install");
++        }
++        var s = survey();
++        Camera cam = s.cameras().stream().filter(c -> c.port().equals(port)).findFirst().orElse(null);
++        if (cam == null) throw new IllegalArgumentException("No USB camera on port " + port);
++        if (bytes != null && bytes != 0 && !cam.altBytes().contains(bytes)) {
++            throw new IllegalArgumentException(
++                    bytes + " bytes isn't one of this camera's settings " + cam.altBytes());
++        }
++        Map<String, Integer> modelCaps = new HashMap<>(), portCaps = new HashMap<>();
++        parseCaps(s.payloadCap(), modelCaps, portCaps);
++        int want = altFor(cam.altBytes(), bytes != null ? bytes : modelCaps.get(cam.id()));
++        int total = s.wantBytes() - cam.wantBytes() + want;
++        if (total > BUDGET_BYTES) {
++            throw new IllegalArgumentException(
++                    String.format(
++                            "That needs %d of the %d bytes per microframe every USB 2.0 camera shares:"
++                                    + " lower another camera's allocation first",
++                            total, BUDGET_BYTES));
++        }
++        if (bytes == null) portCaps.remove(port);
++        else portCaps.put(port, bytes);
++        var entries = new LinkedHashMap<String, Integer>();
++        new java.util.TreeMap<>(modelCaps).forEach(entries::put);
++        new java.util.TreeMap<>(portCaps).forEach(entries::put);
++        String cap = String.join(",", entries.entrySet().stream().map(e -> e.getKey() + ":" + e.getValue()).toList());
++        Files.writeString(PARAM, cap);
++        Files.writeString(
++                CONF,
++                "# SpectrumJetson: cap USB bandwidth reservations (scripts/jetson/11-uvcvideo-payload-cap.sh;"
++                        + " per-port entries set on the Camera Matching page)\noptions uvcvideo payload_cap="
++                        + cap
++                        + "\n");
++        String name = cam.camera() != null ? cam.camera() : cam.product() + " on " + port;
++        logger.info(String.format("USB bandwidth: %s may now reserve %d bytes per microframe (payload_cap=%s)", name, want, cap));
++        var m = modulesByPort().get(port);
++        var usb = m == null ? null : m.usbFrameProvider();
++        if (usb != null && cam.streaming() && want != cam.reservedBytes()) {
++            new Thread(() -> usb.applyUsbBandwidth(want), "UsbBandwidth-" + port).start();
++            return String.format("%s: resetting it to apply %d bytes (%.1f MB/s)", name, want, want * 8e-3);
++        }
++        return String.format("%s: %d bytes (%.1f MB/s) from its next start", name, want, want * 8e-3);
++    }
++
++    /** What the camera on {@code port} reserves right now, or -1 if it isn't there. */
++    public static synchronized int reservedNow(String port) {
++        return survey().cameras().stream()
++                .filter(c -> c.port().equals(port))
++                .mapToInt(Camera::reservedBytes)
++                .findFirst()
++                .orElse(-1);
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/UsbTrouble.java b/photon-core/src/main/java/org/photonvision/common/hardware/UsbTrouble.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..04b7e7630938661e0bfdeb10452dc5d141577616
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/common/hardware/UsbTrouble.java
+@@ -0,0 +1,73 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.hardware;
++
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.regex.Pattern;
++
++/**
++ * SpectrumJetson (photonvision-31): USB trouble the kernel reports, by USB port (e.g. "1-2.4"), for
++ * the cameras to explain why they get no frames. Fed every kernel log line by KernelLogLogger.
++ *
++ * <ul>
++ *   <li><b>Not enough bandwidth:</b> the camera asked to reserve more USB 2.0 bandwidth than its root
++ *       port has left, so it can't stream. A reset won't fix it; capping it (payload_cap) or moving
++ *       it to another root port will. scripts/jetson/usb-bandwidth.py says which.
++ *   <li><b>Couldn't be connected:</b> something plugged into a port couldn't be read or addressed (a
++ *       bad cable or adapter, a plug not fully in, not enough power), or the port hit over-current.
++ * </ul>
++ */
++public final class UsbTrouble {
++    private static final Pattern BANDWIDTH = Pattern.compile("usb (\\d+-[\\d.]+): Not enough bandwidth");
++    private static final Pattern CONNECT =
++            Pattern.compile(
++                    "usb (\\d+-[\\d.]+)(?:-port(\\d+))?: (device descriptor read|device not accepting address|"
++                            + "Device not responding to setup address|unable to enumerate USB device|over-current)");
++    private static final Map<String, Long> bandwidthNs = new ConcurrentHashMap<>();
++    private static final Map<String, Long> connectNs = new ConcurrentHashMap<>();
++
++    private UsbTrouble() {}
++
++    /** One kernel log line. */
++    public static void noteKernelLine(String line) {
++        if (line == null || !line.contains("usb ")) return;
++        var m = BANDWIDTH.matcher(line);
++        if (m.find()) {
++            bandwidthNs.put(m.group(1), System.nanoTime());
++            return;
++        }
++        m = CONNECT.matcher(line);
++        if (m.find()) {
++            String port = m.group(2) != null ? m.group(1) + "." + m.group(2) : m.group(1);
++            connectNs.put(port, System.nanoTime());
++        }
++    }
++
++    /** Whether the kernel refused this USB port bandwidth within the last {@code withinNs}. */
++    public static boolean bandwidthFailed(String port, long withinNs) {
++        Long t = port == null ? null : bandwidthNs.get(port);
++        return t != null && System.nanoTime() - t < withinNs;
++    }
++
++    /** Whether something on this USB port failed to connect within the last {@code withinNs}. */
++    public static boolean connectFailed(String port, long withinNs) {
++        Long t = port == null ? null : connectNs.get(port);
++        return t != null && System.nanoTime() - t < withinNs;
++    }
++}
 diff --git a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/DeviceMetrics.java b/photon-core/src/main/java/org/photonvision/common/hardware/metrics/DeviceMetrics.java
 index e8789154c87468cd007468427f1d847cb4f7020a..da019347ffd48f116dc7002790726464d0e272af 100644
 --- a/photon-core/src/main/java/org/photonvision/common/hardware/metrics/DeviceMetrics.java
@@ -3408,6 +5295,19 @@ index 33947b8dfedddbd0769ec7e2dda69083993484d5..a7d340e959b8540adb9faa53da638ed0
      }
  
      @Override
+diff --git a/photon-core/src/main/java/org/photonvision/common/logging/KernelLogLogger.java b/photon-core/src/main/java/org/photonvision/common/logging/KernelLogLogger.java
+index f3e319efb38cc5b7f2dc0fc520c91ada306d1c33..c2823c99f442aaa9a18c4b10d16b97921b2a972a 100644
+--- a/photon-core/src/main/java/org/photonvision/common/logging/KernelLogLogger.java
++++ b/photon-core/src/main/java/org/photonvision/common/logging/KernelLogLogger.java
+@@ -58,6 +58,8 @@ public class KernelLogLogger {
+         for (var msg : listener.getNewlines()) {
+             // We currently set all logs to debug regardless of their actual level
+             logger.log(msg, LogLevel.DEBUG);
++            // SpectrumJetson (photonvision-31): USB bandwidth and connection trouble, by port.
++            org.photonvision.common.hardware.UsbTrouble.noteKernelLine(msg);
+         }
+     }
+ }
 diff --git a/photon-core/src/main/java/org/photonvision/common/util/RobotClockSync.java b/photon-core/src/main/java/org/photonvision/common/util/RobotClockSync.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..199c8df2b8bf8cf131b0c11a5d62eff9093eb4e2
@@ -3559,10 +5459,10 @@ index 0000000000000000000000000000000000000000..199c8df2b8bf8cf131b0c11a5d62eff9
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java b/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168ba0c7a96b
+index 0000000000000000000000000000000000000000..dafd75be28c6bdf93e1bbb0ba5e41bd3f259e0cb
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
-@@ -0,0 +1,540 @@
+@@ -0,0 +1,592 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -3587,6 +5487,7 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Set;
 +import java.util.TreeMap;
 +import java.util.TreeSet;
 +import org.opencv.core.Core;
@@ -3651,6 +5552,8 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +        Map<Integer, double[]> baselineCentres = new HashMap<>();
 +        StepResult baseline;
 +        String problem = "";
++        String outcome = "";
++        Set<String> locked = Set.of(); // controls the user fixed: not swept, left as they are
 +        final List<Sample> samples = new ArrayList<>();
 +        long lastBrightnessNs = 0;
 +
@@ -3663,29 +5566,10 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +                        ps.cameraExposureRaw, ps.cameraAutoExposure ? 1 : 0, ps.cameraBrightness, ps.cameraGain,
 +                        ps.cameraContrast, ps.cameraGamma, ps.cameraSharpness, ps.cameraBacklightCompensation
 +                    };
-+            var s = m.getCameraSettables();
-+            ranges.put("exposure", new double[] {s.getMinExposureRaw(), s.getMaxExposureRaw(), ps.cameraExposureRaw});
-+            current.put("exposure", ps.cameraExposureRaw);
-+            if (m.hasGainControl()) {
-+                ranges.put("gain", new double[] {0, 100, 50});
-+                current.put("gain", (double) Math.max(0, ps.cameraGain));
-+            }
-+            ranges.put("brightness", new double[] {0, 100, 50});
-+            current.put("brightness", (double) ps.cameraBrightness);
-+            for (var c : s.getExtraControls()) {
-+                String key = switch ((String) c.get("key")) {
-+                    case "cameraContrast" -> "contrast";
-+                    case "cameraGamma" -> "gamma";
-+                    case "cameraSharpness" -> "sharpness";
-+                    case "cameraBacklightCompensation" -> "backlight";
-+                    default -> null;
-+                };
-+                if (key == null) continue;
-+                double min = ((Number) c.get("min")).doubleValue(), max = ((Number) c.get("max")).doubleValue();
-+                double def = ((Number) c.get("default")).doubleValue(), val = ((Number) c.get("value")).doubleValue();
-+                if (max <= min) continue;
-+                ranges.put(key, new double[] {min, max, def});
-+                current.put(key, val);
++            for (var e : controls(m).entrySet()) {
++                double[] c = e.getValue(); // min, max, default, value
++                ranges.put(e.getKey(), new double[] {c[0], c[1], c[2]});
++                current.put(e.getKey(), c[3]);
 +            }
 +            startValues.putAll(current);
 +        }
@@ -3767,11 +5651,66 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +        }
 +    }
 +
++    /**
++     * The camera's tunable controls: {min, max, default, value}, in the units the pipeline stores
++     * (exposure raw, 0-100 brightness and gain, the camera's own units for the rest). A pipeline
++     * value of -1 ("camera default") shows the camera's current value.
++     */
++    public static Map<String, double[]> controls(VisionModule m) {
++        Map<String, double[]> out = new LinkedHashMap<>();
++        CVPipelineSettings ps = m.getCurrentPipelineSettings();
++        var s = m.getCameraSettables();
++        out.put("exposure", new double[] {s.getMinExposureRaw(), s.getMaxExposureRaw(), ps.cameraExposureRaw, ps.cameraExposureRaw});
++        if (m.hasGainControl()) out.put("gain", new double[] {0, 100, 50, Math.max(0, ps.cameraGain)});
++        out.put("brightness", new double[] {0, 100, 50, ps.cameraBrightness});
++        for (var c : s.getExtraControls()) {
++            String key = switch ((String) c.get("key")) {
++                case "cameraContrast" -> "contrast";
++                case "cameraGamma" -> "gamma";
++                case "cameraSharpness" -> "sharpness";
++                case "cameraBacklightCompensation" -> "backlight";
++                default -> null;
++            };
++            if (key == null) continue;
++            double min = ((Number) c.get("min")).doubleValue(), max = ((Number) c.get("max")).doubleValue();
++            if (max <= min) continue;
++            out.put(key, new double[] {min, max, ((Number) c.get("default")).doubleValue(), ((Number) c.get("value")).doubleValue()});
++        }
++        return out;
++    }
++
++    /** Sets one control in the camera's pipeline in use, applies it and saves (as the Input tab does). */
++    public static void setControl(VisionModule m, String control, double v) {
++        CVPipelineSettings ps = m.getCurrentPipelineSettings();
++        int iv = (int) Math.round(v);
++        switch (control) {
++            case "exposure" -> {
++                ps.cameraAutoExposure = false;
++                ps.cameraExposureRaw = v;
++            }
++            case "gain" -> ps.cameraGain = iv;
++            case "brightness" -> ps.cameraBrightness = iv;
++            case "contrast" -> ps.cameraContrast = iv;
++            case "gamma" -> ps.cameraGamma = iv;
++            case "sharpness" -> ps.cameraSharpness = iv;
++            case "backlight" -> ps.cameraBacklightCompensation = iv;
++            default -> throw new IllegalArgumentException("Unknown control " + control);
++        }
++        m.reapplyPipelineCameraSettings();
++        m.saveAndBroadcastAll();
++    }
++
++    /** Whether this camera is being tuned now (manual changes would fight the sweep). */
++    public boolean tuning(String camera) {
++        return running && active.containsKey(camera);
++    }
++
 +    private static double[] centre(double[] c) {
 +        return new double[] {(c[0] + c[2] + c[4] + c[6]) / 4, (c[1] + c[3] + c[5] + c[7]) / 4};
 +    }
 +
-+    private final Map<String, Cam> cams = new TreeMap<>();
++    private final Map<String, Cam> cams = new TreeMap<>(); // every camera's last tuning, kept for "apply"
++    private final Map<String, Cam> active = new TreeMap<>(); // the cameras being tuned now
 +    private volatile boolean running = false;
 +    private volatile boolean cancel = false;
 +    private volatile boolean sampling = false;
@@ -3788,15 +5727,25 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +        cancel = true;
 +    }
 +
-+    /** Starts the sweep on every camera that has an AprilTag pipeline running. */
-+    public synchronized void start() {
-+        if (running) return;
-+        cams.clear();
++    /**
++     * Starts the sweep on one camera ({@code only}), or on every running camera if null. Each
++     * camera's results are kept until it's tuned again, so cameras can be tuned one at a time, the
++     * robot turned in between so each faces tags.
++     */
++    public synchronized void start(String only, Map<String, ? extends java.util.Collection<String>> locked) {
++        if (running) throw new IllegalStateException("Tuning is already running");
++        active.clear();
 +        for (var m : VisionSourceManager.getInstance().vmm.getModules()) {
 +            if (!m.getEnabled()) continue;
-+            cams.put(m.getNickname(), new Cam(m));
++            if (only != null && !only.isEmpty() && !only.equals(m.getNickname())) continue;
++            var c = new Cam(m);
++            if (locked != null && locked.get(c.name) != null) c.locked = Set.copyOf(locked.get(c.name));
++            active.put(c.name, c);
++            cams.put(c.name, c);
 +        }
-+        if (cams.isEmpty()) throw new IllegalStateException("No cameras running");
++        if (active.isEmpty()) {
++            throw new IllegalStateException(only == null || only.isEmpty() ? "No cameras running" : "No running camera named " + only);
++        }
 +        running = true;
 +        cancel = false;
 +        moved = false;
@@ -3809,7 +5758,7 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +    /** Every pipeline result of every camera, while the sweep runs. */
 +    public void onResult(String camera, CVPipelineResult r) {
 +        if (!sampling) return;
-+        var c = cams.get(camera);
++        var c = active.get(camera);
 +        if (c == null) return;
 +        var s = new Sample();
 +        for (var t : r.targets) {
@@ -3845,7 +5794,7 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +    }
 +
 +    private void collect(long ms) throws InterruptedException {
-+        for (var c : cams.values()) {
++        for (var c : active.values()) {
 +            synchronized (c) {
 +                c.samples.clear();
 +            }
@@ -3859,9 +5808,9 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +        try {
 +            List<String> order = List.of("exposure", "gain", "brightness", "contrast", "gamma", "sharpness", "backlight");
 +            // Baseline: the camera as it is.
-+            phase = "Measuring the cameras as they are";
++            phase = "Measuring the camera" + (active.size() > 1 ? "s" : "") + " as set now";
 +            collect(BASELINE_MS);
-+            for (var c : cams.values()) {
++            for (var c : active.values()) {
 +                Map<Integer, Integer> count = new HashMap<>();
 +                Map<Integer, double[]> sum = new HashMap<>();
 +                synchronized (c) {
@@ -3884,17 +5833,16 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +                if (c.baselineTags.isEmpty()) c.problem = "no tags in view: turn the robot so this camera sees tags";
 +                c.baseline = c.measure("baseline", 0);
 +            }
-+            cams.values().removeIf(c -> !c.problem.isEmpty() && keepProblem(c));
 +            stepsTotal = 0;
-+            for (var c : cams.values()) stepsTotal = Math.max(stepsTotal, plannedSteps(c, order));
++            for (var c : active.values()) stepsTotal = Math.max(stepsTotal, plannedSteps(c, order));
 +            stepsDone = 0;
 +
 +            for (String control : order) {
 +                if (cancel || moved) break;
 +                // Every camera's values for this control; cameras without it just hold.
 +                Map<Cam, List<Double>> values = new LinkedHashMap<>();
-+                for (var c : cams.values()) {
-+                    if (!c.problem.isEmpty() || !c.ranges.containsKey(control)) continue;
++                for (var c : active.values()) {
++                    if (!c.problem.isEmpty() || !c.ranges.containsKey(control) || c.locked.contains(control)) continue;
 +                    values.put(c, candidates(c, control));
 +                }
 +                int n = values.values().stream().mapToInt(List::size).max().orElse(0);
@@ -3921,13 +5869,14 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +                }
 +                if (!values.isEmpty()) Thread.sleep(SETTLE_MS);
 +            }
-+            boolean anyTags = cams.values().stream().anyMatch(c -> c.problem.isEmpty());
++            boolean anyTags = active.values().stream().anyMatch(c -> c.problem.isEmpty());
 +            result = moved
 +                    ? "The robot moved: hold it still and tune again."
 +                    : cancel
 +                            ? "Stopped."
 +                            : !anyTags
-+                                    ? "No camera sees tags here: turn or move the robot so every camera sees tags, near and far, then tune again."
++                                    ? (active.size() > 1 ? "No camera sees" : "This camera doesn't see")
++                                            + " tags here: turn the robot so it faces tags, near and far, then tune again."
 +                                    : "Done.";
 +        } catch (InterruptedException e) {
 +            result = "Stopped.";
@@ -3936,29 +5885,28 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +            result = "Tuning failed: " + e.getMessage();
 +        } finally {
 +            sampling = false;
++            for (var c : active.values()) {
++                c.outcome = moved ? "The robot moved: hold it still and tune again." : cancel ? "Stopped." : c.problem.isEmpty() ? "Done." : c.problem;
++            }
 +            // Back to the pipelines' own settings; "apply" is separate.
-+            for (var c : cams.values()) {
++            for (var c : active.values()) {
 +                try {
 +                    c.module.reapplyPipelineCameraSettings();
 +                } catch (Exception e) {
 +                    logger.warn("Field calibration: couldn't restore " + c.name + "'s settings: " + e.getMessage());
 +                }
 +            }
-+            if (moved || cancel) for (var c : cams.values()) c.recommended.clear();
++            if (moved || cancel) for (var c : active.values()) c.recommended.clear();
 +            phase = "";
 +            running = false;
 +            logger.info("Field calibration: settings tuning " + result);
 +        }
 +    }
 +
-+    private static boolean keepProblem(Cam c) {
-+        return false; // keep cameras with problems in the report, just don't sweep them
-+    }
-+
 +    private int plannedSteps(Cam c, List<String> order) {
 +        int n = 0;
 +        if (!c.problem.isEmpty()) return 0;
-+        for (String k : order) if (c.ranges.containsKey(k)) n += candidates(c, k).size();
++        for (String k : order) if (c.ranges.containsKey(k) && !c.locked.contains(k)) n += candidates(c, k).size();
 +        return n;
 +    }
 +
@@ -4038,11 +5986,12 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +        return cur;
 +    }
 +
-+    /** Writes the recommendations into each camera's pipeline in use, and saves. */
-+    public synchronized List<String> apply() {
++    /** Writes one camera's recommendations (or every camera's, if null) into its pipeline in use, and saves. */
++    public synchronized List<String> apply(String only) {
 +        if (running) throw new IllegalStateException("Tuning is still running");
 +        List<String> changed = new ArrayList<>();
 +        for (var c : cams.values()) {
++            if (only != null && !only.isEmpty() && !only.equals(c.name)) continue;
 +            if (c.recommended.isEmpty()) continue;
 +            CVPipelineSettings ps = c.module.getCurrentPipelineSettings();
 +            for (var e : c.recommended.entrySet()) {
@@ -4080,6 +6029,9 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +        for (var c : cams.values()) {
 +            Map<String, Object> e = new LinkedHashMap<>();
 +            e.put("problem", c.problem);
++            e.put("outcome", c.outcome);
++            e.put("tuning", running && active.containsKey(c.name));
++            e.put("locked", c.locked);
 +            e.put("baselineTags", c.baselineTags);
 +            e.put("baseline", c.baseline);
 +            Map<String, Object> orig = new LinkedHashMap<>();
@@ -4105,10 +6057,10 @@ index 0000000000000000000000000000000000000000..5a2c366b906b3c4ee3c586eb8359168b
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java b/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..2c210239f7c90793fa6d1bb7750bfd9b02c7bc4f
+index 0000000000000000000000000000000000000000..936b89af11dfc30e676150569ceae155456ba481
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/fieldcal/FieldCalibration.java
-@@ -0,0 +1,572 @@
+@@ -0,0 +1,670 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -4200,10 +6152,18 @@ index 0000000000000000000000000000000000000000..2c210239f7c90793fa6d1bb7750bfd9b
 +                                            String.class,
 +                                            Types.newParameterizedType(
 +                                                    Map.class, String.class, Double.class)))));
++    private static final JsonType<Map<String, List<String>>> locksJson =
++            jsonb.type(
++                    Types.newParameterizedType(
++                            Map.class,
++                            String.class,
++                            Types.newParameterizedType(List.class, String.class)));
 +
 +    public static final Path ROOT = Path.of("/opt/photonvision/fieldcal");
 +    public static final Path RUNS = ROOT.resolve("runs");
 +    public static final Path BACKUPS = ROOT.resolve("layout-backups");
++    /** The settings each camera's tuning leaves alone (the page's lock boxes), kept across restarts. */
++    public static final Path LOCKS = ROOT.resolve("locks.json");
 +    public static final Path TOOL = Path.of("/opt/spectrum/fieldcal");
 +    public static final String LABEL = "fieldcal";
 +    /** Results files the web UI may download. */
@@ -4494,22 +6454,89 @@ index 0000000000000000000000000000000000000000..2c210239f7c90793fa6d1bb7750bfd9b
 +
 +    // ---- camera settings tuning
 +
-+    public synchronized void tune() {
++    /**
++     * Tunes one camera's settings, or every camera's if {@code camera} is null. {@code locked}:
++     * per camera, the controls to leave as they are.
++     */
++    public synchronized void tune(String camera, Map<String, List<String>> locked) {
 +        if (state == State.RECORDING) throw new IllegalStateException("Stop recording first");
-+        tuner.start();
++        if (state == State.SOLVING) throw new IllegalStateException("A solve is running");
++        tuner.start(camera, locked != null ? locked : locks());
++    }
++
++    /** Locks or unlocks one setting of one camera for tuning. */
++    public synchronized void setLock(String camera, String control, boolean on) throws IOException {
++        var all = locks();
++        var set = new TreeSet<>(all.getOrDefault(camera, List.of()));
++        if (on) set.add(control);
++        else set.remove(control);
++        all.put(camera, new ArrayList<>(set));
++        Files.createDirectories(ROOT);
++        Files.writeString(LOCKS, locksJson.toJson(all), StandardCharsets.UTF_8);
++    }
++
++    /** {camera: [locked controls]}. */
++    public synchronized Map<String, List<String>> locks() {
++        try {
++            if (Files.exists(LOCKS)) {
++                return new TreeMap<>(locksJson.fromJson(LOCKS));
++            }
++        } catch (RuntimeException e) {
++            logger.warn("Field calibration: bad " + LOCKS + ": " + e.getMessage());
++        }
++        return new TreeMap<>();
++    }
++
++    /** A manual change from the page: one control of one camera's pipeline in use. */
++    public void setControl(String camera, String control, double value) {
++        var m = module(camera);
++        if (tuner.tuning(camera)) throw new IllegalStateException(camera + " is being tuned: wait, or stop the tuning");
++        CameraSettingsTuner.setControl(m, control, value);
++    }
++
++    private static org.photonvision.vision.processes.VisionModule module(String camera) {
++        for (var m : org.photonvision.vision.processes.VisionSourceManager.getInstance().vmm.getModules()) {
++            if (m.getNickname().equals(camera)) return m;
++        }
++        throw new IllegalArgumentException("No camera named " + camera);
 +    }
 +
 +    public void cancelTune() {
 +        tuner.cancel();
 +    }
 +
-+    public List<String> applyTuning() {
-+        return tuner.apply();
++    public List<String> applyTuning(String camera) {
++        return tuner.apply(camera);
++    }
++
++    // ---- preview: what each camera sees right now, while the page is open
++
++    private static final long PREVIEW_NS = 250_000_000L;
++    private volatile long lastPollNs = 0;
++    private final Map<String, Map<String, Object>> preview = new java.util.concurrent.ConcurrentHashMap<>();
++    private final Map<String, Long> previewNs = new java.util.concurrent.ConcurrentHashMap<>();
++
++    private void previewSample(String camera, CVPipelineResult result, long now) {
++        Long last = previewNs.get(camera);
++        if (last != null && now - last < PREVIEW_NS) return;
++        previewNs.put(camera, now);
++        Map<String, Double> margins = new TreeMap<>();
++        for (var t : result.targets) {
++            if (t.getFiducialId() >= 0) margins.put(Integer.toString(t.getFiducialId()), (double) Math.round(t.getDecisionMargin()));
++        }
++        Map<String, Object> m = new LinkedHashMap<>();
++        m.put("margins", margins);
++        m.put("ageMs", 0);
++        m.put("ns", now);
++        preview.put(camera, m);
 +    }
 +
 +    /** Called with every pipeline result of every camera; cheap unless recording or tuning. */
 +    public void onResult(String camera, CVPipelineResult result) {
 +        if (tuner.running()) tuner.onResult(camera, result);
++        if (lastPollNs != 0 && System.nanoTime() - lastPollNs < 5_000_000_000L) {
++            previewSample(camera, result, System.nanoTime());
++        }
 +        if (state != State.RECORDING) return;
 +        long now = System.nanoTime();
 +        synchronized (this) {
@@ -4602,6 +6629,14 @@ index 0000000000000000000000000000000000000000..2c210239f7c90793fa6d1bb7750bfd9b
 +
 +    public synchronized Map<String, Object> status() {
 +        long now = System.nanoTime();
++        lastPollNs = now; // the page is open: keep the preview going
++        Map<String, Object> pv = new TreeMap<>();
++        preview.forEach((cam, m) -> {
++            var copy = new LinkedHashMap<>(m);
++            copy.put("ageMs", (now - (long) m.get("ns")) / 1_000_000);
++            copy.remove("ns");
++            pv.put(cam, copy);
++        });
 +        Map<String, Object> m = new LinkedHashMap<>();
 +        m.put("state", state.name());
 +        m.put("session", session);
@@ -4644,6 +6679,21 @@ index 0000000000000000000000000000000000000000..2c210239f7c90793fa6d1bb7750bfd9b
 +        m.put("cameraSpots", cameraSpots);
 +        m.put("solveLog", new ArrayList<>(solveLog));
 +        m.put("tuning", tuner.status());
++        Map<String, Object> controls = new TreeMap<>();
++        for (var mod : org.photonvision.vision.processes.VisionSourceManager.getInstance().vmm.getModules()) {
++            try {
++                Map<String, Object> c = new LinkedHashMap<>();
++                CameraSettingsTuner.controls(mod).forEach((k, v) -> c.put(k, Map.of("min", v[0], "max", v[1], "default", v[2], "value", v[3])));
++                c.put("pipelineIndex", mod.getCurrentPipelineIndex());
++                c.put("autoExposure", mod.getCurrentPipelineSettings().cameraAutoExposure);
++                controls.put(mod.getNickname(), c);
++            } catch (Exception e) {
++                // camera unplugged: its controls come back on the next poll
++            }
++        }
++        m.put("controls", controls);
++        m.put("preview", pv);
++        m.put("locks", locks());
 +        m.put("robotMounts", robotMounts());
 +        m.put("robotConnected", NetworkTablesManager.getInstance().getNTInst().isConnected());
 +        m.put("cameras", CameraSettingsPublisher.snapshots());
@@ -6245,6 +8295,39 @@ index d4439513c1cbfae6f8cdf5d4cab20be2a49708d6..61b9b8fb034461542692df5dd3e7c74c
      public void accept(CVMat image) {
          long now = NetworkTablesJNI.now();
  
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/CpuImageProcessor.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/CpuImageProcessor.java
+index 173aae518a2a061bd6d291dd30197322a79d8f83..f870b6227b6f972234b26a22631e4f31848b127e 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/CpuImageProcessor.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/CpuImageProcessor.java
+@@ -29,6 +29,9 @@ import org.photonvision.vision.pipe.impl.HSVPipe;
+ import org.photonvision.vision.pipe.impl.RotateImagePipe;
+ 
+ public abstract class CpuImageProcessor extends FrameProvider {
++    private long emptyLoggedNs = 0; // SpectrumJetson (photonvision-33)
++    private int emptySince = 0;
++
+     protected static class CapturedFrame {
+         CVMat colorImage;
+         FrameStaticProperties staticProps;
+@@ -81,7 +84,17 @@ public abstract class CpuImageProcessor extends FrameProvider {
+ 
+             ++sequenceID;
+         } else {
+-            System.out.println("Input was empty!");
++            // SpectrumJetson (photonvision-33): at most once per 5 s (it printed for every missing
++            // frame: ~150 lines a second with 4 cameras gone).
++            long now = System.nanoTime();
++            if (emptyLoggedNs == 0 || now - emptyLoggedNs >= 5_000_000_000L) {
++                System.out.println(
++                        "Input was empty!" + (emptySince > 0 ? " (and " + emptySince + " more since the last message)" : ""));
++                emptyLoggedNs = now;
++                emptySince = 0;
++            } else {
++                emptySince++;
++            }
+             outputMat = new CVMat();
+         }
+ 
 diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/DirectDecode.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/DirectDecode.java
 new file mode 100644
 index 0000000000000000000000000000000000000000..939ad8076ab609d5c3978513146f2b8dd75953da
@@ -6397,10 +8480,10 @@ index 0000000000000000000000000000000000000000..939ad8076ab609d5c3978513146f2b8d
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/StuckCameraWatchdog.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/StuckCameraWatchdog.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..b66a86adbc7fbb524bf8abe4820dd9881a088811
+index 0000000000000000000000000000000000000000..2ed8271e8005c97a0f68c7e4b64f6ac4c496ef5c
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/StuckCameraWatchdog.java
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,126 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -6451,6 +8534,10 @@ index 0000000000000000000000000000000000000000..b66a86adbc7fbb524bf8abe4820dd988
 +    static final long STUCK_NS = 3_000_000_000L;
 +    static final long AFTER_RECONNECT_NS = 5_000_000_000L;
 +    static final long USB_RESET_EVERY_NS = 30_000_000_000L;
++    // SpectrumJetson (photonvision-31): with the kernel refusing the camera USB bandwidth, a reset
++    // can't help (the camera asks for the same reservation again): just retry now and then, in case
++    // another camera has gone and freed some.
++    static final long BANDWIDTH_RETRY_NS = 60_000_000_000L;
 +
 +    private final LongSupplier clockNs;
 +    private long lastGoodNs;
@@ -6480,6 +8567,16 @@ index 0000000000000000000000000000000000000000..b66a86adbc7fbb524bf8abe4820dd988
 +    /** Someone else reconnected the camera (photonvision-27's mode fix): share the throttle. */
 +    void noteReconnect() {
 +        lastReconnectNs = clockNs.getAsLong();
++    }
++
++    /** No usable frame this time, and the kernel is refusing the camera USB bandwidth. */
++    Action noFrameNoBandwidth() {
++        long now = clockNs.getAsLong();
++        if (now - lastGoodNs < STUCK_NS) return Action.NONE;
++        if (now - lastReconnectNs < BANDWIDTH_RETRY_NS) return Action.NONE;
++        lastReconnectNs = now;
++        stage = 1;
++        return Action.RECONNECT;
 +    }
 +
 +    /** No usable frame this time. What to do now. */
@@ -6514,7 +8611,7 @@ index 0000000000000000000000000000000000000000..b66a86adbc7fbb524bf8abe4820dd988
 +    }
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
-index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1fa0fa369 100644
+index 1f2e1c84d91602c91c781fba208aebe8d183aea5..541d19c1fd7827923fcb908f2fa12e2df86ca31d 100644
 --- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
 +++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
 @@ -17,16 +17,21 @@
@@ -6562,7 +8659,7 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
      @SuppressWarnings("SpellCheckingInspection")
      public USBFrameProvider(
              UsbCamera camera, VisionSourceSettables visionSettables, Runnable connectedCallback) {
-@@ -50,21 +64,138 @@ public class USBFrameProvider extends CpuImageProcessor {
+@@ -50,21 +64,258 @@ public class USBFrameProvider extends CpuImageProcessor {
          this.logger =
                  new Logger(
                          USBFrameProvider.class, visionSettables.getConfiguration().nickname, LogGroup.Camera);
@@ -6601,8 +8698,42 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
 +        if (usable) {
 +            String fixedBy = stuckWatchdog.good();
 +            if (!fixedBy.isEmpty()) logger.info("The camera is delivering frames again, after " + fixedBy);
++            if (!problem.isEmpty()) logger.info("The camera is working again (it had: " + problem + ")");
++            problem = "";
 +        } else if (!camera.isConnected()) {
 +            stuckWatchdog.notConnected();
++            // SpectrumJetson (photonvision-33): it's plugged in but won't answer (the kernel couldn't
++            // enumerate it). A USB hub reset leaves a Thriftiest Cam like this, and on this carrier
++            // board only a real power cut revives it: USB power can't be switched from software.
++            String port = usbPort();
++            if (org.photonvision.common.hardware.UsbTrouble.connectFailed(port, BANDWIDTH_WINDOW_NS)) {
++                if (!problem.startsWith("not answering")) {
++                    problem = "not answering on USB port " + port + ": replug it, or power-cycle the robot";
++                    logger.error(
++                            "The camera on USB port "
++                                    + port
++                                    + " is plugged in but won't answer (the kernel can't enumerate it). A USB hub reset"
++                                    + " can leave a camera like this; only cutting its power fixes it: replug it, or"
++                                    + " power-cycle the robot.");
++                }
++            } else if (problem.startsWith("not answering")) {
++                problem = "";
++            }
++        } else if (org.photonvision.common.hardware.UsbTrouble.bandwidthFailed(usbPort(), BANDWIDTH_WINDOW_NS)) {
++            // SpectrumJetson (photonvision-31): the kernel refuses this camera USB bandwidth. Say so,
++            // and don't reset it (that can't help); retry once a minute in case some frees up.
++            if (problem.isEmpty()) {
++                problem = "not enough USB bandwidth (USB port " + usbPort() + ")";
++                logger.error(
++                        "Not enough USB bandwidth for this camera on USB port "
++                                + usbPort()
++                                + ": other cameras on the same root port have reserved it. Run "
++                                + "~/SpectrumJetson/scripts/jetson/usb-bandwidth.py on the Jetson, or open the Camera "
++                                + "Matching page: lower an allocation (every USB 2.0 port shares one budget).");
++            }
++            if (stuckWatchdog.noFrameNoBandwidth() == StuckCameraWatchdog.Action.RECONNECT) {
++                reconnectCamera("retrying: not enough USB bandwidth a minute ago");
++            }
 +        } else {
 +            switch (stuckWatchdog.noFrame()) {
 +                case RECONNECT ->
@@ -6610,16 +8741,103 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
 +                                String.format(
 +                                        "no usable frames for %.1f s while connected (e.g. only corrupt JPEGs); reconnecting it",
 +                                        stuckWatchdog.secondsWithoutFrames()));
-+                case USB_RESET -> usbReset();
++                case USB_RESET ->
++                        usbReset(
++                                String.format(
++                                        "still no usable frames %.1f s later", stuckWatchdog.secondsWithoutFrames()),
++                                true);
 +                case NONE -> {}
 +            }
 +        }
 +        return frame;
 +    }
 +
++    // SpectrumJetson (photonvision-33): with a camera gone every grab failed and logged, ~40 lines a
++    // second per camera (13 MB a minute with 4 cameras), so the system log kept only ~25 minutes.
++    // Now: the first failure, then at most one line per 5 s, with a count.
++    private long grabErrorLoggedNs = 0;
++    private int grabErrorsSince = 0;
++
++    private void logGrabError(String error) {
++        long now = System.nanoTime();
++        if (grabErrorLoggedNs != 0 && now - grabErrorLoggedNs < 5_000_000_000L) {
++            grabErrorsSince++;
++            return;
++        }
++        logger.error(
++                "Error grabbing image: "
++                        + error
++                        + (grabErrorsSince > 0 ? " (and " + grabErrorsSince + " more since the last message)" : ""));
++        grabErrorLoggedNs = now;
++        grabErrorsSince = 0;
++    }
++
 +    /** Reconnects and USB resets done for this camera, for CameraHealthPublisher. */
 +    public long getRecoveries() {
 +        return stuckWatchdog.recoveries();
++    }
++
++    // SpectrumJetson (photonvision-31): why the camera gets no frames, when we know ("" if fine).
++    private static final long BANDWIDTH_WINDOW_NS = 90_000_000_000L;
++    private volatile String problem = "";
++    private String usbPortCache = null;
++    private long usbPortCheckedNs = 0;
++
++    /** Why this camera gets no frames, if known: e.g. "not enough USB bandwidth (USB port 1-2.2)". */
++    public String getProblem() {
++        return problem;
++    }
++
++    /** The camera's USB port (sysfs name, e.g. "1-2.4"), or null (photonvision-32: public). */
++    public String getUsbPort() {
++        return usbPort();
++    }
++
++    /**
++     * SpectrumJetson (photonvision-32): applies a new USB bandwidth allocation (UsbBandwidth) by
++     * resetting the camera at the USB level, like a replug, so the driver probes it again under the
++     * new cap. (A cscore reconnect isn't enough: the driver kept its last negotiation, 1600 bytes 4 s
++     * after a change to 256.)
++     */
++    public void applyUsbBandwidth(int wantBytes) {
++        String port = usbPort();
++        usbReset("USB bandwidth allocation changed to " + wantBytes + " bytes per microframe", false);
++        long deadline = System.nanoTime() + 6_000_000_000L;
++        int now = -1;
++        while (System.nanoTime() < deadline) {
++            try {
++                Thread.sleep(200);
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++                return;
++            }
++            now = org.photonvision.common.hardware.UsbBandwidth.reservedNow(port);
++            if (now == wantBytes) {
++                logger.info("Now reserving " + wantBytes + " bytes per microframe on USB port " + port);
++                return;
++            }
++        }
++        logger.warn("Reserving " + now + " bytes per microframe on USB port " + port + " 6 s later, not " + wantBytes);
++    }
++
++    /** The camera's USB port (sysfs name, e.g. "1-2.4"), or null; looked up at most every 5 s. */
++    private String usbPort() {
++        long now = System.nanoTime();
++        if (usbPortCache == null || now - usbPortCheckedNs > 5_000_000_000L) {
++            usbPortCheckedNs = now;
++            try {
++                var dev = java.nio.file.Path.of(camera.getPath()).toRealPath();
++                usbPortCache =
++                        java.nio.file.Path.of("/sys/class/video4linux", dev.getFileName().toString(), "device")
++                                .toRealPath()
++                                .getParent()
++                                .getFileName()
++                                .toString();
++            } catch (Exception e) {
++                // not there right now (unplugged, mid-reset): keep the last answer
++            }
++        }
++        return usbPortCache;
 +    }
 +
 +    /** Test hook: /tmp/spectrum-camera-stuck-test lists camera names to treat as stuck. */
@@ -6649,7 +8867,7 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
 +     * its USB device's sysfs "authorized" off and on, so it re-enumerates and the driver probes it
 +     * again. PhotonVision opens cameras by their /dev/v4l/by-path name, so it finds it again.
 +     */
-+    private void usbReset() {
++    private void usbReset(String why, boolean asError) {
 +        try {
 +            var dev = java.nio.file.Path.of(camera.getPath()).toRealPath(); // e.g. /dev/video2
 +            var usbDevice =
@@ -6657,10 +8875,9 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
 +                            .toRealPath()
 +                            .getParent(); // the USB interface's parent, e.g. .../2-2.3
 +            var authorized = usbDevice.resolve("authorized");
-+            logger.error(
-+                    String.format(
-+                            "Still no usable frames %.1f s later; resetting the camera at the USB level (%s)",
-+                            stuckWatchdog.secondsWithoutFrames(), usbDevice.getFileName()));
++            String msg = "Resetting the camera at the USB level (" + usbDevice.getFileName() + "): " + why;
++            if (asError) logger.error(msg);
++            else logger.info(msg);
 +            java.nio.file.Files.writeString(authorized, "0");
 +            Thread.sleep(1000);
 +            java.nio.file.Files.writeString(authorized, "1");
@@ -6701,7 +8918,7 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
          if (m_blockForFrames) {
              // We allocate memory so we don't fill a Mat in use by another thread (memory model is easier)
              var mat = new CVMat();
-@@ -72,10 +203,11 @@ public class USBFrameProvider extends CpuImageProcessor {
+@@ -72,11 +323,12 @@ public class USBFrameProvider extends CpuImageProcessor {
              // Hal::initialize was called
              // TODO - under the hood, this incurs an extra copy. We should avoid this, if we
              // can.
@@ -6711,11 +8928,13 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
  
              if (captureTimeNs == 0) {
 -                var error = cvSink.getError();
+-                logger.error("Error grabbing image: " + error);
 +                var error = sink.getError();
-                 logger.error("Error grabbing image: " + error);
++                logGrabError(String.valueOf(error));
              }
  
-@@ -85,25 +217,26 @@ public class USBFrameProvider extends CpuImageProcessor {
+             return new CapturedFrame(mat, settables.getFrameStaticProperties(), captureTimeNs);
+@@ -85,26 +337,27 @@ public class USBFrameProvider extends CpuImageProcessor {
              // TODO - consider a frame pool
              // TODO - getCurrentVideoMode is a JNI call for us, but profiling indicates it's fast
              var cameraMode = settables.getCurrentVideoMode();
@@ -6743,11 +8962,13 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
  
              if (captureTimeNs == 0) {
 -                var error = cvSink.getError();
+-                logger.error("Error grabbing image: " + error);
 +                var error = sink.getError();
-                 logger.error("Error grabbing image: " + error);
++                logGrabError(String.valueOf(error));
  
                  frame.close();
-@@ -115,7 +248,231 @@ public class USBFrameProvider extends CpuImageProcessor {
+                 ret = new CVMat();
+@@ -115,7 +368,231 @@ public class USBFrameProvider extends CpuImageProcessor {
                  ret = new CVMat(mat, frame);
              }
  
@@ -6834,7 +9055,7 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
 +                    CscoreExtras.grabRawSinkFrameTimeoutLastTime(
 +                            sink.getHandle(), frame.getNativeObj(), CSCORE_DEFAULT_FRAME_TIMEOUT, afterTimeNs);
 +            if (captureTimeNs == 0) {
-+                logger.error("Error grabbing image: " + sink.getError());
++                logGrabError(sink.getError());
 +                return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
 +            }
 +            lastTime = captureTimeNs;
@@ -6944,7 +9165,7 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
 +                    CscoreExtras.grabRawSinkFrameTimeoutLastTime(
 +                            sink.getHandle(), frame.getNativeObj(), CSCORE_DEFAULT_FRAME_TIMEOUT, afterTimeNs);
 +            if (captureTimeNs == 0) {
-+                logger.error("Error grabbing image: " + sink.getError());
++                logGrabError(sink.getError());
 +                return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
 +            }
 +            lastTime = captureTimeNs;
@@ -6980,7 +9201,7 @@ index 1f2e1c84d91602c91c781fba208aebe8d183aea5..4b54b2f39cecf8668ed7f49d8c8255d1
          }
      }
  
-@@ -126,9 +483,42 @@ public class USBFrameProvider extends CpuImageProcessor {
+@@ -126,9 +603,42 @@ public class USBFrameProvider extends CpuImageProcessor {
  
      @Override
      public void release() {
@@ -8089,10 +10310,10 @@ index 47bc080ff7a7068a899ec7e8cc25eb3608069ba6..edc533d60b664cb24f93798933d12bab
      public final Class clazz;
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java b/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..48843bb81032ab7456d29fee67ceb926f4f26d24
+index 0000000000000000000000000000000000000000..9bd64a8b27ac89653c606b9955edb63594e6be3c
 --- /dev/null
 +++ b/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,142 @@
 +/*
 + * Copyright (C) Photon Vision.
 + *
@@ -8115,6 +10336,7 @@ index 0000000000000000000000000000000000000000..48843bb81032ab7456d29fee67ceb926
 +import org.wpilib.networktables.DoublePublisher;
 +import org.wpilib.networktables.IntegerPublisher;
 +import org.wpilib.networktables.NetworkTable;
++import org.wpilib.networktables.StringPublisher;
 +import java.util.function.LongSupplier;
 +import java.util.function.Supplier;
 +import org.photonvision.common.dataflow.CVPipelineResultConsumer;
@@ -8133,6 +10355,8 @@ index 0000000000000000000000000000000000000000..48843bb81032ab7456d29fee67ceb926
 +    private final Supplier<String> nickname;
 +    private final LongSupplier decodeFailures;
 +    private final LongSupplier recoveries;
++    private final Supplier<String> problem;
++    private StringPublisher problemPub;
 +
 +    private String publishedName = null;
 +    private DoublePublisher fps, pipelineMs, pipelineMsMax, latencyMs;
@@ -8148,9 +10372,32 @@ index 0000000000000000000000000000000000000000..48843bb81032ab7456d29fee67ceb926
 +
 +    public CameraHealthPublisher(
 +            Supplier<String> nickname, LongSupplier decodeFailures, LongSupplier recoveries) {
++        this(nickname, decodeFailures, recoveries, () -> "");
++    }
++
++    /** SpectrumJetson (photonvision-31): also {@code problem}, why the camera gets no frames ("" if fine). */
++    public CameraHealthPublisher(
++            Supplier<String> nickname,
++            LongSupplier decodeFailures,
++            LongSupplier recoveries,
++            Supplier<String> problem) {
++        this.problem = problem;
 +        this.nickname = nickname;
 +        this.decodeFailures = decodeFailures;
 +        this.recoveries = recoveries;
++        // A camera with a problem often has no frames, so no results to publish on: its own timer.
++        org.photonvision.common.util.TimedTaskManager.getInstance()
++                .addTask("CameraHealthProblem-" + System.identityHashCode(this), this::publishProblem, 1000);
++    }
++
++    private synchronized void publishProblem() {
++        try {
++            ensurePublishers();
++            problemPub.set(problem.get());
++            recoveryCount.set(recoveries.getAsLong());
++        } catch (Exception e) {
++            // NetworkTables not up yet: next second
++        }
 +    }
 +
 +    @Override
@@ -8180,7 +10427,7 @@ index 0000000000000000000000000000000000000000..48843bb81032ab7456d29fee67ceb926
 +    }
 +
 +    /** (Re)creates the topics when the camera is first seen or renamed. */
-+    private void ensurePublishers() {
++    private synchronized void ensurePublishers() {
 +        String name = nickname.get();
 +        if (name.equals(publishedName)) return;
 +        if (publishedName != null) {
@@ -8205,6 +10452,7 @@ index 0000000000000000000000000000000000000000..48843bb81032ab7456d29fee67ceb926
 +        frames = t.getIntegerTopic("frames").publish();
 +        failures = t.getIntegerTopic("decodeFailures").publish();
 +        recoveryCount = t.getIntegerTopic("recoveries").publish();
++        problemPub = t.getStringTopic("problem").publish();
 +        publishedName = name;
 +    }
 +}
@@ -8375,6 +10623,143 @@ index 0000000000000000000000000000000000000000..36aa5379e046f185226ed9e180f5725d
 +                        .getStringTopic("settingsJson")
 +                        .publish(PubSubOption.IGNORE_DUPLICATES);
 +        publishedName = name;
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/FocusMeter.java b/photon-core/src/main/java/org/photonvision/vision/processes/FocusMeter.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d5e6efa131e664576266cb4f67307cb098155ced
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/FocusMeter.java
+@@ -0,0 +1,131 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.processes;
++
++import io.avaje.jsonb.Json;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.atomic.AtomicBoolean;
++import org.opencv.core.Core;
++import org.opencv.core.CvType;
++import org.opencv.core.Mat;
++import org.opencv.core.MatOfDouble;
++import org.opencv.core.Rect;
++import org.opencv.imgproc.Imgproc;
++import org.photonvision.common.dataflow.CVPipelineResultConsumer;
++import org.photonvision.vision.pipeline.result.CVPipelineResult;
++
++/**
++ * SpectrumJetson (photonvision-33): a focus score for turning a camera's lens, like Limelight's.
++ *
++ * <p>Only while someone is looking (a request in the last 3 s), up to 5 times a second, it measures
++ * the variance of the Laplacian of the camera's input image on a 3x3 grid. The centre cell is the
++ * main score, and the others show a tilted lens or soft corners. Higher is sharper.
++ *
++ * <p>The score depends on the scene, so compare values while turning the lens with the camera and
++ * scene still. "Best" is the centre's peak since the last reset. The vision thread only copies the
++ * image; the measurement runs on its own thread.
++ */
++public class FocusMeter implements CVPipelineResultConsumer {
++    private static final long WANTED_NS = 3_000_000_000L;
++    private static final long PERIOD_NS = 200_000_000L;
++
++    /** The latest measurement: grid is row-major, cell 4 is the centre. */
++    @Json
++    public record Reading(double[] grid, double centre, double best, int width, int height, long ageMs) {}
++
++    private final ExecutorService worker =
++            Executors.newSingleThreadExecutor(
++                    r -> {
++                        Thread t = new Thread(r, "FocusMeter");
++                        t.setDaemon(true);
++                        return t;
++                    });
++    private final AtomicBoolean busy = new AtomicBoolean(false);
++    private volatile long wantedUntilNs = 0;
++    private long nextNs = 0;
++    private volatile double[] grid = null;
++    private volatile double best = 0;
++    private volatile long measuredNs = 0;
++    private volatile int width = 0, height = 0;
++
++    /** The latest reading, and keep measuring for the next 3 s. Null until the first one. */
++    public Reading read() {
++        wantedUntilNs = System.nanoTime() + WANTED_NS;
++        double[] g = grid;
++        if (g == null) return null;
++        return new Reading(
++                g.clone(), g[4], best, width, height, (System.nanoTime() - measuredNs) / 1_000_000L);
++    }
++
++    public void resetBest() {
++        best = 0;
++    }
++
++    @Override
++    public void accept(CVPipelineResult result) {
++        long now = System.nanoTime();
++        if (now > wantedUntilNs || now < nextNs || busy.get()) return;
++        var frame = result.inputAndOutputFrame;
++        if (frame == null || frame.colorImage == null) return;
++        Mat src = frame.colorImage.getMat();
++        if (src == null || src.empty()) return;
++        nextNs = now + PERIOD_NS;
++        Mat copy = new Mat();
++        if (src.channels() == 1) src.copyTo(copy);
++        else Imgproc.cvtColor(src, copy, Imgproc.COLOR_BGR2GRAY);
++        busy.set(true);
++        worker.execute(
++                () -> {
++                    try {
++                        measure(copy);
++                    } finally {
++                        copy.release();
++                        busy.set(false);
++                    }
++                });
++    }
++
++    private void measure(Mat gray) {
++        Mat lap = new Mat();
++        MatOfDouble mean = new MatOfDouble(), std = new MatOfDouble();
++        try {
++            Imgproc.Laplacian(gray, lap, CvType.CV_32F);
++            int w = gray.cols(), h = gray.rows();
++            double[] g = new double[9];
++            for (int r = 0; r < 3; r++) {
++                for (int c = 0; c < 3; c++) {
++                    Mat cell = lap.submat(new Rect(c * w / 3, r * h / 3, w / 3, h / 3));
++                    Core.meanStdDev(cell, mean, std);
++                    double s = std.toArray()[0];
++                    g[r * 3 + c] = s * s;
++                    cell.release();
++                }
++            }
++            width = w;
++            height = h;
++            grid = g;
++            best = Math.max(best, g[4]);
++            measuredNs = System.nanoTime();
++        } finally {
++            lap.release();
++            mean.release();
++            std.release();
++        }
 +    }
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/MountEstimatePublisher.java b/photon-core/src/main/java/org/photonvision/vision/processes/MountEstimatePublisher.java
@@ -8760,7 +11145,7 @@ index 0000000000000000000000000000000000000000..1a8473a61b7f32b41c571d84620e40da
 +    }
 +}
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
-index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76ecf70567 100644
+index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..f3bb57e94e5af217f0c7040c59c334a67d8ba503 100644
 --- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
 +++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
 @@ -38,6 +38,8 @@ import org.photonvision.common.dataflow.websocket.UICameraConfiguration;
@@ -8782,7 +11167,16 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
  import org.photonvision.vision.pipeline.OutputStreamPipeline;
  import org.photonvision.vision.pipeline.ReflectivePipelineSettings;
  import org.photonvision.vision.pipeline.UICalibrationData;
-@@ -89,7 +93,9 @@ public class VisionModule implements AutoCloseable {
+@@ -81,6 +85,8 @@ public class VisionModule implements AutoCloseable {
+     private final NTDataPublisher ntConsumer;
+     private final UIDataPublisher uiDataConsumer;
+     private final StatusLEDConsumer statusLEDsConsumer;
++    // SpectrumJetson (photonvision-34): a focus score for turning the lens (Camera page)
++    private final FocusMeter focusMeter = new FocusMeter();
+     protected final QuirkyCamera cameraQuirks;
+ 
+     protected TrackedTarget lastPipelineResultBestTarget;
+@@ -89,7 +95,9 @@ public class VisionModule implements AutoCloseable {
      private int outputStreamPort = -1;
  
      private int fpsLimit = -1;
@@ -8793,7 +11187,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
  
      FileSaveFrameConsumer inputFrameSaver;
      FileSaveFrameConsumer outputFrameSaver;
-@@ -142,7 +148,7 @@ public class VisionModule implements AutoCloseable {
+@@ -142,7 +150,7 @@ public class VisionModule implements AutoCloseable {
                          this::consumeResult,
                          this.cameraQuirks,
                          getChangeSubscriber(),
@@ -8802,7 +11196,14 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
                          this::getEnabled,
                          // Streams are created after the runner, so read the field lazily
                          () -> inputVideoStreamer != null && inputVideoStreamer.isStreamConsumed());
-@@ -175,6 +181,90 @@ public class VisionModule implements AutoCloseable {
+@@ -169,12 +177,102 @@ public class VisionModule implements AutoCloseable {
+                 new StatusLEDConsumer(visionSource.getSettables().getConfiguration().uniqueName);
+         resultConsumers.add(ntConsumer);
+         resultConsumers.add(uiDataConsumer);
++        resultConsumers.add(focusMeter); // SpectrumJetson (photonvision-34): idle unless asked
+         resultConsumers.add(statusLEDsConsumer);
+         resultConsumers.add(
+                 (result) ->
                          lastPipelineResultBestTarget = result.hasTargets() ? result.targets.get(0) : null);
          resultConsumers.addAll(extraConsumers);
  
@@ -8817,7 +11218,12 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
 +                        () ->
 +                                visionSource.getFrameProvider() instanceof USBFrameProvider usb
 +                                        ? usb.getRecoveries()
-+                                        : 0));
++                                        : 0,
++                        // SpectrumJetson (photonvision-31): e.g. "not enough USB bandwidth (USB port 1-2.2)".
++                        () ->
++                                visionSource.getFrameProvider() instanceof USBFrameProvider usb
++                                        ? usb.getProblem()
++                                        : ""));
 +        JetsonTelemetry.start();
 +        // SpectrumJetson: the camera's mount (height, pitch, roll) from the tags it sees (photonvision-17).
 +        resultConsumers.add(
@@ -8893,7 +11299,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
          // Sync VisionModule state with the first pipeline index
          setPipeline(visionSource.getSettables().getConfiguration().currentPipelineIndex);
  
-@@ -270,6 +360,7 @@ public class VisionModule implements AutoCloseable {
+@@ -270,6 +368,7 @@ public class VisionModule implements AutoCloseable {
                  if (shouldRun && this.latestFrame != null) {
                      logger.trace("Fell behind; releasing last unused Mats");
                      this.latestFrame.release();
@@ -8901,7 +11307,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
                      if (this.targets != null) {
                          this.targets.forEach(TrackedTarget::release);
                      }
-@@ -308,6 +399,8 @@ public class VisionModule implements AutoCloseable {
+@@ -308,6 +407,8 @@ public class VisionModule implements AutoCloseable {
                          // Never die
                          logger.error("Exception while running stream runnable!", e);
                      } finally {
@@ -8910,7 +11316,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
                          if (targets != null) {
                              targets.forEach(TrackedTarget::release);
                          }
-@@ -450,6 +543,109 @@ public class VisionModule implements AutoCloseable {
+@@ -450,6 +551,109 @@ public class VisionModule implements AutoCloseable {
          return ret;
      }
  
@@ -9020,7 +11426,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
      boolean setPipeline(int index) {
          logger.info("Setting pipeline to " + index);
          logger.info("Pipeline name: " + pipelineManager.getPipelineNickname(index));
-@@ -468,6 +664,11 @@ public class VisionModule implements AutoCloseable {
+@@ -468,6 +672,11 @@ public class VisionModule implements AutoCloseable {
                  () -> {
                      settables.setVideoModeInternal(pipelineSettings.cameraVideoModeIndex);
                      settables.setBrightness(pipelineSettings.cameraBrightness);
@@ -9032,7 +11438,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
  
                      // If manual exposure, force exposure slider to be valid
                      if (!pipelineSettings.cameraAutoExposure) {
-@@ -528,6 +729,38 @@ public class VisionModule implements AutoCloseable {
+@@ -528,6 +737,38 @@ public class VisionModule implements AutoCloseable {
          }
      }
  
@@ -9071,7 +11477,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
      public void saveModule() {
          ConfigManager.getInstance()
                  .saveModule(
-@@ -585,6 +818,7 @@ public class VisionModule implements AutoCloseable {
+@@ -585,6 +826,7 @@ public class VisionModule implements AutoCloseable {
          ret.maxExposureRaw = visionSource.getSettables().getMaxExposureRaw();
          ret.minWhiteBalanceTemp = visionSource.getSettables().getMinWhiteBalanceTemp();
          ret.maxWhiteBalanceTemp = visionSource.getSettables().getMaxWhiteBalanceTemp();
@@ -9079,7 +11485,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
  
          ret.deactivated = config.deactivated;
          ret.isEnabled = getEnabled();
-@@ -656,12 +890,31 @@ public class VisionModule implements AutoCloseable {
+@@ -656,12 +898,31 @@ public class VisionModule implements AutoCloseable {
          return fpsLimit;
      }
  
@@ -9111,7 +11517,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
          saveAndBroadcastAll();
      }
  
-@@ -691,8 +944,13 @@ public class VisionModule implements AutoCloseable {
+@@ -691,8 +952,13 @@ public class VisionModule implements AutoCloseable {
          if (result.inputAndOutputFrame != null
                  && (pipelineManager.getCurrentPipelineSettings()
                          instanceof AdvancedPipelineSettings settings)) {
@@ -9127,7 +11533,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
          } else {
              consumeResults(result.inputAndOutputFrame, result.targets);
  
-@@ -701,6 +959,35 @@ public class VisionModule implements AutoCloseable {
+@@ -701,6 +967,35 @@ public class VisionModule implements AutoCloseable {
          }
      }
  
@@ -9163,7 +11569,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
      private void consumePipelineResult(CVPipelineResult result) {
          for (var dataConsumer : resultConsumers) {
              dataConsumer.accept(result);
-@@ -728,6 +1015,7 @@ public class VisionModule implements AutoCloseable {
+@@ -728,6 +1023,7 @@ public class VisionModule implements AutoCloseable {
          if (newCalibration != null) {
              logger.info("Got new calibration for " + newCalibration.resolution);
              visionSource.getSettables().addCalibration(newCalibration);
@@ -9171,7 +11577,7 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
          } else {
              logger.error("Got null calibration?");
          }
-@@ -735,6 +1023,24 @@ public class VisionModule implements AutoCloseable {
+@@ -735,6 +1031,24 @@ public class VisionModule implements AutoCloseable {
          saveAndBroadcastAll();
      }
  
@@ -9196,6 +11602,23 @@ index ce4950b4e3319d4a7543aa0b34a32bc5380947e6..eea18046cb447af19a3e33dca49ebc76
      public void removeCalibrationFromConfig(Size resolution) {
          if (resolution != null) {
              visionSource.getSettables().removeCalibration(resolution);
+@@ -756,6 +1070,16 @@ public class VisionModule implements AutoCloseable {
+         saveAndBroadcastAll();
+     }
+ 
++    /** SpectrumJetson (photonvision-34): the focus score for this camera's lens. */
++    public FocusMeter focusMeter() {
++        return focusMeter;
++    }
++
++    /** SpectrumJetson (photonvision-32): this camera's USB frame provider, or null (CSI, file). */
++    public USBFrameProvider usbFrameProvider() {
++        return visionSource.getFrameProvider() instanceof USBFrameProvider usb ? usb : null;
++    }
++
+     public String uniqueName() {
+         return this.visionSource.cameraConfiguration.uniqueName;
+     }
 diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java
 index fc86012d87f25936cef5312c6477992039e83359..4390600bb986aea5e540097cee446c1c185c48f7 100644
 --- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java
@@ -9740,7 +12163,7 @@ index 847b8d1bba856733b7b493b194114fb23f9af3f4..d60c3e8faa90cfe93f73223b198653c6
          logger.debug("Loading HardwareManager...");
          // Force load the hardware manager
 diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
-index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5919945db 100644
+index 17d4092e408cda9ecc72876123d37523e1b1ea97..3d4602bf14c1aab8565ce2687e210c7358b29c09 100644
 --- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 +++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 @@ -30,6 +30,7 @@ import java.nio.file.StandardCopyOption;
@@ -9751,7 +12174,11 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5
  import java.util.Map;
  import java.util.Optional;
  import javax.imageio.ImageIO;
-@@ -53,6 +54,8 @@ import org.photonvision.common.hardware.Platform;
+@@ -50,9 +51,12 @@ import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
+ import org.photonvision.common.dataflow.websocket.UIPhotonConfiguration;
+ import org.photonvision.common.hardware.HardwareManager;
+ import org.photonvision.common.hardware.Platform;
++import org.photonvision.common.hardware.UsbBandwidth;
  import org.photonvision.common.logging.LogGroup;
  import org.photonvision.common.logging.Logger;
  import org.photonvision.common.networking.NetworkManager;
@@ -9760,7 +12187,7 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5
  import org.photonvision.common.util.ShellExec;
  import org.photonvision.common.util.TimedTaskManager;
  import org.photonvision.common.util.file.ProgramDirectoryUtilities;
-@@ -398,6 +401,304 @@ public class RequestHandler {
+@@ -398,6 +402,397 @@ public class RequestHandler {
      @Json
      record CameraSettingsRequest(
              double fov, Map<CameraQuirk, Boolean> quirksToChange, String cameraUniqueName) {}
@@ -9948,7 +12375,85 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5
 +    // ---- SpectrumJetson (photonvision-30): field calibration page
 +
 +    @Json
-+    record FieldCalRequest(String action, String session) {}
++    record FieldCalRequest(
++            String action,
++            String session,
++            String camera,
++            String control,
++            Double value,
++            Map<String, List<String>> locked,
++            Boolean on) {}
++
++    /**
++     * GET /api/usb/bandwidth (photonvision-32): every USB camera's bandwidth, reserved and really used,
++     * against the budget all USB 2.0 ports share. See UsbBandwidth.
++     */
++    public static void onUsbBandwidthRequest(Context ctx) {
++        try {
++            ctx.status(200);
++            ctx.json(UsbBandwidth.survey());
++        } catch (Exception e) {
++            ctx.status(500);
++            ctx.result("USB bandwidth survey failed: " + e.getMessage());
++        }
++    }
++
++    @Json
++    record UsbAllocationRequest(String port, Integer bytes) {}
++
++    /**
++     * POST /api/usb/bandwidth {"port": "1-2.4", "bytes": 944} (photonvision-32): the most that camera
++     * may reserve per microframe: one of its alternate settings, 0 for uncapped, or null for its
++     * model's cap. Saved for the next boot; the camera is reset (like a replug) to apply it.
++     */
++    public static void onUsbAllocationRequest(Context ctx) {
++        try {
++            var req = Jsonb.instance().type(UsbAllocationRequest.class).fromJson(ctx.body());
++            if (req.port() == null) throw new IllegalArgumentException("port is required");
++            ctx.status(200);
++            ctx.result(UsbBandwidth.setAllocation(req.port(), req.bytes()));
++        } catch (IllegalArgumentException | IllegalStateException | JsonException e) {
++            ctx.status(400);
++            ctx.result(e.getMessage());
++        } catch (Exception e) {
++            ctx.status(500);
++            ctx.result("Couldn't change the allocation: " + e.getMessage());
++        }
++    }
++
++    private static org.photonvision.vision.processes.VisionModule moduleByUniqueName(String name) {
++        for (var m : VisionSourceManager.getInstance().vmm.getModules()) {
++            if (m.uniqueName().equals(name)) return m;
++        }
++        return null;
++    }
++
++    /**
++     * GET /api/focus?camera=UNIQUE_NAME (photonvision-34): the camera's focus score, and keep
++     * measuring for 3 s (FocusMeter). 204 until the first measurement. {@code &reset=1} clears the
++     * best score first.
++     */
++    public static void onFocusRequest(Context ctx) {
++        var m = moduleByUniqueName(ctx.queryParam("camera"));
++        if (m == null) {
++            ctx.status(404);
++            ctx.result("No camera " + ctx.queryParam("camera"));
++            return;
++        }
++        if (ctx.queryParam("reset") != null) m.focusMeter().resetBest();
++        var r = m.focusMeter().read();
++        try {
++            if (r == null) {
++                ctx.status(204);
++                return;
++            }
++            ctx.status(200);
++            ctx.json(r);
++        } catch (Exception e) {
++            ctx.status(500);
++            ctx.result("Focus reading failed: " + e.getMessage());
++        }
++    }
 +
 +    /** GET /api/fieldcal: state, live guidance, solve progress, recordings and results. */
 +    public static void onFieldCalStatusRequest(Context ctx) {
@@ -9965,9 +12470,12 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5
 +
 +    /**
 +     * POST /api/fieldcal {"action": "start" | "stop" | "solve" | "cancel" | "tune" | "cancelTune" |
-+     * "applyTuning" | "apply" | "undo", "session": name}. "tune" steps every camera through its
-+     * settings with the robot still; "applyTuning" writes the recommendations into each camera's
-+     * pipeline in use. "apply" puts a solve's corrected layout into PhotonVision (after saving the
++     * "applyTuning" | "setControl" | "apply" | "undo", "session": name, "camera": nickname, "control",
++     * "value", "locked": {camera: [control]}}. "tune" steps one camera ("camera"), or every camera,
++     * through its settings with the robot still, leaving the locked controls alone ("setLock" with
++     * "camera", "control", "on"; kept on the Jetson, or "locked" for this run only); "applyTuning"
++     * writes that camera's (or every camera's) recommendations into its pipeline in use;
++     * "setControl" sets one control by hand. "apply" puts a solve's corrected layout into PhotonVision (after saving the
 +     * current one) and restarts; "undo" puts back the layout saved by the last apply.
 +     */
 +    public static void onFieldCalActionRequest(Context ctx) {
@@ -9982,9 +12490,21 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5
 +                    else fc.stopAndSolve();
 +                }
 +                case "cancel" -> fc.cancelSolve();
-+                case "tune" -> fc.tune();
++                case "tune" -> fc.tune(req.camera(), req.locked());
++                case "setLock" -> {
++                    if (req.camera() == null || req.control() == null || req.on() == null) {
++                        throw new IllegalArgumentException("setLock needs camera, control and on");
++                    }
++                    fc.setLock(req.camera(), req.control(), req.on());
++                }
++                case "setControl" -> {
++                    if (req.camera() == null || req.control() == null || req.value() == null) {
++                        throw new IllegalArgumentException("setControl needs camera, control and value");
++                    }
++                    fc.setControl(req.camera(), req.control(), req.value());
++                }
 +                case "cancelTune" -> fc.cancelTune();
-+                case "applyTuning" -> fc.applyTuning();
++                case "applyTuning" -> fc.applyTuning(req.camera());
 +                case "apply", "undo" -> {
 +                    Path layout;
 +                    if (req.action().equals("apply")) {
@@ -10065,7 +12585,7 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5
  
      public static void onCameraSettingsRequest(Context ctx) {
          try {
-@@ -628,6 +929,11 @@ public class RequestHandler {
+@@ -628,6 +1023,11 @@ public class RequestHandler {
                      family = NeuralNetworkModelManager.Family.RKNN;
                      break;
                  default:
@@ -10077,7 +12597,7 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5
                      ctx.status(400);
                      ctx.result("The current platform does not support object detection models");
                      logger.error("The current platform does not support object detection models");
-@@ -683,6 +989,8 @@ public class RequestHandler {
+@@ -683,6 +1083,8 @@ public class RequestHandler {
                              switch (family) {
                                  case RUBIK -> new TFLiteModel(modelProperties, TFLiteSource.RUBIK).load();
                                  case RKNN -> new RknnModel(modelProperties).load();
@@ -10087,10 +12607,10 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5
                  } catch (RuntimeException e) {
                      ctx.status(400);
 diff --git a/photon-server/src/main/java/org/photonvision/server/Server.java b/photon-server/src/main/java/org/photonvision/server/Server.java
-index a65d440161f7f92dd0eb89b15e820a94579eff6e..508e06fa699ded5358f0d5f0acdce13c4e1ec54d 100644
+index a65d440161f7f92dd0eb89b15e820a94579eff6e..a4b98527dc8a425b07abe0185d8ee8c1ea4e357f 100644
 --- a/photon-server/src/main/java/org/photonvision/server/Server.java
 +++ b/photon-server/src/main/java/org/photonvision/server/Server.java
-@@ -123,6 +123,17 @@ public class Server {
+@@ -123,6 +123,20 @@ public class Server {
          app.post("/api/settings/networkConfig", RequestHandler::onNetworkConfigRequest);
          app.post("/api/settings/fieldLayout", RequestHandler::onFieldLayoutRequest);
          app.post("/api/settings/general", RequestHandler::onGeneralSettingsRequest);
@@ -10102,6 +12622,9 @@ index a65d440161f7f92dd0eb89b15e820a94579eff6e..508e06fa699ded5358f0d5f0acdce13c
 +        app.get("/api/rewind", RequestHandler::onRewindStatusRequest);
 +        app.post("/api/rewind", RequestHandler::onRewindSetRequest);
 +        app.get("/api/rewind/download", RequestHandler::onRewindDownloadRequest);
++        app.get("/api/focus", RequestHandler::onFocusRequest); // SpectrumJetson (34)
++        app.get("/api/usb/bandwidth", RequestHandler::onUsbBandwidthRequest); // SpectrumJetson (32)
++        app.post("/api/usb/bandwidth", RequestHandler::onUsbAllocationRequest);
 +        app.get("/api/fieldcal", RequestHandler::onFieldCalStatusRequest); // SpectrumJetson
 +        app.post("/api/fieldcal", RequestHandler::onFieldCalActionRequest);
 +        app.get("/api/fieldcal/file", RequestHandler::onFieldCalFileRequest);
