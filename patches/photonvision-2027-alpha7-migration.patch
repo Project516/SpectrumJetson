@@ -9740,7 +9740,7 @@ index 847b8d1bba856733b7b493b194114fb23f9af3f4..d60c3e8faa90cfe93f73223b198653c6
          logger.debug("Loading HardwareManager...");
          // Force load the hardware manager
 diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
-index 17d4092e408cda9ecc72876123d37523e1b1ea97..973a93d18ccd93f534d85d63d37628ef48acceea 100644
+index 17d4092e408cda9ecc72876123d37523e1b1ea97..b54a65f785a0a7614a74b9c1ab2bbde5919945db 100644
 --- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 +++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
 @@ -30,6 +30,7 @@ import java.nio.file.StandardCopyOption;
@@ -9760,7 +9760,7 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..973a93d18ccd93f534d85d63d37628ef
  import org.photonvision.common.util.ShellExec;
  import org.photonvision.common.util.TimedTaskManager;
  import org.photonvision.common.util.file.ProgramDirectoryUtilities;
-@@ -398,6 +401,300 @@ public class RequestHandler {
+@@ -398,6 +401,304 @@ public class RequestHandler {
      @Json
      record CameraSettingsRequest(
              double fov, Map<CameraQuirk, Boolean> quirksToChange, String cameraUniqueName) {}
@@ -9907,6 +9907,10 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..973a93d18ccd93f534d85d63d37628ef
 +        } catch (IllegalStateException | JsonException e) {
 +            ctx.status(400);
 +            ctx.result("Expected {\"saved\": [tag IDs]}");
++        } catch (IOException e) {
++            ctx.status(500);
++            ctx.result("Could not save the excluded-tag list");
++            logger.error("Could not save the excluded-tag list", e);
 +        }
 +    }
 +
@@ -10061,7 +10065,7 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..973a93d18ccd93f534d85d63d37628ef
  
      public static void onCameraSettingsRequest(Context ctx) {
          try {
-@@ -628,6 +925,11 @@ public class RequestHandler {
+@@ -628,6 +929,11 @@ public class RequestHandler {
                      family = NeuralNetworkModelManager.Family.RKNN;
                      break;
                  default:
@@ -10073,7 +10077,7 @@ index 17d4092e408cda9ecc72876123d37523e1b1ea97..973a93d18ccd93f534d85d63d37628ef
                      ctx.status(400);
                      ctx.result("The current platform does not support object detection models");
                      logger.error("The current platform does not support object detection models");
-@@ -683,6 +985,8 @@ public class RequestHandler {
+@@ -683,6 +989,8 @@ public class RequestHandler {
                              switch (family) {
                                  case RUBIK -> new TFLiteModel(modelProperties, TFLiteSource.RUBIK).load();
                                  case RKNN -> new RknnModel(modelProperties).load();
