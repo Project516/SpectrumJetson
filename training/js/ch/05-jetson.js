@@ -20,6 +20,12 @@ Site.chapter('jetson', (root) => {
   busDiagram(root);
   thermalLab(root);
   compareCores(root);
+  // tegrastats readout: hovering a field or its card lights both up
+  const tg = root.querySelector('#j-tegra');
+  const lite = (f) => tg.querySelectorAll('[data-f]').forEach((e) => e.classList.toggle('on', e.dataset.f === f));
+  tg.addEventListener('mouseover', (e) => { const t = e.target.closest('[data-f]'); lite(t ? t.dataset.f : null); });
+  tg.addEventListener('mouseleave', () => lite(null));
+  tg.addEventListener('click', (e) => { const t = e.target.closest('[data-f]'); lite(t ? t.dataset.f : null); });
 });
 
 /* ═══════════════ 3D exploded view ═══════════════ */

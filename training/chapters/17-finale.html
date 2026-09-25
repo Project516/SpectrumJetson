@@ -72,7 +72,7 @@
   </div>
 
   <h3>Follow one frame</h3>
-  <p class="prose">This is a real frame from an FRC field camera, facing the 2024 speaker from 63 inches away. Press play, drag the slider, or tap a stage. Each stage names the chapter that explains it. Times are for our system; ≈ marks an estimate.</p>
+  <p class="prose">This is a real frame from our own TopLeft camera: tag 3, propped on a box in our shop, saved by Rewind. Every number in the first stages is the real one: its pixel values, its exact JPEG size, and the corners our Jetson's GPU detector found. Press play, drag the slider, or tap a stage. Each stage names the chapter that explains it. Times are for our system; ≈ marks an estimate.</p>
 
   <div class="player">
     <div class="stage-wrap">
@@ -84,7 +84,7 @@
       <input type="range" id="fn-scrub" min="0" max="1000" value="0" aria-label="Scrub through the frame's journey">
     </div>
     <ol class="journey" id="fn-journey"></ol>
-    <p class="hint" style="color:var(--lab-muted);font-size:.8rem;margin:10px 0 0">Camera frame: PhotonVision test images (GPL-3.0). Tag corners are real detections from the AprilTag library on this image. The frame is shown in gray, the way our mono cameras see; the pose, packet and field views are illustrations.</p>
+    <p class="hint" style="color:var(--lab-muted);font-size:.8rem;margin:10px 0 0">From our Jetson, Sept 25, 2026: TopLeft, Rewind recording 0007 (Sept 24), frame 51. The picture is a lossless gray decode of the camera's own 52,801-byte JPEG, and the corners (decision margin 89.8) are from our CUDA detector. The exposure wasn't saved with this recording; likely 5 ms. The threshold, pose axes, packet and field views are illustrations.</p>
   </div>
 
   <h3>Quiz: how well does it stick?</h3>
@@ -135,7 +135,7 @@
   <div class="credits">
     <div class="credit"><b>Austin Schuh and FRC 971</b><span>The CUDA AprilTag detector at the heart of the system, now developed in RealtimeRoboticsGroup/aos. We built from frc971/bos.</span></div>
     <div class="credit"><b>FRC 4143</b><span>The CUDA version of PhotonVision our build starts from.</span></div>
-    <div class="credit"><b>The PhotonVision team</b><span>The open-source vision software, PhotonLib, and the test images used in this course's frame journey.</span></div>
+    <div class="credit"><b>The PhotonVision team</b><span>The open-source vision software and PhotonLib.</span></div>
     <div class="credit"><b>WPILib</b><span>NetworkTables, cscore, pose estimators and the libraries the detector links against.</span></div>
     <div class="credit"><b>APRIL Robotics Lab, University of Michigan</b><span>AprilTags themselves.</span></div>
     <div class="credit"><b>NVIDIA</b><span>The Jetson, JetPack and CUDA, and the Jetson CAD used in the 3D models.</span></div>

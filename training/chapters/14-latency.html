@@ -70,6 +70,11 @@
   </div>
 
   <div class="callout spectrum"><h5>What we measured</h5><p>PhotonVision showed <strong>13–14 ms of latency</strong> after our fixes (it was 44 ms when we started, with a 29.5 ms exposure). The biggest single cut was decoding the JPEG straight to gray: <strong>8.9 ms → 2.6 ms</strong> per frame. Our USB bandwidth cap costs about 2 ms (a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms) but lets four cameras share the bus.</p></div>
+  <figure style="margin:0 0 30px;max-width:var(--prose)">
+<pre class="code" aria-label="Real PhotonVision log lines">971 stats h1 1280x800: 122.405 calls/s, detect avg 0.905398 ms max 1.48748 ms, jni 0.0038643 ms, tags/frame 0 [bos]
+971 jpeg 10 s: nvjpg 362.13 frames/s (2.58713 ms), libjpeg-turbo 0 frames/s; checks since start 19925 ok, 0 differ</pre>
+    <figcaption class="caption" style="padding:6px 2px 0">From our Jetson, Sept 25, 2026: two real lines from <code>journalctl -u photonvision</code>, with 4 cameras running and no tags in view. One Thriftiest Cam at 122 frames per second, 0.9 ms average GPU detect; the hardware JPEG decoder at 2.59 ms a frame, shared by all four cameras.</figcaption>
+  </figure>
 
   <h3>Where was the robot when the picture was taken?</h3>
   <div class="split top">

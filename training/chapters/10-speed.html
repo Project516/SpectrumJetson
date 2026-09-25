@@ -7,6 +7,13 @@
   #speed .term-line { background: #0f0a18; color: #e9e0ff; border-radius: 12px; padding: 14px 16px; font: 13px/1.7 var(--mono); overflow-x: auto; white-space: pre; margin: 14px 0; }
   #speed .term-line .hl { background: rgba(163,230,53,.22); color: #d9f99d; border-radius: 4px; padding: 0 3px; }
   #speed .term-line .dim { color: #8f80ad; }
+  #speed .term-line .k1 { color: #f472b6; } #speed .term-line .k2 { color: #22d3ee; } #speed .term-line .k3 { color: #a3e635; } #speed .term-line .k4 { color: #fbbf24; } #speed .term-line .k5 { color: #c4b5fd; } #speed .term-line .k6 { color: #fb7185; } #speed .term-line .k7 { color: #94a3b8; } #speed .term-line .k8 { color: #38bdf8; } #speed .term-line .k9 { color: #fdba74; } #speed .term-line .k10 { color: #86efac; }
+  #speed .legend-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 18px; font-size: .84rem; color: var(--muted); margin: 4px 0 10px; }
+  #speed .legend-grid i { font: 600 .8rem var(--mono); font-style: normal; background: #0f0a18; padding: 1px 6px; border-radius: 5px; margin-right: 6px; }
+  #speed .legend-grid i.k1 { color: #f472b6; } #speed .legend-grid i.k2 { color: #22d3ee; } #speed .legend-grid i.k3 { color: #a3e635; } #speed .legend-grid i.k4 { color: #fbbf24; } #speed .legend-grid i.k5 { color: #c4b5fd; } #speed .legend-grid i.k6 { color: #fb7185; } #speed .legend-grid i.k7 { color: #94a3b8; } #speed .legend-grid i.k8 { color: #38bdf8; } #speed .legend-grid i.k9 { color: #fdba74; } #speed .legend-grid i.k10 { color: #86efac; }
+  #speed .realshot { margin: 22px 0 0; }
+  #speed .realshot img { width: 100%; border-radius: 12px; box-shadow: var(--shadow-lg); display: block; }
+  #speed .realshot figcaption { font-size: .85rem; color: var(--muted); padding-top: 8px; }
   #speed .scrolly .vis .fig { padding: 14px; }
   #speed .scrolly canvas { border-radius: 10px; }
   #speed .cpupair { font-size: .88rem; color: var(--muted); margin-top: 8px; min-height: 2.6em; }
@@ -51,18 +58,33 @@
     <p class="lede">Our first test ran at 33 frames per second. The cameras can do 120, and the GPU could handle over 500. Somewhere between the lens and the GPU, three quarters of the frames were being lost. This is the detective story of finding them, one measurement at a time.</p>
   </div>
 
-  <div class="split top">
-    <div class="prose">
+  <div class="prose">
       <h3 style="margin-top:0">First rule: measure before you optimize</h3>
       <p>The tempting move would have been to speed up the GPU code. It's the fancy part, and it's what everyone talks about. Instead, we added one line to the detector that prints, once a second, how many frames it got and how long each one took.</p>
       <p>That line settled it on day one. The detector needed <strong>under 2 ms</strong> of every frame. At 61 fps, a frame arrives every 16 ms. So the GPU sat idle about 90% of the time, waiting for frames. Making it faster would have changed nothing. The problem was upstream: the camera, and how PhotonVision reads and decodes frames.</p>
+      <p>Here's that line today, on our Jetson, running 4 cameras at full speed.</p>
     </div>
-    <div>
-      <div class="term-line" aria-label="Example 971 stats log line"><span class="dim">$ journalctl -u photonvision -f | grep "971 stats"</span>
-971 stats h0 1280x800: <span class="hl">61.2 calls/s</span>, detect avg <span class="hl">1.79 ms</span> …, tags/frame 1, margin avg 118.5 … [bos]</div>
-      <p class="small muted">The format of the real line (from <code>detector/GpuDetectorJNI.cc</code>), with values from our A/B test at exposure 8.3 ms. "…" marks fields left out here.</p>
-      <div class="callout idea" style="margin-top:10px"><h5>Why it matters</h5><p>Speeding up a part that isn't the bottleneck is wasted work. Find the slowest step first. Here it wasn't even close.</p></div>
+  <div class="block reveal">
+    <div class="term-line" aria-label="Real 971 stats and 971 jpeg log lines from our Jetson"><span class="dim">$ journalctl -u photonvision -f        <span style="color:#8f80ad"># Sept 25, 2026, 07:53 UTC, 4 cameras</span></span>
+971 stats <span class="k1">h1</span> <span class="k2">1280x800</span>: <span class="k3">122.405 calls/s</span>, detect avg <span class="k4">0.905 ms</span> max <span class="k4">1.487 ms</span>, jni <span class="k5">0.004 ms</span>, <span class="k6">tags/frame 0</span> <span class="k7">[bos]</span>
+971 stats h3 1280x800: 122.411 calls/s, detect avg 0.981 ms max 1.979 ms, jni 0.004 ms, tags/frame 0 [bos]
+971 stats h0 1280x720: 60.940 calls/s, detect avg 1.004 ms max 1.506 ms, jni 0.005 ms, tags/frame 0 [bos]
+971 stats h2 1280x720: 60.703 calls/s, detect avg 1.133 ms max 1.575 ms, jni 0.005 ms, tags/frame 0 [bos]
+971 jpeg 10 s: <span class="k8">nvjpg 362.13 frames/s (2.587 ms)</span>, <span class="k9">libjpeg-turbo 0 frames/s</span>; <span class="k10">checks since start 19925 ok, 0 differ</span></div>
+    <div class="legend-grid">
+      <div><i class="k1">h1</i> the detector's handle: one per camera, so 4 lines a second</div>
+      <div><i class="k2">1280x800</i> frame size: the Thriftiest Cams; 1280x720 lines are the two Global Shutter cameras</div>
+      <div><i class="k3">calls/s</i> frames that reached the detector in the last second: the real frame rate</div>
+      <div><i class="k4">detect</i> milliseconds per frame, average and worst, GPU stages plus the CPU decode step</div>
+      <div><i class="k5">jni</i> time to turn the results into Java objects for PhotonVision: tiny</div>
+      <div><i class="k6">tags/frame</i> tags found per frame (0 here: the room was dark, no tag in view)</div>
+      <div><i class="k7">[bos]</i> which detector build: Austin's current code from frc971/bos</div>
+      <div><i class="k8">nvjpg</i> every 10 s: JPEGs decoded on the hardware, all cameras together (122+122+61+61 ≈ 366), and ms per frame</div>
+      <div><i class="k9">libjpeg-turbo</i> frames that fell back to the CPU decoder: none</div>
+      <div><i class="k10">checks</i> the safety net (Lab 2): frames re-decoded on the CPU and compared pixel by pixel</div>
     </div>
+    <p class="small muted">Real lines from our Jetson's log, Sept 25, 2026 (<code>assets/from-jetson/terminal/journalctl-971-stats.txt</code>), shortened to 3 decimals and without the timestamp prefix. With no tag in view the detector needs about 1 ms; with a tag it was about 1.6–1.8 ms. Either way, a frame arrives only every 8.2 ms at 122 fps.</p>
+    <div class="callout idea"><h5>Why it matters</h5><p>Speeding up a part that isn't the bottleneck is wasted work. Find the slowest step first. Here it wasn't even close.</p></div>
   </div>
 
   <!-- ───────────── Detective story ───────────── -->
@@ -124,6 +146,18 @@
 
   <div class="split top">
     <div class="prose">
+      <h4 style="margin-top:0">The same thing, in our PhotonVision</h4>
+      <p>This is the real USB bandwidth card on our Camera Matching page (patch 32), with four cameras running. The bar is the shared budget: each camera's colour shows what it reserves, and the brighter part what it really sends. Together they reserve <strong>3,840 of about 6,720</strong> bytes per microframe, and actually use 9.1 MB/s.</p>
+      <p>Read a row the way the lab does: TopLeft reserves 1,280 bytes (10.2 MB/s), uses 28% of it, and its largest recent frame <strong>fits 3.7×</strong> and crosses USB in 2.2 ms. The frames are small (about 23 KB) because the room was dark; a busy, bright scene makes 50–60 KB frames. The two Global Shutter cameras are capped lower, at 640 bytes, which is plenty at 60 fps. Each camera's own card repeats the line, like "2.8 of 10.2 MB/s (port 1-2.3)".</p>
+    </div>
+    <div>
+      <figure class="realshot" style="margin-top:0"><img src="assets/from-jetson/screenshots/camera-matching-usb-bandwidth.webp" alt="PhotonVision's USB bandwidth card: a budget bar, and four cameras with FPS, usage, largest frame and allocation" loading="lazy"><figcaption>Our PhotonVision, Sept 25, 2026: the USB bandwidth card.</figcaption></figure>
+      <figure class="realshot"><img src="assets/from-jetson/screenshots/camera-matching-page-crop.webp" alt="Camera cards on the Camera Matching page, each with a USB bandwidth line" loading="lazy"><figcaption>Our PhotonVision, Sept 25, 2026: three of the camera cards below it. The camera previews (cut off here) were flat gray: the room was dark.</figcaption></figure>
+    </div>
+  </div>
+
+  <div class="split top">
+    <div class="prose">
       <h4 style="margin-top:0">What happens when a camera is squeezed</h4>
       <p>A camera can't send more than its allocation: the host only lets it use its slice of each microframe. So what does it do when a frame won't fit in time? We tested it by giving two cameras less than they were sending. Both kept their frame rate. They <strong>compressed harder</strong> instead: smaller, lower-quality JPEGs, taking longer to cross USB.</p>
       <p>For AprilTag cameras we keep them out of the squeeze (under 90% used) with room to spare ("fits" 1.3× or more). The price of going smaller is latency: a 60 KB frame takes 5.9 ms to cross at 1,280 bytes, and 8.0 ms at 944. It doesn't hurt timestamp accuracy, because the driver stamps a frame when its <em>first</em> packet arrives.</p>
@@ -169,7 +203,7 @@
     <div class="prose">
       <h4 style="margin-top:0">The hardware decoder that froze</h4>
       <p>The obvious way to call NVIDIA's JPEG library (the way another FRC codebase does it) looked amazing in a speed test. It also returned the <strong>first frame, over and over</strong>, while reporting success every time. We only caught it by decoding every frame both ways and comparing them <em>pixel by pixel</em>.</p>
-      <p>We call it differently now. And because a mistake here would be invisible, a safety net stays on forever: every ~2 s, one frame per camera is decoded again on the CPU and compared. Any difference switches the hardware off.</p>
+      <p>We call it differently now. And because a mistake here would be invisible, a safety net stays on forever: every ~2 s, one frame per camera is decoded again on the CPU and compared. Any difference switches the hardware off. On Sept 25 the log read <code>checks since start 19925 ok, 0 differ</code>.</p>
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Spot the frozen frames</h4></div>

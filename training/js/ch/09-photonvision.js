@@ -92,6 +92,24 @@ Site.chapter('photonvision', (root) => {
     });
   }
 
+  /* ── 1b. Dashboard tour (real screenshots) ────────────── */
+  {
+    const D = 'assets/from-jetson/screenshots/';
+    const T = [
+      [D + 'dashboard-aprilcudatag-tab-crop.webp', 'The AprilCudaTag tab', 'The settings for the GPU detector. The fork\'s version of this tab was blank in the new web framework; our patch 01 rebuilt it, showing only settings that really do something: the tag family, the decision margin cutoff (15, our tuning at 5 ms) and pose iterations. Top left: <b>123 FPS, 14 ms latency</b> on TopLeft.', ['photonvision-01', 'photonvision-10']],
+      [D + 'dashboard-output-tab-crop.webp', 'The Output tab', 'What gets sent to the robot. <b>Do Multi-Target Estimation</b> is on: all tags in view are solved together against the field layout. New cameras get it automatically once calibrated (patch 06).', ['photonvision-06']],
+      [D + 'dashboard-targets-tab-crop.webp', 'The Targets tab', 'One row per tag seen, with its position and ambiguity, then the multi-tag pose of the camera on the field. It\'s empty here: no tag was in view. With 2+ tags and the robot level, our camera mount estimate also shows up on this tab (patch 17).', ['photonvision-17']],
+      [D + 'copy-settings-dialog-crop.webp', 'Copy settings', 'From the pipeline menu (☰): pick a camera and pipeline to copy from, tick the groups, and optionally copy into every camera at once. Orientation, names and exposure limits are never copied.', ['photonvision-25']],
+      [D + 'settings-top-crop.webp', 'The Settings page', 'Device Metrics on the right: CPU, <b>GPU usage</b> (our chart, patch 19: 16% here with 4 cameras), memory and temperature. On the left, the <b>CPU Throttling</b> row says why the Jetson would slow itself down (patch 20): "None".', ['photonvision-19', 'photonvision-20']],
+    ];
+    const img = $('#pv-tour-img'), txt = $('#pv-tour-txt');
+    Site.seg($('#pv-tour'), (v) => {
+      const [src, h, d, chips] = T[+v];
+      img.src = src; img.alt = h + ' in our PhotonVision';
+      txt.innerHTML = `<h4>${h}</h4><p>${d}</p>${chips.map((c) => `<span class="chip">${c}</span>`).join('')}`;
+    });
+  }
+
   /* ── 2. Family tree ───────────────────────────────────── */
   {
     const C = [10, 187, 364], W = 165, H = 74, R = [16, 136, 256, 380];
@@ -339,21 +357,6 @@ Site.chapter('photonvision', (root) => {
     s += `<text x="10" y="172" font-size="11.5" fill="#635a72">Bench test (TopRight). Still stuck? A USB reset every 30 s.</text>`;
     $('#pv-c29').innerHTML = s;
   }
-  // 32: budget bar
-  {
-    const cv = $('#pv-c32'), st = Site.canvas(cv, 0.16);
-    const cams = [['TopLeft', 1280, '#a78bfa'], ['TopRight', 1280, '#22d3ee'], ['GS 1', 1280, '#f59e0b'], ['GS 2', 1280, '#f472b6'], ['color', 1600, '#a3e635']];
-    const draw = () => {
-      const { ctx, w, h } = st, sc = (w - 2) / 7400, bh = h - 22;
-      ctx.clearRect(0, 0, w, h);
-      let x = 1;
-      ctx.font = '600 10.5px "Plus Jakarta Sans", sans-serif';
-      for (const [n, b, c] of cams) { ctx.fillStyle = c; ctx.fillRect(x, 16, b * sc - 2, bh); ctx.fillStyle = '#0e0518'; if (b * sc > 40) ctx.fillText(n, x + 4, 16 + bh / 2 + 4); x += b * sc; }
-      ctx.fillStyle = '#fff'; ctx.fillRect(6720 * sc, 10, 2, bh + 10);
-      ctx.fillStyle = MUTED; ctx.fillText('bytes reserved per 125 µs: 6,720 of about 6,700, full', 0, 11);
-    };
-    new ResizeObserver(draw).observe(cv.parentElement); draw();
-  }
   // 34: focus score (real variance-of-Laplacian on a synthetic image)
   {
     const cv = $('#pv-c34'), st = Site.canvas(cv, 0.62);
@@ -414,22 +417,6 @@ Site.chapter('photonvision', (root) => {
     box.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; const id = +b.dataset.id; off.has(id) ? off.delete(id) : off.add(id); upd(); });
     upd();
   }
-  // 25: copy settings diagram
-  {
-    const groups = [['Camera', 'exposure, brightness, gain…', 1], ['AprilTag', 'decision margin, detector', 1], ['3D and multi-tag', '', 1], ['Resolution', 'same video modes only', 0], ['Object detection', '', 0]];
-    let s = `<rect x="10" y="70" width="100" height="56" rx="10" fill="#8b5cf6"/><text x="22" y="94" font-size="13" font-weight="700" fill="#fff">TopLeft</text><text x="22" y="112" font-size="11" fill="#f3e8ff">pipeline 0</text>`;
-    groups.forEach(([g, sub, on], i) => {
-      const y = 12 + i * 36;
-      s += `<rect x="140" y="${y}" width="16" height="16" rx="4" fill="${on ? '#8b5cf6' : '#fff'}" stroke="#8b5cf6"/>${on ? `<path d="M143 ${y + 8} l4 4 l6 -8" stroke="#fff" stroke-width="2" fill="none"/>` : ''}<text x="164" y="${y + 13}" font-size="12" font-weight="700" fill="#1f1b23">${g}</text><text x="164" y="${y + 27}" font-size="10" fill="#635a72">${sub}</text>`;
-    });
-    ['TopRight', 'BottomLeft', 'BottomRight'].forEach((n, i) => {
-      const y = 20 + i * 58;
-      s += `<path d="M300 98 C 320 98, 320 ${y + 20}, 336 ${y + 20}" fill="none" stroke="#b69ce0" stroke-width="2"/><rect x="336" y="${y}" width="96" height="40" rx="10" fill="#fff" stroke="#8b5cf6"/><text x="346" y="${y + 25}" font-size="12" font-weight="700" fill="#4c0070">${n}</text>`;
-    });
-    s += `<path d="M110 98 H 132" stroke="#b69ce0" stroke-width="2"/><text x="10" y="194" font-size="10.5" fill="#dc2626">Never copied: names, orientation, each camera's exposure limits.</text>`;
-    $('#pv-c25').innerHTML = s;
-  }
-
   /* ── 7. Bug stories ───────────────────────────────────── */
   {
     const B = [

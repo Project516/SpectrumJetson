@@ -15,13 +15,15 @@ Site.chapter('settings', (root) => {
 
   /* ── Camera simulator ──────────────────────────────────── */
   (async () => {
-    const NAME = '2024-speaker-63in', W = 640, H = 360, N = W * H;
-    const [img, det] = await Promise.all([loadImg(`assets/field-images/${NAME}.jpg`), fetch('assets/field-images/detections.json').then((r) => r.json())]);
+    // a real frame from our TopLeft Thriftiest Cam (probably 5 ms exposure; not recorded), at half size
+    const NAME = 'tag-close_TopLeft', W = 640, H = 400, N = W * H;
+    const [img, fr] = await Promise.all([loadImg(`assets/from-jetson/frames/${NAME}.jpg`), fetch('assets/from-jetson/frames/frames.json').then((r) => r.json())]);
     const c0 = document.createElement('canvas'); c0.width = W; c0.height = H; const x0 = c0.getContext('2d'); x0.drawImage(img, 0, 0, W, H);
     const px = x0.getImageData(0, 0, W, H).data, L = new Float32Array(N);
-    for (let i = 0; i < N; i++) L[i] = (0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2]) / 195; // 1 ≈ the tags' white paper in this frame
+    // light per ms: the frame as shot is taken to be 5 ms (so at 5 ms the simulator reproduces it)
+    for (let i = 0; i < N; i++) L[i] = Math.max(0, px[i * 4] - 8) / 5;
     // the real tags, half-size coordinates, corners TL TR BR BL (the library gives BL BR TR TL)
-    const tags = det[NAME].tags.map((t) => ({ id: t.id, quad: [t.corners[3], t.corners[2], t.corners[1], t.corners[0]].map(([x, y]) => [x / 2, y / 2]), truth: Site.tagGrid(t.id).slice(2, 8).flatMap((r) => r.slice(2, 8)) })).sort((a, b) => a.quad[0][0] - b.quad[0][0]);
+    const tags = fr.find((f) => f.file === NAME).detections.map((t) => { const c = t.corners_px; return { id: t.id, quad: [c[3], c[2], c[1], c[0]].map(([x, y]) => [x / 2, y / 2]), truth: Site.tagGrid(t.id).slice(2, 8).flatMap((r) => r.slice(2, 8)) }; });
     const r = rng(77), Z = Float32Array.from({ length: N + 4099 }, () => gauss(r));
     const view = $('#s-view'); view.width = W; view.height = H;
     const vctx = view.getContext('2d'), out = vctx.createImageData(W, H);
@@ -33,8 +35,8 @@ Site.chapter('settings', (root) => {
     let zoff = 0;
     const render = () => {
       const { exp, gain, bri, con, gam, sharp, spin } = S;
-      // 1. light collected: linear in exposure; 245 levels for white at 8.3 ms (matches margin ~118 there, ~44 at 3 ms)
-      const k = (245 * exp) / 8.3;
+      // 1. light collected: linear in exposure
+      const k = exp;
       // 2. motion blur while the shutter is open: 737 px x spin x exposure at 1280 wide, half that here
       const bl = Math.max(1, (737 * spin * exp) / 1000 / 2);
       for (let y = 0; y < H; y++) {
@@ -44,14 +46,14 @@ Site.chapter('settings', (root) => {
       }
       // 3. photon + read noise, then gain amplifies signal and noise alike; 4. black level, contrast, gamma
       for (let i = 0; i < N; i++) {
-        const sig = s[i], n = Math.sqrt(0.45 * sig + 2.5) * Z[i + zoff];
+        const sig = s[i], n = Math.sqrt(0.25 * sig + 1) * (gain > 1 || exp < 5 ? 1 : 0.35) * Z[i + zoff];
         let q = 8 + gain * (sig + n) + bri;           // 8 = the sensor's small black-level offset
         q = 128 + (q - 128) * con;
         q = q <= 0 ? 0 : 255 * Math.pow(Math.min(q, 400) / 255, 1 / gam);
         v[i] = q;
       }
       // 5. sharpening (unsharp mask): the camera's default is a little; high values ring around edges
-      const amt = (sharp - 5) * 0.3 + 0.5;
+      const amt = (sharp - 5) * 0.3; // the frame already has the camera's default sharpening
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const i = y * W + x;
         if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { sh[i] = v[i]; continue; }
@@ -77,7 +79,8 @@ Site.chapter('settings', (root) => {
         const thr = (blk / nb + wht / nw) / 2;
         let ws = 0, wc = 1, bs = 0, bc = 1, wrong = 0;
         for (let yy = 0; yy < 6; yy++) for (let xx = 0; xx < 6; xx++) { const d = at((xx + 1.5) / 8, (yy + 1.5) / 8) - thr; if (d > 0) { ws += d; wc++; } else { bs -= d; bc++; } if ((d > 0 ? 1 : 0) !== t.truth[yy * 6 + xx]) wrong++; }
-        const m = Math.min(ws / wc, bs / bc), ok = !wrong && m >= 15;
+        // ponytail: one fixed factor. The library formula reads ~43 on this frame at 5 ms; our GPU detector reported 90.
+        const m = 2.1 * Math.min(ws / wc, bs / bc), ok = !wrong && m >= 15;
         t.ok = ok;
         badges += `<span class="badge ${ok ? 'ok' : 'bad'}">Tag ${t.id}: ${wrong ? `${wrong} squares misread ✗` : `margin ${Math.round(m)} ${ok ? '✓' : '✗ below 15'}`}${ok && m < 35 ? ' (default 35 would drop it)' : ''}</span>`;
       });

@@ -127,7 +127,7 @@
         <div class="row"><div class="seg" id="cal-undist"><button data-v="raw" class="on">What the camera sees</button><button data-v="fix">Undistorted</button></div></div>
       </div>
       <div>
-        <div class="seg" id="cal-preset" style="margin-bottom:14px"><button data-v="none">Pinhole</button><button data-v="barrel">Barrel</button><button data-v="pin">Pincushion</button><button data-v="ours" class="on">Our lens</button></div>
+        <div class="seg" id="cal-preset" style="margin-bottom:14px"><button data-v="none">Pinhole</button><button data-v="barrel">Barrel</button><button data-v="pin">Pincushion</button><button data-v="tl" class="on">TopLeft</button><button data-v="ours">TopRight</button></div>
         <div class="ctl"><label>k1 <output></output></label><input type="range" id="cal-k1" min="-0.5" max="0.5" step="0.001" value="0"></div>
         <div class="ctl"><label>k2 <output></output></label><input type="range" id="cal-k2" min="-0.3" max="0.3" step="0.001" value="0"></div>
         <div class="ctl"><label>k3 <output></output></label><input type="range" id="cal-k3" min="-0.3" max="0.3" step="0.001" value="0"></div>
@@ -137,7 +137,7 @@
         <div class="readout"><div><small>Shift at a corner</small><b id="cal-dshift">–</b></div><div><small>Shift at the tag</small><b id="cal-dtag">–</b></div></div>
       </div>
     </div>
-    <p class="hint">"Our lens" is TopRight's real calibration: the 8-number rational model, with fx 737 and the true off-center principal point. The readouts show how far the lens moves a point from where a pinhole would put it: at the image's top-left corner, and at the top-left corner of the tag on the left.</p>
+    <p class="hint">"TopLeft" and "TopRight" are our two cameras' real calibrations: the 8-number rational model, each with its own focal length and off-center principal point (TopLeft's comes straight from the file our Jetson saved). The readouts show how far the lens moves a point from where a pinhole would put it: at the image's top-left corner, and at the top-left corner of the tag on the left.</p>
   </div>
 
   <div class="callout spectrum">
@@ -205,9 +205,12 @@
     </div>
   </div>
 
-  <div class="callout spectrum">
+  <div class="split top" style="margin:26px 0">
+  <div class="callout spectrum" style="margin:0">
     <h5>What we found: 12 × 9, not 9 × 12</h5>
     <p>Our board is labeled "9x12". Entered that way in PhotonVision, every calibration failed with "Negative corner in reprojection error calc". We wrote <code>tests/charuco-board-check/check_board.py</code>, which tries all four combinations of width, height and marker layout on a live camera frame. Only <strong>width 12, height 9</strong> found corners: 78 of 88, with 51 of 54 markers read. Our PhotonVision build (<code>photonvision-23</code>) now starts with our board's settings, in millimeters.</p>
+  </div>
+  <figure class="photo"><img src="assets/from-jetson/screenshots/camera-calibration-card.webp" alt="PhotonVision's Camera Calibration card for TopLeft: 1280x800 calibrated with 0.87 px mean error; ChArUco, Dict_5X5_1000, 30 mm squares, 22 mm markers, board width 12, height 9" loading="lazy"><figcaption>TopLeft's Camera Calibration card, with our board's settings (width 12, height 9) and the saved 1280×800 calibration. From our Jetson, Sept 25, 2026.</figcaption></figure>
   </div>
 
   <h3>From snapshots to lens numbers</h3>
@@ -255,6 +258,54 @@
     <button class="yt-play" type="button" data-yt="GUbWsXU1mac" aria-label="Play video: Camera calibration, First Principles of Computer Vision"><img src="https://i.ytimg.com/vi/GUbWsXU1mac/hqdefault.jpg" alt="" loading="lazy"></button>
     <figcaption><strong>Watch: Camera calibration</strong> (First Principles of Computer Vision, 7:46). Columbia professor Shree Nayar shows how one photo of an object with known 3D points pins down the camera's intrinsic and extrinsic numbers. He uses a 3D target instead of many photos of a flat board, but the idea is the same as the lab you just ran: known points in, lens numbers out.</figcaption>
   </figure>
+
+  <h3>Our real calibration: TopLeft's 43 snapshots</h3>
+  <div class="prose">
+    <p>That was a simulation. Here's the real thing: the calibration file our Jetson saved for the TopLeft camera, with every snapshot, every detected corner and every leftover error. First, three of the snapshot images, with the corners the calibration used.</p>
+  </div>
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Real data</span><h4>Three of TopLeft's calibration snapshots</h4></div>
+    <div class="lab-grid">
+      <div>
+        <canvas id="cal-real-snap" aria-label="A real calibration snapshot of the ChArUco board with the detected corners marked"></canvas>
+        <div class="legend"><span><i style="background:#a3e635"></i>corner used</span><span><i style="background:#f59e0b"></i>corner found, then thrown out as an outlier</span></div>
+      </div>
+      <div>
+        <div class="seg" id="cal-real-pick"><button data-v="img22" class="on">Nearest</button><button data-v="img15">Farthest</button><button data-v="img23">Most tilted</button></div>
+        <div class="readout">
+          <div><small>Board distance</small><b id="cal-rs-d">–</b></div>
+          <div><small>Board tilt</small><b id="cal-rs-t">–</b></div>
+          <div><small>Corners used</small><b id="cal-rs-c">–</b></div>
+          <div><small>Mean error</small><b id="cal-rs-e">–</b></div>
+        </div>
+        <p class="hint">The camera's own 1280×800 gray frames, saved by PhotonVision during calibration. Distance and tilt come from the solved board pose. The markers are the real 5×5 ones.</p>
+      </div>
+    </div>
+    <p class="hint">From our Jetson, Sept 25, 2026.</p>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Real data</span><h4>All 43 snapshots at once</h4></div>
+    <div class="lab-grid">
+      <div>
+        <canvas id="cal-real" class="touch" aria-label="TopLeft's real calibration data: corner coverage, error vectors or board poses"></canvas>
+        <div class="row"><div class="seg" id="cal-real-view"><button data-v="cov" class="on">Where the corners landed</button><button data-v="err">Errors</button><button data-v="3d">Board poses</button></div></div>
+        <div class="legend" id="cal-real-legend"></div>
+      </div>
+      <div>
+        <div class="readout" style="margin-top:0">
+          <div><small>Snapshots</small><b>43</b></div>
+          <div><small>Corners kept</small><b id="cal-real-kept">–</b></div>
+          <div><small>Mean error</small><b id="cal-real-mean">–</b></div>
+          <div><small>fx, fy</small><b id="cal-real-f">–</b></div>
+          <div><small>cx, cy</small><b id="cal-real-c">–</b></div>
+          <div><small>Field of view</small><b>81.9° × 56.9°</b></div>
+        </div>
+        <p class="hint" id="cal-real-note"></p>
+      </div>
+    </div>
+    <p class="hint">TopLeft's saved calibration at 1280×800, from our Jetson, Sept 25, 2026. It was taken before PhotonVision required 100 snapshots. PhotonVision's card rounds the mean error to 0.87 px.</p>
+  </div>
 
   <div class="stats reveal">
     <div class="stat"><b>0.87<small>px</small></b><span>TopLeft mean reprojection error, 97% of corners kept</span></div>
@@ -316,6 +367,11 @@
       </ol>
       <figure class="photo" style="margin-top:14px"><img src="assets/photos/field-3d.jpg" alt="3D view of the field on the Field Calibration page, built from FIRST's field CAD" loading="lazy"><figcaption>The 3D field view on our Field Calibration page, built from <i>FIRST</i>'s own field CAD. Each element is placed by its tags.</figcaption></figure>
     </div>
+  </div>
+
+  <div style="display:grid;gap:26px;margin:30px 0">
+    <figure class="photo" style="max-width:760px"><img src="assets/from-jetson/screenshots/field-calibration-camera-tune-crop.webp" alt="Field Calibration step 1: Tune cards for TopLeft and TopRight with sliders for exposure, gain, brightness, contrast, gamma, sharpness and backlight compensation" loading="lazy"><figcaption>Step 1, the per-camera Tune cards. The room was dark, so the camera views are flat gray with no tags. From our Jetson, Sept 25, 2026.</figcaption></figure>
+    <figure class="photo"><img src="assets/from-jetson/screenshots/field-calibration-results-map-crop.webp" alt="Field Calibration results: each camera's solved height, pitch and roll, and a map and table of every tag's offset, marked as drawn or moved" loading="lazy"><figcaption>Step 4, the results: each camera's solved mount, and every tag's offset marked "as drawn" or "moved". <b>These results come from a synthetic test run</b>, not a real field. From our Jetson, Sept 25, 2026.</figcaption></figure>
   </div>
 
   <div class="callout spectrum">

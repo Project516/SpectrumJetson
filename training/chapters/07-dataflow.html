@@ -62,6 +62,11 @@
   /* threads */
   #dataflow .thr svg { width: 100%; height: auto; }
   #dataflow .thr text { font-family: var(--font); }
+  #dataflow .realframe { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 22px; align-items: center; padding: 18px; margin: 30px 0; }
+  @media (max-width: 760px) { #dataflow .realframe { grid-template-columns: 1fr; } }
+  #dataflow .realframe img { width: 100%; height: auto; border-radius: 10px; }
+  #dataflow .szbar { margin: 10px 0; font-size: .85rem; }
+  #dataflow .szbar i { display: flex; align-items: center; height: 26px; border-radius: 6px; padding-left: 8px; font: 700 .76rem var(--mono); font-style: normal; color: #1a0a2b; white-space: nowrap; margin-top: 4px; }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -75,13 +80,25 @@
     <div class="prose">
       <div class="callout analogy" style="margin-top:0"><h5>A workbench and a filing cabinet</h5><p><b>RAM</b> is your workbench: everything you're working on right now, within arm's reach, but cleared when the power goes off. The <b>SSD</b> is the filing cabinet across the room: huge and permanent, but you have to walk to it. <b>Caches</b> are the few tools in your hand: tiny, but instant.</p></div>
       <p>Every step of a frame's journey reads from memory and writes back to it. The Jetson's RAM moves up to <strong>102 GB per second</strong>. A whole 1280×800 gray image is about 1 MB (one byte per pixel), so at that speed it could cross in about 10 microseconds.</p>
-      <p>The slow road is the USB cable. Each of our cameras gets a 10.2 MB/s share of the USB 2.0 bus. A raw 1 MB frame would take 100 ms to squeeze through, far too slow for 120 frames a second. That's why the camera compresses every frame to a ~50 KB <span class="term">JPEG</span> first: then it crosses in about 5 ms.</p>
+      <p>The slow road is the USB cable. Each of our cameras gets a 10.2 MB/s share of the USB 2.0 bus. A raw 1 MB frame would take 100 ms to squeeze through, far too slow for 120 frames a second. That's why the camera compresses every frame to a <span class="term">JPEG</span> of about 50 KB first (our real frames: 49.7–60.4 KB): then it crosses in about 5 ms.</p>
     </div>
     <div class="fig reveal" style="padding:18px 18px 8px">
       <div class="ladder" id="d-ladder"></div>
       <figcaption style="padding:10px 0 0">Bar length: size, on a log scale (each step right is 10× more). CPU cache sizes and RAM bandwidth are NVIDIA's specs; the USB share is our camera's allocation.</figcaption>
     </div>
   </div>
+
+  <figure class="fig realframe reveal">
+    <img src="assets/from-jetson/frames/tag-close_TopLeft.jpg" alt="A real 1280 by 800 gray frame from the TopLeft camera: AprilTag 3 on a box on a bench" loading="lazy" width="1280" height="800">
+    <div>
+      <h4 style="margin:0 0 6px">One real frame, two sizes</h4>
+      <p class="small muted" style="margin:0">A frame from our TopLeft camera: tag 3 on the bench, nearly straight on.</p>
+      <div class="szbar">As the camera's JPEG, over USB<i style="width:5.2%;min-width:max-content;background:#fbbf24">52,801 bytes</i></div>
+      <div class="szbar">Decoded to gray in RAM (1280 × 800, one byte per pixel)<i style="width:100%;background:#a3e635">1,024,000 bytes</i></div>
+      <p class="small muted" style="margin:0">The JPEG is about 19× smaller. Our other saved frames are 49,745 and 60,415 bytes: a busier picture compresses less.</p>
+      <figcaption style="padding:8px 0 0">From our Jetson's Rewind recordings (Sept 24, 2026): the camera's own JPEG, byte for byte.</figcaption>
+    </div>
+  </figure>
 
   <h3>Ride along with one frame</h3>
   <p class="prose">Scroll, and follow a single frame through the Jetson. The green path shows where it is. The clock counts from the middle of the exposure, the moment the frame's <span class="term">timestamp</span> describes.</p>
@@ -96,7 +113,7 @@
     </div>
     <div class="steps">
       <div class="step"><div class="box"><span class="kicker">1 · The shutter</span><h4>Light in, for 5 ms</h4><p>The camera's global shutter opens every pixel at once for 5 ms (our exposure setting), then closes. The frame's timestamp marks the <em>middle</em> of that window, when the tag was really where the picture shows it.</p></div></div>
-      <div class="step"><div class="box"><span class="kicker">2 · Down the cable</span><h4>JPEG in 125 µs slices <span class="t">≈ 4.9 ms</span></h4><p>The camera compresses the frame to a ~50 KB JPEG and sends it in USB <span class="term">microframe</span>s: up to 1280 bytes every 125 µs, the booking our driver gives it (chapter 06). About 40 slices later, the frame is across.</p><p class="small muted">Before sending, the camera also spends time reading out its sensor and compressing. We haven't measured that yet; it's on our list for the robot.</p></div></div>
+      <div class="step"><div class="box"><span class="kicker">2 · Down the cable</span><h4>JPEG in 125 µs slices <span class="t">≈ 4.9 ms</span></h4><p>The camera compresses the frame to a JPEG of about 50 KB (the one above is 52,801 bytes) and sends it in USB <span class="term">microframe</span>s: up to 1280 bytes every 125 µs, the booking our driver gives it (chapter 06). About 40 slices later, the frame is across.</p><p class="small muted">Before sending, the camera also spends time reading out its sensor and compressing. We haven't measured that yet; it's on our list for the robot.</p></div></div>
       <div class="step"><div class="box"><span class="kicker">3 · Straight into RAM</span><h4>No CPU needed</h4><p>The USB controller writes each packet directly into a buffer in RAM. This is <span class="term">DMA</span>: hardware copying data by itself while the CPU does other things. The CPU never touches the bytes on the way in.</p></div></div>
       <div class="step"><div class="box"><span class="kicker">4 · The driver</span><h4>"Buffer ready"</h4><p>When the last packet lands, the kernel's <code>uvcvideo</code> driver marks the buffer done. It stamped the time when the frame's <em>first</em> packet arrived; PhotonVision later moves that stamp back to mid-exposure.</p></div></div>
       <div class="step"><div class="box"><span class="kicker">5 · PhotonVision</span><h4>Grab the raw JPEG</h4><p>The camera's thread in PhotonVision picks up the frame through cscore. Thanks to our patch <code>photonvision-09</code>, it takes the JPEG untouched instead of letting cscore decode it to color first (which cost 8.9 ms a frame).</p></div></div>

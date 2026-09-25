@@ -316,33 +316,45 @@ Site.chapter('failsafes', (root) => {
     select(FAULTS[0]);
   }
 
-  /* ── health-check terminal ─────────────────────────────── */
+  /* ── health-check terminal: the real output, loaded verbatim ── */
   {
     const pre = $('#f-term');
-    const L = [
-      ['c', '$ ~/SpectrumJetson/scripts/jetson/health-check.sh'],
-      ['h', '== PhotonVision'], ['p', 'running 1843s, version dev-v2026.3.4-spectrum'],
-      ['h', '== CUDA detector'], ['p', '971 bos detector loaded (mwbd 20)'], ['p', 'h0: 122 fps, detect 1.6 ms'], ['p', 'h1: 122 fps, detect 1.6 ms'],
-      ['p', 'JPEG decode: NVJPG hardware, 244 frames/s (checks: 12 ok, 0 differ)'], ['p', 'calibration loaded for 2 detector(s), 8 lens coefficients'],
-      ['h', '== Cameras'], ['p', 'TopLeft on USB port 2.1 (480 Mbps, autosuspend off)'], ['p', 'TopRight on USB port 2.3 (480 Mbps, autosuspend off)'],
-      ['p', 'TopLeft streaming 1280x800 MJPG, as set'], ['p', 'TopRight streaming 1280x800 MJPG, as set'], ['p', 'camera driver: bandwidth cap 1bcf:28c5:1280'],
-      ['p', 'USB controller watchdog running'], ['p', 'USB bandwidth reserved: 2560 per microframe (usb-bandwidth.py for details)'],
-      ['h', '== Robot connection'], ['w', 'not connected to the robot (server team is 8515); expected off the robot'], ['x', '        addresses: enP8p1s0 10.85.15.15/24'],
-      ['w', 'Wi-Fi is connected: turn it off before competition (robot coprocessors may not use radios)'],
-      ['h', '== System'], ['p', 'power mode MAXN SUPER'], ['p', 'clocks locked (CPU 1728 MHz, GPU 1020 MHz)'], ['p', 'hottest sensor tj 43 C'], ['p', 'memory available 5230 MB'], ['p', 'disk 11% used'],
-      ['p', 'fan at full speed: 5586 rpm (jetson_clocks)'], ['p', 'clock: 2026-09-25 18:04 UTC'], ['p', 'filesystem: no ext4 errors recorded'], ['p', 'system log kept across power cuts (6 boot(s) on file)'],
-      ['x', '        boot time: 16.5s (multi-user.target)'], ['r', 'READY (2 warning(s))'],
-    ];
+    // our notes, shown under the line that contains the key (not part of the output)
+    const NOTES = {
+      'running 13212s': 'PhotonVision had been up 3.7 hours without a restart',
+      'h0: 60 fps': 'h0–h3: one CUDA detector per camera. ~1 ms per frame here (no tags in view)',
+      'NVJPG hardware': 'the hardware JPEG decoder, checked against the CPU decoder: 0 differences',
+      'calibration loaded for only 2 of 4': 'the two Global Shutter test cameras aren\'t calibrated yet; the Thriftiest Cams are',
+      'on USB port 2.1': 'every camera found on the port it belongs to (names follow ports)',
+      'bandwidth cap': 'our capped camera driver, with per-port allocations',
+      'USB bandwidth reserved': '4 cameras use 3840 of the ~6720-byte USB 2.0 budget',
+      'not connected to the robot': 'expected: this ran on the bench, not on the robot',
+      'Wi-Fi is connected': 'on the to-do list: Wi-Fi goes off before competition',
+      'fan: NVIDIA fan control': 'the fan was on NVIDIA\'s quiet profile for this capture; the check confirms it really spins',
+      'filesystem: no ext4 errors': 'no damage from power cuts',
+      'boot time: 16.517s': 'matches systemd-analyze: 16.5 s',
+    };
     const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    const line = ([k, s]) => k === 'p' ? `  <span class="p">PASS</span>  ${esc(s)}` : k === 'w' ? `  <span class="w">WARN</span>  ${esc(s)}` : k === 'h' ? `<span class="h">${esc(s)}</span>` : k === 'r' ? `<span class="r">${esc(s)}</span>` : esc(s);
-    let started = false;
-    Site.onVisible(pre, (v) => {
-      if (!v || started) return; started = true;
-      if (Site.reduced) { pre.innerHTML = L.map(line).join('\n'); return; }
+    const fmt = (s) => {
+      let h = esc(s).replace(/^  PASS /, '  <span class="p">PASS</span> ').replace(/^  WARN /, '  <span class="w">WARN</span> ').replace(/^  FAIL /, '  <span class="f">FAIL</span> ');
+      if (/^== /.test(s)) h = `<span class="h">${h}</span>`;
+      if (/^(READY|NOT READY)/.test(s)) h = `<span class="r">${h}</span>`;
+      const k = Object.keys(NOTES).find((n) => s.includes(n));
+      return k ? h + `\n<span class="a">        ◂ ${esc(NOTES[k])}</span>` : h;
+    };
+    let lines = null, started = false;
+    fetch('assets/from-jetson/terminal/health-check.txt').then((r) => r.text()).then((t) => {
+      lines = ['<span class="c">$ ~/SpectrumJetson/scripts/jetson/health-check.sh 4</span>', ...t.replace(/\r/g, '').replace(/\s+$/, '').split('\n').map(fmt)];
+      go();
+    }).catch(() => { pre.textContent = 'Could not load health-check.txt'; });
+    const go = () => {
+      if (!lines || !started) return;
+      if (Site.reduced) { pre.innerHTML = lines.join('\n'); return; }
       let i = 0;
-      const tick = () => { pre.innerHTML = L.slice(0, ++i).map(line).join('\n') + (i < L.length ? '\n<span class="p">▌</span>' : ''); if (i < L.length) setTimeout(tick, i === 1 ? 700 : 90); };
+      const tick = () => { pre.innerHTML = lines.slice(0, ++i).join('\n') + (i < lines.length ? '\n<span class="p">▌</span>' : ''); if (i < lines.length) setTimeout(tick, i === 1 ? 700 : 80); };
       tick();
-    }, '-20% 0px');
+    };
+    Site.onVisible(pre, (v) => { if (v && !started) { started = true; go(); } }, '-20% 0px');
   }
 
   /* ── Telemetry dashboard ───────────────────────────────── */
@@ -407,7 +419,7 @@ Site.chapter('failsafes', (root) => {
       h += bar(30, 0, 6.9, '#94a3b8', n ? '' : 'kernel') + bar(30, 6.9, 56.9, '#cbd5e1', n ? 'services 50 s' : 'services: 50.0 s (snapd alone waited 45 s)');
       h += `<text x="${X(56.9) + 5}" y="52" style="font:700 ${fs}px var(--font);fill:#635a72">${n ? '57 s' : '56.9 s'}</text>`;
       h += `<text x="${x0 - 10}" y="112" text-anchor="end" style="font:700 14px var(--font-heading);fill:#4c0070">Tuned</text>`;
-      h += bar(90, 0, 9.0, '#6b1199', n ? '' : 'kernel') + bar(90, 9.0, 16.5, '#8b5cf6', n ? '' : '7.6 s');
+      h += bar(90, 0, 8.8, '#6b1199', n ? '' : 'kernel 8.8 s') + bar(90, 8.8, 16.5, '#8b5cf6', n ? '' : '7.7 s');
       h += `<text x="${X(16.5) + 5}" y="${n ? 84 : 112}" style="font:700 ${fs}px var(--font);fill:#4c0070">16.5 s</text>`;
       h += `<line x1="${X(14.7)}" y1="82" x2="${X(14.7)}" y2="150" stroke="#06b6d4" stroke-width="2" stroke-dasharray="4 3"/><text x="${X(14.7) - 4}" y="150" text-anchor="end" style="font:600 11.5px var(--font);fill:#0e7490">${n ? 'PV starts' : 'PhotonVision starts 14.7 s'}</text>`;
       h += `<line x1="${X(20)}" y1="82" x2="${X(20)}" y2="150" stroke="#16a34a" stroke-width="2.5"/><text x="${X(20) + 5}" y="150" style="font:700 11.5px var(--font);fill:#15803d">${n ? 'detecting ~20 s' : 'first tag detected ~20 s'}</text>`;

@@ -89,6 +89,14 @@
   #linux .flash-steps .card { padding: 16px; }
   #linux .flash-steps .card svg { width: 100%; height: 110px; margin-bottom: 8px; }
   #linux .flash-steps .card h4::before { counter-increment: fs; content: counter(fs) ". "; color: var(--accent); }
+  #linux .tb { background: #0e0518; border-radius: 12px; padding: 14px 16px; font: 500 .8rem/1.65 var(--mono); color: #d6ccf0; overflow-x: auto; white-space: pre; margin: 0; font-feature-settings: "calt" 0, "liga" 0; }
+  #linux .tb .pr { color: #a3e635; } #linux .tb .cm { color: #fbbf24; } #linux .tb .dm { color: #6f6388; } #linux .tb .hi { color: #fff; background: rgba(163,230,53,.18); border-radius: 3px; }
+  @media (max-width: 560px) { #linux .tb { font-size: .64rem; padding: 12px; } }
+  #linux figure.tout { margin: 0; min-width: 0; }
+  #linux figure.tout figcaption { font-size: .8rem; color: var(--muted); padding: 8px 2px 0; }
+  #linux .lab figure.tout figcaption { color: var(--lab-muted); }
+  #linux .termsplit { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 22px; align-items: start; margin: 26px 0; }
+  @media (max-width: 860px) { #linux .termsplit { grid-template-columns: 1fr; } }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -178,6 +186,22 @@
   </figure>
 
   <div class="callout spectrum"><h5>What we did: a one-knob patch</h5><p>Our patch (<code>kernel/uvcvideo-payload-cap.patch</code>) adds one setting to the driver, <code>payload_cap</code>. For the Thriftiest Cam it caps the booking at <strong>1280 bytes</strong> (82 Mbps), still about 1.4× the largest frame we've measured at 120 fps. Now <strong>4 cameras fit on the USB-A ports, plus a 5th</strong> at 1600 bytes on a USB-C hub. Tested with 2 cameras: 122 fps each, every frame complete. The price is that a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so results reach the robot ~2 ms later. Timestamps don't get worse: the driver stamps a frame when its <em>first</em> packet arrives. The patch also counts each camera's bytes and largest frames, which feeds the USB bandwidth card in PhotonVision (chapter 10 goes deep on that).</p></div>
+
+  <div class="termsplit reveal">
+    <figure class="tout"><pre class="tb"><span class="pr">$</span> scripts/jetson/usb-bandwidth.py
+<span class="dm">USB camera bandwidth (all the Jetson's USB 2.0 ports share about 6720 bytes per 125 us microframe)</span>
+<span class="hi">Bus 1: reserving 3840 of ~6720 bytes per microframe</span>
+  port 1-2.1  TopLeft = Thrifty (1bcf:28c5):  <span class="hi">1280 bytes now</span>, streaming; <span class="dm">alternate settings 192-3060 bytes,</span> capped at 1280
+  port 1-2.2  Global_Shutter_Camera (1) (32e4:0144):   640 bytes now, streaming; capped at 640
+  port 1-2.3  TopRight = Thrifty (1bcf:28c5):  <span class="hi">1280 bytes now</span>, streaming; <span class="dm">alternate settings 192-3060 bytes,</span> capped at 1280
+  port 1-2.4  Global_Shutter_Camera (32e4:0144):   640 bytes now, streaming; capped at 640
+
+Every camera fits, and nothing failed to connect.</pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running). Shortened: the model names and the driver's full cap list are trimmed.</figcaption></figure>
+    <div class="prose">
+      <p style="margin-top:0"><strong>The patch at work.</strong> Our script reads the driver's bookings. Four cameras on the USB-A hub book <strong>3840</strong> of the bus's ~6720 bytes.</p>
+      <p>Each Thriftiest Cam could book anything from 192 to 3060 bytes, and the stock driver would take 3060. Ours caps it at <strong>1280</strong>. The two global-shutter cameras run at 60 fps and have per-port caps of 640, set from PhotonVision's Camera Matching page (chapter 10).</p>
+    </div>
+  </div>
 
   <h3>What a patch file is</h3>
   <div class="split top">
@@ -284,7 +308,24 @@ cat /sys/module/uvcvideo/parameters/payload_cap</pre>
       <div class="track"><h5>After our tuning <span>16.5 s</span></h5><div class="lane" data-t="after"></div></div>
     </div>
     <div class="axis"><span>0</span><span>10</span><span>20</span><span>30</span><span>40</span><span>50</span><span>60 s</span></div>
-    <p class="hint">Measured with <code>systemd-analyze</code> (Sept 24, 2026). Before, PhotonVision already started at ~12 s, but the system was still busy for another 45 s; first detection wasn't measured. After, PhotonVision starts at 14.7 s (it now waits for the clocks to be locked) and both cameras detect tags at 19.9 and 20.1 s.</p>
+    <p class="hint">Measured with <code>systemd-analyze</code> (before: Sept 24, 2026; after: the output below). Before, PhotonVision already started at ~12 s, but the system was still busy for another 45 s; first detection wasn't measured. After, PhotonVision starts at 14.7 s (it now waits for the clocks to be locked) and both cameras detect tags at 19.9 and 20.1 s.</p>
+  </div>
+
+  <div class="termsplit reveal">
+    <figure class="tout"><pre class="tb"><span class="pr">$</span> systemd-analyze
+Startup finished in <span class="hi">8.782s (kernel)</span> + <span class="hi">7.734s (userspace)</span> = <span class="hi">16.517s</span>
+multi-user.target reached after 6.183s in userspace
+
+<span class="pr">$</span> systemd-analyze blame | head -5   <span class="cm"># the slowest services</span>
+2.050s lvm2-monitor.service
+2.042s systemd-update-utmp.service
+1.879s dev-nvme0n1p1.device
+1.493s systemd-udev-trigger.service
+1.470s nv-ftpm-device-provision.service</pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running).</figcaption></figure>
+    <div class="prose">
+      <p style="margin-top:0"><strong>Reading it.</strong> The kernel took 8.8 s to start, then systemd took 7.7 s to start every service: 16.5 s in all, the same as when we first measured it the day before.</p>
+      <p><code>blame</code> lists the slowest services. <code>snapd.seeded</code> is gone from the list. The slowest one left takes 2 s, and they run side by side, so none of them is worth chasing for now.</p>
+    </div>
   </div>
 
   <h3>Everything else we tuned</h3>

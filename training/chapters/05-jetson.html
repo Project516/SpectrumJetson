@@ -75,6 +75,29 @@
   @media (max-width: 640px) { #jetson .cmp-row { grid-template-columns: 1fr; gap: 6px; } }
   #jetson .spec td:first-child { font-weight: 600; white-space: nowrap; }
   #jetson .soc-cards .card .icon { font-family: var(--font-heading); font-weight: 800; font-size: 1.35rem; color: var(--p600); }
+  /* real terminal output */
+  #jetson .tb { background: #0e0518; border-radius: 12px; padding: 14px 16px; font: 500 .8rem/1.65 var(--mono); color: #d6ccf0; overflow-x: auto; white-space: pre; margin: 0; font-feature-settings: "calt" 0, "liga" 0; }
+  @media (max-width: 560px) { #jetson .tb:not(.tg) { font-size: .64rem; padding: 12px; } }
+  #jetson .tb .pr { color: #a3e635; }
+  #jetson .tb .cm { color: #fbbf24; }
+  #jetson .tb .dm { color: #6f6388; }
+  #jetson figure.tout { margin: 0; min-width: 0; }
+  #jetson figure.tout figcaption { font-size: .8rem; color: var(--muted); padding: 8px 2px 0; }
+  #jetson .lab figure.tout figcaption { color: var(--lab-muted); }
+  #jetson .tg { white-space: pre-wrap; word-break: break-all; font-size: .84rem; line-height: 1.9; }
+  #jetson .tg [data-f] { border-bottom: 3px solid var(--c); padding-bottom: 1px; cursor: help; border-radius: 2px; transition: background .2s; }
+  #jetson .tg [data-f]::before { content: attr(data-n); font: 700 .6rem var(--font); background: var(--c); color: #1a0a2b; border-radius: 50%; width: 15px; height: 15px; display: inline-grid; place-items: center; margin-right: 4px; vertical-align: 2px; }
+  #jetson .tg [data-f].on { background: rgba(255,255,255,.12); }
+  #jetson .tfields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-top: 14px; }
+  #jetson .tfields div { background: rgba(255,255,255,.04); border: 1px solid var(--lab-line); border-left: 4px solid var(--c); border-radius: 10px; padding: 9px 12px; font-size: .84rem; color: var(--lab-muted); line-height: 1.4; transition: background .2s; cursor: pointer; }
+  #jetson .tfields div.on { background: rgba(255,255,255,.1); }
+  #jetson .tfields b { display: block; color: #fff; font: 700 .95rem var(--font-heading); margin-bottom: 2px; }
+  #jetson .usbtree { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; align-items: start; margin: 26px 0; }
+  @media (max-width: 860px) { #jetson .usbtree { grid-template-columns: 1fr; } }
+  #jetson .usbnotes { list-style: none; padding: 0; margin: 0; counter-reset: u; }
+  #jetson .usbnotes li { position: relative; padding-left: 30px; margin-bottom: 9px; font-size: .9rem; }
+  #jetson .usbnotes li::before { counter-increment: u; content: counter(u); position: absolute; left: 0; top: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fbbf24; color: #1a0a2b; display: grid; place-items: center; font: 700 .7rem var(--font); }
+  #jetson .tb .n { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: #fbbf24; color: #1a0a2b; font: 700 .64rem var(--font); }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -221,6 +244,29 @@
 
   <div class="callout spectrum"><h5>What we found: there is only one USB 2.0 bus</h5><p>We assumed the USB-C port would give our cameras a second road. It doesn't. On 2026-09-24 we tested it by asking cameras to reserve bandwidth on different ports: the four USB-A ports, the USB-C port and the Wi-Fi card's Bluetooth all share <strong>one USB 2.0 budget</strong> of about 6700 bytes every 125 µs. USB 3 is a separate bus with its own budget, but our $50 cameras are USB 2.0. Chapter 06 shows the driver patch that fits more cameras into it, and chapter 10 the whole bandwidth story.</p></div>
 
+  <div class="usbtree reveal">
+    <figure class="tout"><pre class="tb"><span class="pr">$</span> lsusb -t   <span class="cm"># the USB tree (each camera's 2nd line, "If 1", hidden)</span>
+/:  Bus 02.Port 1: Dev 1, Class=root_hub, Driver=tegra-xusb/4p, 10000M <span class="n">1</span>
+    |__ Port 1: Dev 2, If 0, Class=Hub, Driver=hub/4p, 10000M
+/:  Bus 01.Port 1: Dev 1, Class=root_hub, Driver=tegra-xusb/4p, 480M <span class="n">2</span>
+    |__ Port 2: Dev 2, If 0, Class=Hub, Driver=hub/4p, 480M <span class="n">3</span>
+        |__ Port 1: Dev 4, If 0, Class=Video, Driver=uvcvideo, 480M <span class="n">4</span>
+        |__ Port 4: Dev 7, If 0, Class=Video, Driver=uvcvideo, 480M
+        |__ Port 2: Dev 5, If 0, Class=Video, Driver=uvcvideo, 480M
+        |__ Port 3: Dev 6, If 0, Class=Video, Driver=uvcvideo, 480M
+    |__ Port 3: Dev 3, If 0, Class=Wireless, Driver=rtk_btusb, 12M <span class="n">5</span></pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running).</figcaption></figure>
+    <div class="prose">
+      <p style="margin-top:0">You can see the one-bus rule in Linux's own list of USB devices:</p>
+      <ol class="usbnotes">
+        <li><b>Bus 02</b> is the USB 3 bus (10000M = 10 Gbps). Only the hub's USB 3 half is on it, and none of our cameras.</li>
+        <li><b>Bus 01</b> is the USB 2.0 bus (480M = 480 Mbps). Everything under it shares one budget.</li>
+        <li>Its port 2 is the carrier board's hub: the four USB-A ports (<code>1-2</code>).</li>
+        <li>Our four cameras, each run by the <code>uvcvideo</code> driver: TopLeft on hub port 1, TopRight on 3, the two global-shutter cameras on 2 and 4.</li>
+        <li>Port 3 is the Wi-Fi card's Bluetooth (<code>rtk_btusb</code>), on the very same bus. The USB-C port (port 1) has nothing plugged in.</li>
+      </ol>
+    </div>
+  </div>
+
   <details class="deep"><summary>The full spec sheet, checked against NVIDIA</summary><div>
     <div class="table-wrap"><table class="data spec">
       <tr><th>Part</th><th>Jetson Orin Nano Super Developer Kit (8 GB)</th></tr>
@@ -251,6 +297,9 @@
     <div class="prose">
       <p>The same board can run cool and slow or hot and fast. NVIDIA calls these <strong>power modes</strong>, and you switch with one command, <code>nvpmodel</code>. The "Super" in the name comes from a 2024 software update that unlocked a faster mode on the same hardware: GPU 635 → 1020 MHz, CPU 1.5 → 1.7 GHz, memory 68 → 102 GB/s.</p>
       <p>We use the fastest, <strong>MAXN SUPER</strong> (<code>sudo nvpmodel -m 2</code>), and then lock every clock at its maximum with <code>jetson_clocks</code> at every boot. A locked clock means the detector takes the same time on every frame, instead of waiting for the chip to speed up.</p>
+      <figure class="tout"><pre class="tb"><span class="pr">$</span> nvpmodel -q     <span class="cm"># "query": which mode are we in?</span>
+NV Power Mode: MAXN_SUPER
+2                <span class="cm"># its number: mode 2</span></pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running).</figcaption></figure>
     </div>
     <div class="flow" style="margin:0">
       <div class="node"><b>15 W</b>mode 0<br><span class="small muted">cooler, slower</span></div>
@@ -260,7 +309,21 @@
       <div class="node" style="border-color:var(--accent);background:var(--accent-low)"><b>MAXN SUPER</b>mode 2<br><span class="small muted">ours: CPU 1728 MHz, GPU 1020 MHz</span></div>
     </div>
   </div>
-  <p class="prose">Fast mode doesn't mean it burns 25 W all the time. With two cameras detecting, our whole Jetson draws <strong>8.6–9.5 W</strong>, about as much as a phone charger. The limit is heat, not the battery.</p>
+  <p class="prose">Fast mode doesn't mean it burns 25 W all the time. NVIDIA's <code>tegrastats</code> tool prints what the chip is doing, once a second. Here's one real line from our Jetson with <strong>four cameras</strong> running at full speed: under 10 W, about as much as a phone charger. Hover a part of the line, or tap a card, to see what it means.</p>
+  <div class="lab reveal" id="j-tegra">
+    <div class="lab-head"><span class="tag">Real data</span><h4>A live readout, decoded</h4></div>
+    <figure class="tout"><pre class="tb tg"><span class="dm">09-25-2026 07:53:14</span> <span data-f="ram" data-n="1" style="--c:#a3e635">RAM 2338/7607MB</span> <span class="dm">(lfb 5x4MB)</span> <span data-f="swap" data-n="2" style="--c:#86efac">SWAP 0/3804MB</span> <span class="dm">(cached 0MB)</span> <span data-f="cpu" data-n="3" style="--c:#c4b5fd">CPU [8%@1728,19%@1728,14%@1728,17%@1728,15%@1728,12%@1728]</span> <span data-f="gpu" data-n="4" style="--c:#22d3ee">GR3D_FREQ 19%</span> <span data-f="temp" data-n="5" style="--c:#fbbf24">cpu@54.062C soc2@52.656C soc0@53.593C gpu@54.781C tj@55.031C soc1@53.718C</span> <span data-f="in" data-n="6" style="--c:#f9a8d4">VDD_IN 9650mW/9650mW</span> <span data-f="cg" data-n="7" style="--c:#fda4af">VDD_CPU_GPU_CV 2838mW/2838mW</span> <span data-f="soc" data-n="8" style="--c:#fdba74">VDD_SOC 3080mW/3080mW</span></pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running, JPEG hardware decode on).</figcaption></figure>
+    <div class="tfields">
+      <div data-f="ram" style="--c:#a3e635"><b>1 · Memory: 2.3 of 7.6 GB</b>RAM in use, out of what Linux can use (a little of the 8 GB is set aside for the hardware). Plenty to spare.</div>
+      <div data-f="swap" style="--c:#86efac"><b>2 · Swap: 0 MB</b>Overflow space on the SSD for when RAM runs out. None used, which is what you want: swap is slow.</div>
+      <div data-f="cpu" style="--c:#c4b5fd"><b>3 · Six CPU cores</b>One entry per core: how busy it is, @ its clock in MHz. All six are locked at 1728 MHz and only 8–19% busy.</div>
+      <div data-f="gpu" style="--c:#22d3ee"><b>4 · GPU: 19% busy</b>"GR3D" is the GPU. Over this 10-second capture it read 16–19%, with four cameras' detectors sharing it.</div>
+      <div data-f="temp" style="--c:#fbbf24"><b>5 · Temperatures: ~53–55 °C</b>Sensors around the chip; <code>tj</code> is the hottest spot. Throttling starts at 99 °C.</div>
+      <div data-f="in" style="--c:#f9a8d4"><b>6 · Total power: 9.65 W</b>Everything the board takes in (now / average). Well under the 25 W mode's budget.</div>
+      <div data-f="cg" style="--c:#fda4af"><b>7 · CPU + GPU: 2.8 W</b>The power rail that feeds the CPU cores and the GPU (plus the "CV" vision blocks).</div>
+      <div data-f="soc" style="--c:#fdba74"><b>8 · Rest of the chip: 3.1 W</b>The rail for the rest of the SoC: memory controller, JPEG engines and more.</div>
+    </div>
+  </div>
 
   <div class="lab reveal" id="j-therm">
     <div class="lab-head"><span class="tag">Lab</span><h4>Could it survive a match without the fan?</h4></div>

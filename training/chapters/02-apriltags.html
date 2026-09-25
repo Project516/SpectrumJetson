@@ -57,6 +57,9 @@
   #apriltags .hgrid span.w { background: #fff; }
   #apriltags .hgrid span.flip { box-shadow: inset 0 0 0 3px #f59e0b; }
   #apriltags .hgrid span.bad { box-shadow: inset 0 0 0 3px #f43f5e; }
+  #apriltags .ours { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 10px; padding: 14px 14px 0; }
+  #apriltags .ours canvas { width: 100%; height: auto; border-radius: 8px; }
+  @media (max-width: 600px) { #apriltags .ours { grid-template-columns: 1fr; } }
   #apriltags .twin { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   #apriltags .twin canvas, #apriltags canvas#a-open, #apriltags canvas#a-far { width: 100%; height: auto; border-radius: 8px; }
   #apriltags .hbars { width: 100%; height: auto; margin-top: 8px; }
@@ -246,6 +249,11 @@
     </div>
   </div>
 
+  <figure class="fig reveal" style="margin:30px 0">
+    <div class="ours"><canvas id="a-ours" aria-label="A real frame from our TopLeft Thriftiest Cam: tag 3 leaning against a wall, outlined by our detector"></canvas><canvas id="a-ours-zoom" aria-label="Zoom on tag 3 with its four detected corners"></canvas></div>
+    <figcaption>What our camera actually sees: a real frame from our TopLeft Thriftiest Cam (Sept 24, 2026), exactly as the detector gets it, 1280 × 800 in black and white. Tag 3 is about 0.8 m away and 151 px wide. Our CUDA detector found it with 0 wrong squares and a decision margin of <strong>90</strong>; the red dots are its four corners.</figcaption>
+  </figure>
+
   <div class="callout idea"><h5>Why a GPU?</h5><p>Steps 2–4 do the same small job for every one of a million pixels, and each pixel barely depends on the others. That's perfect work for a <span class="term">GPU</span>, which has 1,024 small cores that all work at once. Our detector, written by Austin Schuh of FRC 971, runs those steps on the Jetson's GPU in <span class="term">CUDA</span>, then the <span class="term">CPU</span> decodes the few quads that survive. All of it takes about 2 ms per frame. Chapter 08 shows how.</p></div>
 
   <details class="deep"><summary>The detector's real settings</summary><div>
@@ -287,7 +295,7 @@
 
   <figure class="fig reveal" style="margin:30px 0">
     <canvas id="a-far" width="1280" height="720" aria-label="A 2024 field frame with tags 9 and 10 far away and tag 15 at the edge of the image, each labeled with its decision margin"></canvas>
-    <figcaption>Real decision margins from one frame. Tags 9 and 10 are far away but face the camera: 57.5 and 72.6. Tag 15 is close but cut off at the image edge, turned away and darker: only <strong>28.7</strong>. PhotonVision's default cutoff of 35 would drop it; our cutoff of 15 keeps it. (PhotonVision test image, GPL-3.0; margins from the AprilTag library.)</figcaption>
+    <figcaption>Real decision margins from one frame. Tags 9 and 10 are far away but face the camera: 57.5 and 72.6. Tag 15 is close but cut off at the image edge, turned away and darker: only <strong>28.7</strong>. With PhotonVision's default cutoff of 35, the CPU pipeline would drop it. (PhotonVision test image, GPL-3.0; margins from the CPU AprilTag library. Our GPU detector reports margins on its own scale, so compare numbers from one detector only.)</figcaption>
   </figure>
 
   <div class="callout spectrum"><h5>What we found</h5><p>On the bench, decision margin tracked exposure: about <strong>44 at 3 ms</strong> and about <strong>118 at 8.3 ms</strong>. With PhotonVision's default cutoff of 35, short exposures sat right at the edge, and tags flickered in and out of detection even though the raw detector found the tag in 100% of frames. We run a short 5 ms exposure (less motion blur, chapter 04) with the cutoff lowered to <strong>15</strong>. That's safe because a false tag would also need a perfect 36h11 match.</p></div>

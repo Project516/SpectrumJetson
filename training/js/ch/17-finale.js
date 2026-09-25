@@ -4,50 +4,55 @@ Site.chapter('finale', (root) => {
 
   /* ── Follow one frame ──────────────────────────────────── */
   {
-    const IW = 1280, IH = 720;
-    // Real detections on this image (assets/field-images/detections.json). Library order: BL, BR, TR, TL.
+    const IW = 1280, IH = 800;
+    // Our TopLeft camera, Rewind recording 0007 frame 51 (assets/from-jetson/frames/frames.json).
+    // Corners from the Jetson's CUDA detector, in AprilTag order: BL, BR, TR, TL.
     const TAGS = [
-      { id: 4, dm: 82.4, c: [675.8, 383.9], k: [[641.5, 417.5], [710.5, 417.2], [709.7, 350.7], [641.6, 351.2]] },
-      { id: 3, dm: 73.0, c: [917.0, 384.1], k: [[883.8, 418.1], [954.7, 418.3], [949.9, 350.6], [879.9, 350.5]] },
+      { id: 3, dm: 89.8, c: [507.4, 483.8], k: [[448.0, 576.9], [596.0, 533.6], [570.3, 394.6], [415.3, 430.0]] },
     ];
+    const JPEG_BYTES = 52801;
+    // The first bytes of that frame's real JPEG file (SOI, APP0 "AVI1", then a quantization table).
+    const HEX = 'FF D8 FF E0 00 21 41 56 49 31 00 01 01 01 00 78 00 78 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 FF DB 00 43 00 06 04 05 05 05 04'.split(' ');
     const img = new Image();
-    img.src = 'assets/field-images/2024-speaker-63in.jpg';
+    img.src = 'assets/from-jetson/frames/tag-close_TopLeft.png';
     let gray = null, thr = null, pix = null;
     img.onload = () => {
-      const W = 640, H = 360;
+      // real pixel values from the lossless gray decode, around the tag's top-left corner
+      const full = document.createElement('canvas'); full.width = IW; full.height = IH;
+      const f = full.getContext('2d', { willReadFrequently: true }); f.drawImage(img, 0, 0);
+      const fd = f.getImageData(398, 420, 28, 25).data;
+      pix = [];
+      for (let r = 0; r < 5; r++) { const row = []; for (let q = 0; q < 7; q++) row.push(fd[((r * 5) * 28 + q * 4) * 4]); pix.push(row); }
+      const W = 640, H = 400;
       const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
       gray = mk(); const g = gray.getContext('2d', { willReadFrequently: true });
       g.drawImage(img, 0, 0, W, H);
-      const id = g.getImageData(0, 0, W, H), d = id.data;
-      for (let i = 0; i < d.length; i += 4) { const y = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; d[i] = d[i + 1] = d[i + 2] = y; }
-      g.putImageData(id, 0, 0);
+      const d = g.getImageData(0, 0, W, H).data;
       // illustrative adaptive threshold: compare each pixel with a blurred local mean
-      const small = document.createElement('canvas'); small.width = 32; small.height = 18;
-      const s = small.getContext('2d', { willReadFrequently: true }); s.drawImage(gray, 0, 0, 32, 18);
+      const small = document.createElement('canvas'); small.width = 32; small.height = 20;
+      const sm = small.getContext('2d', { willReadFrequently: true }); sm.drawImage(gray, 0, 0, 32, 20);
       const blur = mk(), b = blur.getContext('2d', { willReadFrequently: true }); b.imageSmoothingEnabled = true; b.drawImage(small, 0, 0, W, H);
       const bd = b.getImageData(0, 0, W, H).data;
       thr = mk(); const t = thr.getContext('2d'); const td = t.createImageData(W, H);
-      for (let i = 0; i < d.length; i += 4) { const v = d[i] > bd[i] + 12 ? 255 : 0; td.data[i] = td.data[i + 1] = td.data[i + 2] = v; td.data[i + 3] = 255; }
+      for (let i = 0; i < d.length; i += 4) { const v = d[i] > bd[i] - 10 ? 255 : 0; td.data[i] = td.data[i + 1] = td.data[i + 2] = v; td.data[i + 3] = 255; }
       t.putImageData(td, 0, 0);
-      // pixel numbers from the real image, around tag 4's top-left corner
-      pix = [];
-      for (let r = 0; r < 5; r++) { const row = []; for (let q = 0; q < 7; q++) row.push(Math.round(d[((Math.round(172 + r * 2)) * W + Math.round(316 + q * 2)) * 4])); pix.push(row); }
     };
+    const MF = Math.ceil(JPEG_BYTES / 1280), USB_MS = MF * 0.125;
 
     const S = [
-      { n: 'Light', t: '0 ms', ch: 'camera', cn: '03', d: 'Field lights shine on the tag. White squares reflect a lot of light, black ones very little. Some of that light heads into the camera\'s lens.', data: 'photons → lens → sensor' },
-      { n: 'Exposure', t: '0 → 5 ms', ch: 'settings', cn: '04', d: 'For 5 ms every pixel of the global-shutter sensor collects light at once. Then each pixel\'s charge becomes a number: 0 is black, 255 is white.', data: () => 'pixel numbers near tag 4\'s corner:\n' + (pix ? pix.map((r) => r.map((v) => String(v).padStart(3)).join(' ')).join('\n') : '…') },
-      { n: 'JPEG', t: 'camera delay (?)', ch: 'camera', cn: '03', d: 'The camera compresses the 1,024,000 numbers into a JPEG, 8×8 pixel blocks at a time: about 1 MB down to ~50 KB. This delay inside the camera isn\'t measured yet.', data: 'FF D8 FF DB 00 43 00 08 06 06 07 06 05 08 07 07 07 09 09 08 0A 0C 14 0D 0C 0B 0B 0C 19 12 13 0F … (~50 KB)' },
-      { n: 'USB', t: '+4.9 ms', ch: 'speed', cn: '10', d: 'The JPEG crosses USB 2.0 in slices of up to 1280 bytes, one slice every 125 µs microframe. The Linux driver stamps the frame when the first slice arrives.', data: '~50 KB ÷ 1280 B ≈ 39 microframes\n39 × 125 µs ≈ 4.9 ms\nshared bus: ~6,700 B per microframe for all cameras' },
-      { n: 'Decode', t: '+2.6 ms', ch: 'dataflow', cn: '07', d: 'The Jetson\'s NVJPG hardware turns the JPEG back into a gray image in shared (unified) memory, where the GPU can read it without a copy across a bus.', data: 'a gray image, 1 byte per pixel:\n1280 × 800 = 1,024,000 bytes on our cameras\n(this test frame is 1280 × 720)' },
-      { n: 'Blobs', t: 'GPU, ~2 ms total', ch: 'cuda', cn: '08', d: 'Thousands of GPU threads threshold the image into black and white, then group touching pixels into blobs. The tag borders pop out as rings.', data: 'threshold → connected components → blob edges\n(1,024 CUDA cores, 32-thread warps)' },
-      { n: 'Corners', t: '(same GPU step)', ch: 'cuda', cn: '08', d: 'Blob edges are fit with four straight lines. Their crossings are the tag\'s corners, found to a fraction of a pixel. Then a few CPU threads read the inside as bits to get the ID.', data: () => TAGS.map((tg) => `tag ${tg.id} (margin ${tg.dm}):\n` + tg.k.map((p) => `  (${p[0].toFixed(1)}, ${p[1].toFixed(1)})`).join('\n')).join('\n') },
-      { n: 'Pose', t: '≈ <1 ms', ch: 'pose', cn: '12', d: 'With the calibration (focal length, image center, lens distortion), PnP turns four corners per tag into the camera\'s 3D pose. With two tags, one multi-tag solve uses all eight corners.', data: 'camera → tag 4: ≈1.6 m ahead (63 in)\nmulti-tag: tags [3, 4] → field pose of the camera\n(axes drawn for illustration)' },
-      { n: 'Network', t: '≈ <1 ms', ch: 'networktables', cn: '15', d: 'PhotonVision packs the result, with its mid-exposure capture timestamp already on the robot\'s clock, and publishes it on NetworkTables to the SystemCore.', data: '/photonvision/TopLeft/rawBytes\n{ captureTimestampMicros, targets[3, 4],\n  multitagResult { fiducialIDsUsed [3, 4] } }' },
-      { n: 'Robot', t: 'next 20 ms loop', ch: 'latency', cn: '14', d: 'Robot code reads it with PhotonLib and calls addVisionMeasurement(pose, timestamp). The estimator corrects the pose at capture time and replays odometry, so the robot knows where it is.', data: 'estimator.estimateCoprocMultiTagPose(result)\ndrivetrain.addVisionMeasurement(\n    pose, e.timestampSeconds)' },
+      { n: 'Light', t: '0 ms', ch: 'camera', cn: '03', d: 'Room light shines on tag 3, propped on a box in our shop. White squares reflect a lot of light, black ones very little. Some of that light heads into TopLeft\'s lens.', data: 'photons → lens → sensor' },
+      { n: 'Exposure', t: '0 → 5 ms (likely)', ch: 'settings', cn: '04', d: 'Every pixel of the global-shutter sensor collects light at once, then each pixel\'s charge becomes a number: 0 is black, 255 is white. This recording didn\'t save its exposure; our setting then was 5 ms, so it was likely 5 ms.', data: () => 'real pixel values at the tag\'s top-left corner:\n' + (pix ? pix.map((r) => r.map((v) => String(v).padStart(3)).join(' ')).join('\n') : '…') },
+      { n: 'JPEG', t: 'camera delay (?)', ch: 'camera', cn: '03', d: 'The camera compresses the 1,024,000 numbers into a JPEG, 8×8 pixel blocks at a time. This frame\'s JPEG is exactly 52,801 bytes, about 1/19 of the raw pixels. The time this takes inside the camera isn\'t measured yet.', data: 'the real first bytes of this frame:\n' + HEX.slice(0, 24).join(' ') + '\n' + HEX.slice(24).join(' ') + ' …\n(52,801 bytes in all)' },
+      { n: 'USB', t: `+${USB_MS.toFixed(1)} ms`, ch: 'speed', cn: '10', d: 'The JPEG crosses USB 2.0 in slices of up to 1280 bytes, one slice every 125 µs microframe. The Linux driver stamps the frame when the first slice arrives.', data: `52,801 B ÷ 1280 B → ${MF} microframes\n${MF} × 125 µs ≈ ${USB_MS.toFixed(1)} ms\nshared bus: ~6,700 B per microframe for all cameras` },
+      { n: 'Decode', t: '+2.6 ms', ch: 'dataflow', cn: '07', d: 'The Jetson\'s NVJPG hardware turns the JPEG back into a gray image in shared (unified) memory, where the GPU can read it without a copy across a bus. The picture here is that gray decode, pixel for pixel.', data: 'a gray image, 1 byte per pixel:\n1280 × 800 = 1,024,000 bytes\nNVJPG: 2.59 ms a frame (our Jetson\'s log)' },
+      { n: 'Blobs', t: 'GPU, ~1–2 ms total', ch: 'cuda', cn: '08', d: 'Thousands of GPU threads threshold the image into black and white, then group touching pixels into blobs. The tag\'s black border pops out as a ring.', data: 'threshold → connected components → blob edges\n(1,024 CUDA cores, 32-thread warps)\nthe threshold view is an illustration' },
+      { n: 'Corners', t: '(same GPU step)', ch: 'cuda', cn: '08', d: 'Blob edges are fit with four straight lines. Their crossings are the tag\'s corners, found to a fraction of a pixel. Then a few CPU threads read the inside as bits to get the ID. These are the corners our Jetson\'s detector really found.', data: () => TAGS.map((tg) => `tag ${tg.id}, decision margin ${tg.dm}:\n` + tg.k.map((pt) => `  (${pt[0].toFixed(1)}, ${pt[1].toFixed(1)})`).join('\n')).join('\n') },
+      { n: 'Pose', t: '≈ <1 ms', ch: 'pose', cn: '12', d: 'With TopLeft\'s calibration (focal length 737.8 px, image center, 8 distortion numbers), PnP turns the four corners into the camera\'s 3D pose relative to the tag. With 2+ tags in view, one multi-tag solve would use every corner.', data: 'tag ≈151 px wide, fx ≈ 738 px\n→ about 0.8 m away, if it\'s a full-size 6.5 in tag\n(axes drawn for illustration)' },
+      { n: 'Network', t: '≈ <1 ms', ch: 'networktables', cn: '15', d: 'PhotonVision packs the result, with its mid-exposure capture timestamp already on the robot\'s clock, and publishes it on NetworkTables to the SystemCore.', data: '/photonvision/TopLeft/rawBytes\n{ captureTimestampMicros, targets [ id 3,\n  corners, bestCameraToTarget, ambiguity ] }' },
+      { n: 'Robot', t: 'next 20 ms loop', ch: 'latency', cn: '14', d: 'Robot code reads it with PhotonLib and calls addVisionMeasurement(pose, timestamp). The estimator corrects the pose at capture time and replays odometry, so the robot knows where it is.', data: 'estimator.estimateLowestAmbiguityPose(result)\ndrivetrain.addVisionMeasurement(\n    pose, e.timestampSeconds)' },
     ];
     const N = S.length, PER = 2.6;
-    const cv = $('#fn-stage'), st = Site.canvas(cv, 0.5625);
+    const cv = $('#fn-stage'), st = Site.canvas(cv, 0.625);
     const now = $('#fn-now'), scrub = $('#fn-scrub'), btn = $('#fn-play'), jr = $('#fn-journey');
     jr.innerHTML = S.map((s, i) => `<li><button data-i="${i}"><i>ch ${s.cn}</i><b>${i + 1}. ${s.n}</b><small>${s.t}</small><span class="fill"></span></button></li>`).join('');
     const lis = [...jr.children];
@@ -76,7 +81,7 @@ Site.chapter('finale', (root) => {
             ctx.fillStyle = `rgba(253,230,138,${0.9 * (1 - u)})`; ctx.beginPath(); ctx.arc(Site.lerp(sx, ex, u), Site.lerp(sy, ey, u), 2.4, 0, 7); ctx.fill();
           }
         }
-        label(ctx, 'light bouncing off the tags toward the lens ↓', 12, 26, '#fde68a');
+        label(ctx, 'light bouncing off the tag toward the lens ↓', 12, 26, '#fde68a');
       },
       // 1 exposure
       (ctx, w, h, p) => {
@@ -84,7 +89,7 @@ Site.chapter('finale', (root) => {
         drawImg(ctx, w, h, gray, Site.ease(Math.min(1, p * 1.4)));
         // pixel inset
         if (pix) {
-          const cw = Math.min(w * (w < 520 ? 0.056 : 0.07), 34), x0 = w < 520 ? 10 : 22, y0 = w < 520 ? 44 : h - cw * 5 - 14;
+          const cw = Math.min(w * (w < 520 ? 0.056 : 0.07), 34), x0 = w - cw * 7 - (w < 520 ? 10 : 22), y0 = w < 520 ? 62 : h - cw * 5 - 14;
           ctx.fillStyle = 'rgba(14,5,24,.85)'; ctx.fillRect(x0 - 8, y0 - 26, cw * 7 + 16, cw * 5 + 34);
           ctx.fillStyle = '#c4b5fd'; ctx.font = font(11, 700); ctx.textAlign = 'left'; ctx.fillText('pixel values', x0, y0 - 10);
           const f = Math.min(1, p * 1.4);
@@ -104,15 +109,14 @@ Site.chapter('finale', (root) => {
         const rows = Math.floor((h / bs) * p);
         for (let r = 0; r <= rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * bs); ctx.lineTo(w, r * bs); ctx.stroke(); }
         for (let x = 0; x <= w; x += bs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rows * bs); ctx.stroke(); }
-        const hex = 'FFD8FFDB004300080606070605080707070909080A0C140D0C0B0B0C1912130F141D1A1F1E1D1A1C1C20242E2720222C231C1C2837292C30313434341F27393D38323C2E333432FFC0000B0803200500';
         ctx.font = font(Math.max(10, w / 60), 600, true); ctx.textAlign = 'left';
         const n = Math.floor(p * 40) + 6;
         let line = '';
-        for (let i = 0; i < n; i++) line += hex.substr((i * 2 + Math.floor(t * 8) * 2) % (hex.length - 2), 2) + ' ';
+        for (let i = 0; i < Math.min(n, HEX.length); i++) line += HEX[i] + ' ';
         const hy = w < 520 ? h - 64 : h - 40;
         ctx.fillStyle = 'rgba(14,5,24,.82)'; ctx.fillRect(0, hy, w, 36);
         ctx.fillStyle = '#a3e635'; ctx.fillText(line.slice(0, Math.floor(w / (Math.max(10, w / 60) * 0.62))), 10, hy + 23);
-        label(ctx, `JPEG: ~1 MB of pixels → ${Math.round(Site.lerp(1000, 50, p))} KB`, 12, 26, '#a3e635');
+        label(ctx, `JPEG: 1,024,000 B of pixels → ${Math.round(Site.lerp(1024000, JPEG_BYTES, p)).toLocaleString('en-US')} B`, 12, 26, '#a3e635');
       },
       // 3 USB
       (ctx, w, h, p, t) => {
@@ -121,7 +125,7 @@ Site.chapter('finale', (root) => {
         ctx.fillStyle = '#251038'; ctx.strokeStyle = '#8b5cf6'; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(bx, h * 0.25, bw, h * 0.5, 12); ctx.fill(); ctx.stroke();
         ctx.fillStyle = '#fff'; ctx.font = font(Math.max(12, w / 42), 800); ctx.textAlign = 'center'; ctx.fillText('Jetson', bx + bw / 2, h * 0.5 + 5);
         ctx.strokeStyle = 'rgba(6,182,212,.5)'; ctx.lineWidth = 10; ctx.beginPath(); ctx.moveTo(w * 0.1, h * 0.5); ctx.lineTo(bx, h * 0.5); ctx.stroke();
-        const total = 40, sent = Math.floor(p * total);
+        const total = Math.ceil(JPEG_BYTES / 1280), sent = Math.floor(p * total);
         for (let i = 0; i < 6; i++) {
           const u = (t * 1.6 + i / 6) % 1, x = Site.lerp(w * 0.1, bx - 10, u);
           ctx.fillStyle = i === 0 && sent < 2 ? '#f59e0b' : '#06b6d4'; ctx.fillRect(x - 9, h * 0.5 - 8, 18, 16);
@@ -132,14 +136,14 @@ Site.chapter('finale', (root) => {
         // packet counter bar
         const gx = w * 0.1, gw = bx - gx - 20, gy = h * 0.78;
         for (let i = 0; i < total; i++) { ctx.fillStyle = i < sent ? '#06b6d4' : 'rgba(255,255,255,.08)'; ctx.fillRect(gx + (i * gw) / total, gy, gw / total - 2, 14); }
-        ctx.fillStyle = '#b8a9d4'; ctx.font = font(12, 600); ctx.textAlign = 'left'; ctx.fillText(`microframe ${sent} of ~40 · ${(sent * 0.125).toFixed(2)} ms`, gx, gy + 32);
+        ctx.fillStyle = '#b8a9d4'; ctx.font = font(12, 600); ctx.textAlign = 'left'; ctx.fillText(`microframe ${sent} of ${total} · ${(sent * 0.125).toFixed(2)} ms · ${Math.min(JPEG_BYTES, sent * 1280).toLocaleString('en-US')} B`, gx, gy + 32);
         label(ctx, 'USB 2.0: ≤1280 bytes every 125 µs', 12, 26, '#67e8f9');
         if (sent < 3) { ctx.fillStyle = '#fcd34d'; ctx.font = font(12, 700); ctx.textAlign = 'left'; ctx.fillText('first packet → timestamp', gx, h * 0.5 - 20); }
       },
       // 4 decode
       (ctx, w, h, p) => {
         ctx.fillStyle = '#0e0518'; ctx.fillRect(0, 0, w, h);
-        if (gray) { const hh = h * p; ctx.drawImage(gray, 0, 0, 640, 360 * p, 0, 0, w, hh); ctx.fillStyle = '#a3e635'; ctx.fillRect(0, hh - 2, w, 3); }
+        if (gray) { const hh = h * p; ctx.drawImage(gray, 0, 0, 640, 400 * p, 0, 0, w, hh); ctx.fillStyle = '#a3e635'; ctx.fillRect(0, hh - 2, w, 3); }
         label(ctx, `NVJPG decoding: ${Math.round(p * 100)}%`, 12, 26, '#a3e635');
       },
       // 5 blobs
@@ -180,12 +184,12 @@ Site.chapter('finale', (root) => {
         TAGS.forEach((tg) => {
           const q = Q(tg).map(([x, y]) => [x * k, y * k]);
           ctx.strokeStyle = '#a3e635'; ctx.lineWidth = 2; ctx.beginPath(); q.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.stroke();
-          const cx = tg.c[0] * k, cy = tg.c[1] * k, L = 60 * k * Site.ease(Math.min(1, p * 1.5));
+          const cx = tg.c[0] * k, cy = tg.c[1] * k, L = 95 * k * Site.ease(Math.min(1, p * 1.5));
           const ax = (dx, dy, col) => { ctx.strokeStyle = col; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + dx, cy + dy); ctx.stroke(); };
           ax(L, 0, '#ef4444'); ax(0, -L, '#22c55e'); ax(-L * 0.55, L * 0.55, '#3b82f6');
         });
         if (p > 0.5) {
-          // camera-to-tag rays for the multi-tag solve
+          // the camera looks at the tag: a ray from the lens
           ctx.setLineDash([5, 5]); ctx.strokeStyle = 'rgba(196,181,253,.8)'; ctx.lineWidth = 1.5;
           TAGS.forEach((tg) => { ctx.beginPath(); ctx.moveTo(w * 0.5, h * 1.02); ctx.lineTo(tg.c[0] * k, tg.c[1] * k); ctx.stroke(); });
           ctx.setLineDash([]);
@@ -202,7 +206,7 @@ Site.chapter('finale', (root) => {
         const pw = Math.min(w * (nw ? 0.62 : 0.36), 230), ph = h * (nw ? 0.3 : 0.34), px = Site.lerp(x0 + pw / 2 - bw / 2, x1 - pw / 2 + bw / 2, Site.ease(p));
         ctx.fillStyle = 'rgba(163,230,53,.14)'; ctx.strokeStyle = '#a3e635'; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(px - pw / 2, y - h * 0.15 - ph, pw, ph, 10); ctx.fill(); ctx.stroke();
         ctx.fillStyle = '#e9ddf7'; ctx.font = font(Math.max(9, Math.min(12, w / 60)), 500, true); ctx.textAlign = 'left';
-        const lines = nw ? ['rawBytes · timestamp', 'targets: 3, 4', 'multi-tag: [3, 4]'] : ['rawBytes', 'timestamp: capture (robot clock)', 'targets: 3, 4', 'multi-tag: [3, 4]'];
+        const lines = nw ? ['rawBytes · timestamp', 'target: id 3', 'corners, pose'] : ['rawBytes', 'timestamp: capture (robot clock)', 'target: id 3', 'corners, pose, ambiguity'];
         lines.forEach((s, i) => ctx.fillText(s, px - pw / 2 + 10, y - h * 0.15 - ph + 18 + i * (ph - 20) / (lines.length - 1)));
         ctx.fillStyle = '#b8a9d4'; ctx.font = font(12, 600); ctx.textAlign = 'center'; ctx.fillText('10.85.15.15  →  10.85.15.2 : 5810', w / 2, y + h * (nw ? 0.2 : 0.2));
         label(ctx, 'NetworkTables 4 over Ethernet', 12, 26, '#a3e635');
@@ -210,23 +214,23 @@ Site.chapter('finale', (root) => {
       // 9 robot
       (ctx, w, h, p, t) => {
         ctx.fillStyle = '#1b0d2c'; ctx.fillRect(0, 0, w, h);
-        const m = w / 9; // 9 m shown across
+        const m = w / 5; // 5 m shown across
         ctx.strokeStyle = 'rgba(196,181,253,.3)'; ctx.lineWidth = 1;
         for (let x = 0; x < w; x += m) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
         for (let y = 0; y < h; y += m) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-        // speaker on the right wall with two tags
+        // the shop wall with tag 3
         const sx = w - 10, sy = h / 2;
-        ctx.fillStyle = '#6b1199'; ctx.fillRect(sx - 12, sy - m * 0.7, 12, m * 1.4);
-        ctx.fillStyle = '#fff'; ctx.fillRect(sx - 16, sy - m * 0.4, 4, m * 0.22); ctx.fillRect(sx - 16, sy + m * 0.18, 4, m * 0.22);
-        const rx = sx - 16 - 1.6 * m - m * 0.4, ry = sy;
-        const odo = [rx - m * 0.55, ry + m * 0.35];
+        ctx.fillStyle = '#6b1199'; ctx.fillRect(sx - 12, 0, 12, h);
+        ctx.fillStyle = '#fff'; ctx.fillRect(sx - 18, sy - m * 0.08, 6, m * 0.165);
+        const rx = sx - 18 - 0.8 * m - m * 0.4, ry = sy; // ~0.8 m from the tag
+        const odo = [rx - m * 0.35, ry + m * 0.25];
         const u = Site.ease(Site.clamp((p - 0.3) / 0.4, 0, 1));
         const ex = Site.lerp(odo[0], rx, u), ey = Site.lerp(odo[1], ry, u);
         // true robot
         ctx.fillStyle = 'rgba(124,58,237,.9)'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.fillRect(rx - m * 0.4, ry - m * 0.4, m * 0.8, m * 0.8); ctx.strokeRect(rx - m * 0.4, ry - m * 0.4, m * 0.8, m * 0.8);
         // estimate
         ctx.strokeStyle = u >= 1 ? '#a3e635' : '#f59e0b'; ctx.setLineDash([5, 4]); ctx.strokeRect(ex - m * 0.4, ey - m * 0.4, m * 0.8, m * 0.8); ctx.setLineDash([]);
-        if (p > 0.15 && p < 0.75) { ctx.strokeStyle = 'rgba(163,230,53,.8)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(rx + m * 0.4, ry); ctx.lineTo(sx - 16, sy - m * 0.3); ctx.moveTo(rx + m * 0.4, ry); ctx.lineTo(sx - 16, sy + m * 0.3); ctx.stroke(); }
+        if (p > 0.15 && p < 0.75) { ctx.strokeStyle = 'rgba(163,230,53,.8)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(rx + m * 0.4, ry); ctx.lineTo(sx - 18, sy); ctx.stroke(); }
         ctx.fillStyle = u >= 1 ? '#a3e635' : '#fcd34d'; ctx.font = font(12, 700); ctx.textAlign = 'center';
         ctx.fillText(u >= 1 ? 'estimate corrected' : 'odometry estimate (drifted)', ex, ey - m * 0.55);
         label(ctx, 'robot pose on the field (illustration)', 12, 26, '#a3e635');
@@ -241,7 +245,8 @@ Site.chapter('finale', (root) => {
       ctx.fillStyle = '#0e0518'; ctx.fillRect(0, 0, w, h);
       R[i](ctx, w, h, Site.clamp(p * 1.15, 0, 1), t, w / IW);
       // running clock (after the camera stage, the camera's own unmeasured delay is added as "+ cam")
-      const A = [0, 0, 5, 5, 9.9, 12.5, 14.5, 14.5, 15, 15.5], B = [0, 5, 5, 9.9, 12.5, 14.5, 14.5, 15, 15.5, 15.5];
+      const u0 = 5 + USB_MS, u1 = u0 + 2.6, u2 = u1 + 1.6; // exposure (likely 5), USB, NVJPG 2.6, detect ~1.6 with a tag
+      const A = [0, 0, 5, 5, u0, u1, u2, u2, u2 + 0.5, u2 + 1], B = [0, 5, 5, u0, u1, u2, u2, u2 + 0.5, u2 + 1, u2 + 1];
       const cur = Site.lerp(A[i], B[i], Site.clamp(p * 1.15, 0, 1));
       ctx.font = font(w < 520 ? 11 : 13, 700, true); const txt = `≈ ${cur.toFixed(1)} ms${i >= 2 ? ' + cam' : ''}${i === 9 ? ' + loop' : ''}`; const tw = ctx.measureText(txt).width;
       ctx.fillStyle = 'rgba(14,5,24,.8)'; ctx.fillRect(w - tw - 22, 8, tw + 14, 24); ctx.fillStyle = '#fff'; ctx.textAlign = 'right'; ctx.fillText(txt, w - 15, 25);

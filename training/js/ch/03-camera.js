@@ -17,8 +17,8 @@ Site.chapter('camera', (root) => {
   const rng = (s) => () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
   const gauss = (r) => { let u = 0; for (let i = 0; i < 6; i++) u += r(); return (u - 3) / 0.7071; };
   const loadImg = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
-  // one real frame, as grayscale, shared by several labs
-  const FRAME = loadImg('assets/field-images/2024-speaker-63in.jpg').then((img) => {
+  // one real frame from our TopLeft Thriftiest Cam (the camera's own JPEG), as grayscale, shared by several labs
+  const FRAME = loadImg('assets/from-jetson/frames/tag-close_TopLeft.jpg').then((img) => {
     const W = img.width, H = img.height, c = document.createElement('canvas'); c.width = W; c.height = H;
     const x = c.getContext('2d'); x.drawImage(img, 0, 0);
     const d = x.getImageData(0, 0, W, H).data, g = new Float32Array(W * H);
@@ -114,8 +114,8 @@ Site.chapter('camera', (root) => {
     const F = await FRAME;
     let step = 0, t0 = 0;
     // real pixels: a patch around tag 3's top-left corner, and a tag crop for the JPEG step
-    const patch = []; for (let y = 0; y < 9; y++) { const row = []; for (let x = 0; x < 13; x++) row.push(Math.round(F.g[(345 + y) * F.W + 875 + x])); patch.push(row); }
-    const tagCrop = (() => { const W = 96, H = 64, g = new Float32Array(W * H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) g[y * W + x] = F.g[(352 + y) * F.W + 868 + x]; return grayCanvas(g, W, H); })();
+    const patch = []; for (let y = 0; y < 9; y++) { const row = []; for (let x = 0; x < 13; x++) row.push(Math.round(F.g[(425 + y) * F.W + 409 + x])); patch.push(row); }
+    const tagCrop = (() => { const W = 96, H = 64, g = new Float32Array(W * H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) g[y * W + x] = F.g[(440 + y) * F.W + 430 + x]; return grayCanvas(g, W, H); })();
     const tagG = Site.tagGrid(3);
     const r = rng(5);
     const drops = Array.from({ length: 70 }, () => ({ x: r(), y: r(), s: 0.5 + r() }));
@@ -232,7 +232,7 @@ Site.chapter('camera', (root) => {
     const numbers = (ctx, w, h) => {
       const rows = patch.length, cols = patch[0].length, cs = Math.min((0.92 * w) / cols, (0.8 * h) / rows), ox = (w - cols * cs) / 2, oy = (h - rows * cs) / 2 - 8;
       patch.forEach((row, y) => row.forEach((v, x) => { ctx.fillStyle = `rgb(${v},${v},${v})`; ctx.fillRect(ox + x * cs, oy + y * cs, cs - 1, cs - 1); text(ctx, String(v), ox + x * cs + cs / 2, oy + y * cs + cs / 2 + 4, { mono: true, size: Math.max(9, cs * 0.3), a: 'center', c: v > 120 ? '#1f1b23' : '#f4efff', w: 500 }); }));
-      text(ctx, 'real pixel values at a tag corner (0 = black, 255 = white)', w / 2, oy + rows * cs + 22, { c: AC, size: 12, a: 'center' });
+      text(ctx, 'real pixel values from our camera, at a tag corner', w / 2, oy + rows * cs + 22, { c: AC, size: 12, a: 'center' });
     };
     const jpeg = (ctx, w, h, t) => {
       const iw = 0.46 * w, ih = iw * (64 / 96), ox = 0.05 * w, oy = 0.12 * h;
@@ -255,7 +255,7 @@ Site.chapter('camera', (root) => {
       // size bars
       const sy = 0.8 * h, bw = 0.9 * w;
       ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(ox, sy, bw, 14); text(ctx, 'raw frame: 1,024,000 bytes', ox, sy - 6, { c: MUT, size: 12 });
-      ctx.fillStyle = '#8b5cf6'; ctx.fillRect(ox, sy + 34, bw * 0.05, 14); text(ctx, 'JPEG: about 50,000 bytes (1/20)', ox, sy + 30, { c: TXT, size: 12 });
+      ctx.fillStyle = '#8b5cf6'; ctx.fillRect(ox, sy + 34, bw * 0.0516, 14); text(ctx, 'this frame as JPEG: 52,801 bytes (about 1/19)', ox, sy + 30, { c: TXT, size: 12 });
     };
     const usb = (ctx, w, h, t) => {
       const y = 0.38 * h, x0 = 0.2 * w, x1 = 0.78 * w;
@@ -333,7 +333,7 @@ Site.chapter('camera', (root) => {
   (async () => {
     const F = await FRAME, N = 32, cv = [0, 1, 2].map((i) => $('#c-by' + i)), L = new Float32Array(N * N);
     // 32x32 sensor pixels over tag 4's top-left corner (each averages 2x2 frame pixels)
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let a = 0; for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) a += F.g[(334 + y * 2 + j) * F.W + 626 + x * 2 + i]; L[y * N + x] = Math.min(1, a / 4 / 235); }
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let a = 0; for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) a += F.g[(410 + y * 2 + j) * F.W + 395 + x * 2 + i]; L[y * N + x] = Math.min(1, a / 4 / 200); }
     const r = rng(21), z1 = Array.from({ length: N * N }, () => gauss(r)), z2 = Array.from({ length: N * N }, () => gauss(r));
     const filt = (x, y) => (y % 2 === 0 ? (x % 2 === 0 ? 1 : 0) : x % 2 === 0 ? 2 : 1); // 0 R, 1 G, 2 B (RGGB)
     const put = (c, px) => { const x = c.getContext('2d'), id = x.createImageData(N, N); px.forEach((p, i) => { id.data[i * 4] = p[0]; id.data[i * 4 + 1] = p[1]; id.data[i * 4 + 2] = p[2]; id.data[i * 4 + 3] = 255; }); x.putImageData(id, 0, 0); };
@@ -387,10 +387,10 @@ Site.chapter('camera', (root) => {
         for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { let s = 0; for (let v = 0; v < 8; v++) s += C[v][y] * tmp[v * 8 + x]; const i = ((by * 8 + y) * W + bx * 8 + x) * 4, p = s + 128; out.data[i] = out.data[i + 1] = out.data[i + 2] = p; out.data[i + 3] = 255; }
       }
       ctx.putImageData(out, 0, 0);
-      zctx.imageSmoothingEnabled = false; zctx.drawImage(cv, 896, 360, 48, 48, 0, 0, 384, 384);
+      zctx.imageSmoothingEnabled = false; zctx.drawImage(cv, 440, 448, 48, 48, 0, 0, 384, 384);
       zctx.strokeStyle = 'rgba(245,158,11,.75)'; zctx.lineWidth = 1.5;
       for (let i = 0; i <= 6; i++) { zctx.beginPath(); zctx.moveTo(i * 64, 0); zctx.lineTo(i * 64, 384); zctx.moveTo(0, i * 64); zctx.lineTo(384, i * 64); zctx.stroke(); }
-      const kb = (bits / 8 / 1000) * (800 / 720); // this frame is 1280x720; scale to our 1280x800
+      const kb = bits / 8 / 1000;
       $('#c-jkb').textContent = '≈ ' + Math.round(kb) + ' KB';
       $('#c-jnz').textContent = ((100 * nz) / (W * H)).toFixed(1) + '%';
       $('#c-jbar').style.width = Math.min(100, kb / 10) + '%';
@@ -432,7 +432,7 @@ Site.chapter('camera', (root) => {
     const F = await FRAME, W = 320, H = 180, st = Site.canvas($('#c-focus'), H / W);
     // the frame's middle, at quarter size
     const base = new Float32Array(W * H);
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let a = 0; for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) a += F.g[(170 + y * 2 + j) * F.W + 320 + x * 2 + i]; base[y * W + x] = a / 4; }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let a = 0; for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) a += F.g[(290 + y * 2 + j) * F.W + 170 + x * 2 + i]; base[y * W + x] = a / 4; }
     const r = rng(9), noise = Float32Array.from({ length: W * H }, () => gauss(r) * 1.6);
     const boxBlur = (src, rad) => { // two passes of a separable box blur ≈ a soft defocus
       if (rad < 0.5) return src.slice();

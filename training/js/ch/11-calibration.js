@@ -307,14 +307,16 @@ Site.chapter('calibration', (root) => {
   {
     const cv = $('#cal-dist');
     const st = Site.canvas(cv, 0.625, () => requestAnimationFrame(render));
-    const K = CAL.TRUE.slice(0, 4);
+    const KTR = CAL.TRUE.slice(0, 4), KTL = [737.84, 737.67, 650.49, 362.44];
+    let K = KTR;
     const PRE = {
       none: [0, 0, 0, 0, 0, 0, 0, 0],
       barrel: [-0.28, 0.07, 0, 0, -0.008, 0, 0, 0],
       pin: [0.22, 0.06, 0, 0, 0.01, 0, 0, 0],
       ours: CAL.TRUE.slice(4),
+      tl: [0.124195, 0.0503841, 0.000782376, -5.20496e-05, -0.0127028, 0.0343885, 0.109998, 0.0847799], // TopLeft, from our Jetson
     };
-    let D = PRE.ours.slice(), mode = 'raw', quiet = true;
+    let D = PRE.tl.slice(), mode = 'raw', quiet = true;
     const P = () => [...K, ...D];
     const sl = { k1: 0, k2: 1, p1: 2, p2: 3, k3: 4 };
     const note = $('#cal-dnote');
@@ -323,7 +325,7 @@ Site.chapter('calibration', (root) => {
     for (const k in sl) Site.range($('#cal-' + k), (v) => { if (quiet) return; D[sl[k]] = v; D[5] = D[6] = D[7] = 0; root.querySelectorAll('#cal-preset button').forEach((b) => b.classList.remove('on')); render(); }, (v) => v.toFixed(k[0] === 'p' ? 4 : 3));
     const setSliders = () => { quiet = true; for (const k in sl) { const el = $('#cal-' + k); el.value = D[sl[k]]; el.dispatchEvent(new Event('input')); } quiet = false; };
     quiet = false;
-    Site.seg($('#cal-preset'), (v) => { D = PRE[v].slice(); setSliders(); render(); });
+    Site.seg($('#cal-preset'), (v) => { D = PRE[v].slice(); K = v === 'tl' ? KTL : KTR; setSliders(); render(); });
     Site.seg($('#cal-undist'), (v) => { mode = v; render(); });
 
     // draw the scene into ctx through map(x, y) -> [px, py] (in 1280x800 units, scaled by s)
@@ -489,7 +491,7 @@ Site.chapter('calibration', (root) => {
     let type = 'charuco', slide = 30;
     const marks = {};
     let sd = 99; const r2 = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
-    for (let r = 0; r < 9; r++) for (let c = 0; c < 12; c++) if ((c + r) % 2) marks[r * 12 + c] = Array.from({ length: 25 }, () => r2() > 0.5);
+    for (let r = 0; r < 9; r++) for (let c = 0; c < 12; c++) if ((c + r) % 2 === 0) marks[r * 12 + c] = Array.from({ length: 25 }, () => r2() > 0.5);
     Site.seg($('#cal-btype'), (v) => { type = v; draw(); });
     Site.range($('#cal-bslide'), (v) => { slide = v; draw(); }, (v) => v + '%');
     let drag = null;
@@ -509,7 +511,7 @@ Site.chapter('calibration', (root) => {
       const mOK = {};
       for (let r = 0; r < 9; r++) for (let c = 0; c < 12; c++) {
         const x = bx + c * sq, y = by + r * sq;
-        if ((c + r) % 2 === 0) { ctx.fillStyle = '#000'; ctx.fillRect(x, y, sq + 0.5, sq + 0.5); continue; }
+        if ((c + r) % 2 === 1) { ctx.fillStyle = '#000'; ctx.fillRect(x, y, sq + 0.5, sq + 0.5); continue; }
         if (type === 'chess') continue;
         const ms = sq * 22 / 30, mx = x + (sq - ms) / 2, my = y + (sq - ms) / 2, cell = ms / 7, bits = marks[r * 12 + c];
         ctx.fillStyle = '#000'; ctx.fillRect(mx, my, ms, ms); ctx.fillStyle = '#fff';
@@ -698,6 +700,88 @@ Site.chapter('calibration', (root) => {
       ctx.restore();
       phase += '. Illustration; tag moves drawn 4× larger.';
       if (msgEl.textContent !== phase) msgEl.textContent = phase;
+    });
+  }
+  /* ── TopLeft's real calibration (from our Jetson) ─────── */
+  {
+    const cs = $('#cal-real-snap'), cr = $('#cal-real');
+    let s1 = null, s2 = null, data = null, pick = 'img22', view = 'cov';
+    const vw = { az: 2.1, el: 0.4 };
+    const imgs = {}, files = { img22: 'nearest_img22', img15: 'farthest_img15', img23: 'most-tilted_img23' };
+    const qrot = ([w, x, y, z]) => [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y), 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x), 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
+    const meanErr = (sn) => { const u = sn.c.filter((c) => c[4]); return u.reduce((a, c) => a + Math.hypot(c[2], c[3]), 0) / u.length; };
+    const tilt = (sn) => (Math.acos(Math.abs(qrot(sn.q)[8])) * 180) / Math.PI;
+    const drawSnap = () => {
+      if (!s1 || !s1.w || !data) return;
+      const { ctx, w, h } = s1, s = w / 1280, sn = data.snaps.find((x) => x.n === pick), img = imgs[pick];
+      ctx.fillStyle = LAB; ctx.fillRect(0, 0, w, h);
+      if (img && img.complete && img.naturalWidth) ctx.drawImage(img, 0, 0, w, h);
+      for (const c of sn.c) dot(ctx, [c[0] * s, c[1] * s], Math.max(2, w / 260), c[4] ? GREEN : AMBER);
+      const used = sn.c.filter((c) => c[4]).length;
+      $('#cal-rs-d').textContent = sn.t[2].toFixed(2) + ' m';
+      $('#cal-rs-t').textContent = tilt(sn).toFixed(0) + '°';
+      $('#cal-rs-c').textContent = `${used} of 88`;
+      $('#cal-rs-e').textContent = meanErr(sn).toFixed(2) + ' px';
+    };
+    const drawAll = () => {
+      if (!s2 || !s2.w || !data) return;
+      const { ctx, w, h } = s2, s = w / 1280, legend = $('#cal-real-legend');
+      ctx.fillStyle = '#16092a'; ctx.fillRect(0, 0, w, h);
+      if (view !== '3d') {
+        ctx.strokeStyle = 'rgba(196,181,253,.07)';
+        for (let x = 80; x < 1280; x += 80) line(ctx, [x * s, 0], [x * s, h]);
+        for (let y = 80; y < 800; y += 80) line(ctx, [0, y * s], [w, y * s]);
+        const K = data.K;
+        ctx.strokeStyle = LAV; ctx.lineWidth = 1.5; line(ctx, [K[2] * s - 7, K[3] * s], [K[2] * s + 7, K[3] * s]); line(ctx, [K[2] * s, K[3] * s - 7], [K[2] * s, K[3] * s + 7]); ctx.lineWidth = 1;
+        data.snaps.forEach((sn, i) => {
+          const hue = (i * 360) / 43;
+          for (const c of sn.c) {
+            if (view === 'cov') dot(ctx, [c[0] * s, c[1] * s], 1.6, c[4] ? `hsla(${hue},80%,65%,.8)` : AMBER);
+            else { ctx.strokeStyle = c[4] ? 'rgba(244,63,94,.65)' : AMBER; line(ctx, [c[0] * s, c[1] * s], [(c[0] + c[2] * 15) * s, (c[1] + c[3] * 15) * s]); }
+          }
+        });
+        legend.innerHTML = view === 'cov'
+          ? '<span><i style="background:hsl(200,80%,65%)"></i>one color per snapshot</span><span><i style="background:#f59e0b"></i>thrown out</span><span><i style="background:#c4b5fd"></i>+ principal point</span>'
+          : '<span><i style="background:#f43f5e"></i>each corner\'s leftover error, drawn 15× longer</span><span><i style="background:#f59e0b"></i>thrown out</span>';
+      } else {
+        const V = viewer(vw.az, vw.el, w * 3.2, 6, w * 0.5, h * 0.5);
+        const W3 = (p) => V([p[2] - 0.25, -p[0] + 0.12, -p[1] + 0.08]);
+        const K = data.K, hf = [-K[2] / K[0], (1280 - K[2]) / K[0]], vf = [-K[3] / K[1], (800 - K[3]) / K[1]], Z = 0.62;
+        const fr = [[hf[0], vf[0]], [hf[1], vf[0]], [hf[1], vf[1]], [hf[0], vf[1]]].map(([a, b]) => W3([a * Z, b * Z, Z]));
+        ctx.strokeStyle = 'rgba(139,92,246,.4)'; fr.forEach((q) => line(ctx, W3([0, 0, 0]), q)); poly(ctx, fr, 'rgba(139,92,246,.05)', 'rgba(139,92,246,.4)');
+        const boards = data.snaps.map((sn) => {
+          const Rm = qrot(sn.q), T = (x, y) => [Rm[0] * x + Rm[1] * y + sn.t[0], Rm[3] * x + Rm[4] * y + sn.t[1], Rm[6] * x + Rm[7] * y + sn.t[2]];
+          const pts = [[-0.03, -0.03], [0.33, -0.03], [0.33, 0.24], [-0.03, 0.24]].map(([x, y]) => T(x, y));
+          return { pts, d: pts.reduce((a, p) => a + W3(p)[2], 0), e: meanErr(sn) };
+        }).sort((a, b) => a.d - b.d);
+        for (const b of boards) { const t = Site.clamp((b.e - 0.45) / 1, 0, 1); poly(ctx, b.pts.map(W3), `hsla(${100 - 70 * t},80%,55%,.13)`, `hsla(${100 - 70 * t},80%,60%,.75)`); }
+        dot(ctx, W3([0, 0, 0]), 4, '#fff');
+        ctx.font = '600 11px Plus Jakarta Sans'; ctx.fillStyle = INK; ctx.fillText('camera', W3([0, 0, 0])[0] + 8, W3([0, 0, 0])[1] + 14);
+        legend.innerHTML = '<span><i style="background:hsl(100,80%,55%)"></i>board with a low mean error</span><span><i style="background:hsl(30,80%,55%)"></i>higher error</span><span>drag to turn</span>';
+      }
+      ctx.strokeStyle = LINE; ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+    };
+    orbit(cr, vw, () => view === '3d' && drawAll());
+    s1 = Site.canvas(cs, 0.625, () => requestAnimationFrame(drawSnap));
+    s2 = Site.canvas(cr, 0.625, () => requestAnimationFrame(drawAll));
+    Site.seg($('#cal-real-pick'), (v) => {
+      pick = v;
+      if (!imgs[v]) { imgs[v] = new Image(); imgs[v].onload = drawSnap; imgs[v].src = `assets/from-jetson/calibration-snapshots/calibration-snapshot-${files[v]}.webp`; }
+      drawSnap();
+    });
+    Site.seg($('#cal-real-view'), (v) => { view = v; cr.style.cursor = v === '3d' ? 'grab' : ''; drawAll(); });
+    fetch('assets/from-jetson/calibration/TopLeft-compact.json').then((r) => r.json()).then((j) => {
+      data = j;
+      let kept = 0, all = 0, sum = 0;
+      for (const sn of j.snaps) for (const c of sn.c) { all++; if (c[4]) { kept++; sum += Math.hypot(c[2], c[3]); } }
+      let x0 = 1e9, x1 = 0, y0 = 1e9, y1 = 0;
+      j.snaps.forEach((sn) => sn.c.forEach((c) => { x0 = Math.min(x0, c[0]); x1 = Math.max(x1, c[0]); y0 = Math.min(y0, c[1]); y1 = Math.max(y1, c[1]); }));
+      $('#cal-real-kept').textContent = `${kept.toLocaleString()} of ${all.toLocaleString()} (${Math.round((kept / all) * 100)}%)`;
+      $('#cal-real-mean').textContent = (sum / kept).toFixed(2) + ' px';
+      $('#cal-real-f').textContent = `${j.K[0].toFixed(1)}, ${j.K[1].toFixed(1)}`;
+      $('#cal-real-c').textContent = `${j.K[2].toFixed(1)}, ${j.K[3].toFixed(1)}`;
+      $('#cal-real-note').textContent = `The corners only reach x ${x0.toFixed(0)}–${x1.toFixed(0)} px and y ${y0.toFixed(0)}–${y1.toFixed(0)} px, and none landed in the image's four corners. Past about 49° off-axis this lens model turns back (the Go deeper above), so tags in the far corners can't be used. A calibration with board views right into the corners would fix it.`;
+      drawSnap(); drawAll();
     });
   }
 });

@@ -64,36 +64,36 @@ calibration/  TopLeft's saved calibration at 1280x800
 
 screenshots/  PhotonVision (our fork), headless Chrome, 1400 px wide, zoom 100%
 --------------------------------------------------------------------------------
-  dashboard-topleft-3d-input-tab.png   Dashboard, TopLeft, AprilTagCuda pipeline in 3D mode,
+  dashboard-topleft-3d-input-tab.webp   Dashboard, TopLeft, AprilTagCuda pipeline in 3D mode,
                                        Input tab. No tag in view, so no 3D axes are drawn.
-  dashboard-input-tuning-guide.png     The Input tab's Tuning guide, expanded (cropped);
-                                       ...-full-page.png is the whole page with it open.
-  dashboard-aprilcudatag-tab.png       The AprilCudaTag tab.
-  dashboard-output-tab.png             The Output tab (3D and multi-tag options).
-  dashboard-targets-tab.png            The Targets tab: empty table (no tag in view), so no pose
+  dashboard-input-tuning-guide.webp     The Input tab's Tuning guide, expanded (cropped);
+                                       ...-full-page.webp is the whole page with it open.
+  dashboard-aprilcudatag-tab.webp       The AprilCudaTag tab.
+  dashboard-output-tab.webp             The Output tab (3D and multi-tag options).
+  dashboard-targets-tab.webp            The Targets tab: empty table (no tag in view), so no pose
                                        or ambiguity values.
-  dashboard-3d-tab.png                 The 3D tab.
-  copy-settings-dialog.png             The pipeline menu's "Copy settings from..." dialog, opened
+  dashboard-3d-tab.webp                 The 3D tab.
+  copy-settings-dialog.webp             The pipeline menu's "Copy settings from..." dialog, opened
                                        on TopLeft (cancelled; nothing was copied).
-  camera-page-full.png                 Camera page: TopLeft's calibration table and the Focus card.
-  camera-calibration-card.png          The Camera Calibration card (not mid-calibration; see
+  camera-page-full.webp                 Camera page: TopLeft's calibration table and the Focus card.
+  camera-calibration-card.webp          The Camera Calibration card (not mid-calibration; see
                                        calibration-snapshots/).
-  camera-focus-card.png                The Focus card, with Measure off (a flat dark image gives a
+  camera-focus-card.webp                The Focus card, with Measure off (a flat dark image gives a
                                        meaningless score).
-  camera-matching-usb-bandwidth.png    Camera Matching's USB bandwidth card (4 cameras, 3840 of
+  camera-matching-usb-bandwidth.webp    Camera Matching's USB bandwidth card (4 cameras, 3840 of
                                        ~6720 bytes per microframe).
-  camera-matching-page.png             The top of the Camera Matching page.
-  field-calibration-camera-tune.png    Field Calibration step 1: the per-camera Tune cards.
-  field-calibration-results-map.png    Field Calibration results with the tag MAP view.
-  field-calibration-results-3d.png     The same with the 3D field view.
-  field-calibration-page-full.png      The whole Field Calibration page.
+  camera-matching-page.webp             The top of the Camera Matching page.
+  field-calibration-camera-tune.webp    Field Calibration step 1: the per-camera Tune cards.
+  field-calibration-results-map.webp    Field Calibration results with the tag MAP view.
+  field-calibration-results-3d.webp     The same with the 3D field view.
+  field-calibration-page-full.webp      The whole Field Calibration page.
     (The field-calibration results shown are from a synthetic test run, "Synthetic-test", not a
     real field.)
-  settings-top.png                     Settings: Device Control (incl. CPU Throttling) beside
+  settings-top.webp                     Settings: Device Control (incl. CPU Throttling) beside
                                        Device Metrics (CPU, GPU usage chart, memory, temperature).
-  settings-device-control.png          Device Control alone.
-  settings-device-metrics.png          Device Metrics alone.
-  settings-rewind.png                  Settings -> Rewind: Record now switch and recent recordings.
+  settings-device-control.webp          Device Control alone.
+  settings-device-metrics.webp          Device Metrics alone.
+  settings-rewind.webp                  Settings -> Rewind: Record now switch and recent recordings.
 
   The live camera views are the dashboard stream at 213x133 (the team's default stream size),
   and flat gray (see the top of this file).

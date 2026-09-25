@@ -131,7 +131,7 @@ function bootReplay(root) {
   const MAX = 60, pct = (s) => (100 * s) / MAX;
   const TR = {
     before: { segs: [[0, 6.9, 'kernel 6.9 s', '#c4b5fd'], [6.9, 11.9, 'services', '#67e8f9'], [11.9, 56.9, 'snapd.seeded ≈ 45 s (unused!)', '#fb7185']], marks: [[12, 'PhotonVision started ~12 s'], [56.9, 'boot finished']] },
-    after: { segs: [[0, 9.0, 'kernel 9.0 s', '#c4b5fd'], [9.0, 16.5, 'services 7.6 s', '#67e8f9'], [16.5, 20.1, 'cams', '#a3e635']], marks: [[14.7, 'PhotonVision 14.7 s'], [20, 'tags detected ~20 s']] },
+    after: { segs: [[0, 8.8, 'kernel 8.8 s', '#c4b5fd'], [8.8, 16.5, 'services 7.7 s', '#67e8f9'], [16.5, 20.1, 'cams', '#a3e635']], marks: [[14.7, 'PhotonVision 14.7 s'], [20, 'tags detected ~20 s']] },
   };
   for (const [k, tr] of Object.entries(TR)) {
     const lane = lab.querySelector(`.lane[data-t="${k}"]`);

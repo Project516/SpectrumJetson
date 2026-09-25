@@ -77,8 +77,8 @@
       <div class="step"><div class="box"><span class="stage-label">3 · IR-cut filter</span><h4>Infrared is filtered out</h4><p>Silicon sensors can see near-infrared light, which your eyes can't. The filter lets through at least 88% of visible light (430–620 nm) and less than 5% of infrared (700–1100 nm).</p><p>Why block it? The lens is designed to focus visible light, and infrared comes to a focus at a slightly different distance, which would soften the image. Many materials also reflect infrared very differently from how they look. Blocking it keeps tag edges crisp and the picture predictable.</p></div></div>
       <div class="step"><div class="box"><span class="stage-label">4 · Photodiodes</span><h4>Photons become electrons</h4><p>The sensor is a grid of 1,024,000 tiny light-sensitive <span class="term">photodiode</span>s, each only 3 micrometers wide. When a photon hits one, it knocks loose an electron, which is stored in the pixel.</p><p>Think of each pixel as a bucket in the rain. While the <span class="term">exposure</span> lasts, photons are the rain. Pixels looking at a white square fill up; pixels looking at a black square stay nearly empty.</p></div></div>
       <div class="step"><div class="box"><span class="stage-label">5 · Readout</span><h4>Measure every bucket</h4><p>When the exposure ends, every pixel stops collecting at the same instant (that's what global shutter means). Then the sensor reads the buckets out, row by row. An <span class="term">ADC</span> (analog-to-digital converter) measures each bucket's charge and turns it into a number.</p><p>The OV9281 measures each pixel with 10 bits (0–1023). The pictures we get over USB use 8 bits: 0 is black, 255 is white.</p></div></div>
-      <div class="step"><div class="box"><span class="stage-label">6 · A grid of numbers</span><h4>An image is just numbers</h4><p>That's all a digital image is: a grid of brightness numbers. These are real pixel values from a camera frame, around the corner of a tag. You can see the black border (low numbers), the white edge (high numbers), and the soft, in-between values right at the edge.</p><p>Our full frame is 1280 × 800 of these: <strong>1,024,000 bytes</strong>, about 1 MB.</p></div></div>
-      <div class="step"><div class="box"><span class="stage-label">7 · JPEG</span><h4>Squeeze it 20 times smaller</h4><p>1 MB × 120 frames a second is 123 MB/s, about 980 megabits a second. USB 2.0 only carries 480 in total, shared by every camera. So a chip in the camera compresses each frame into a <span class="term">JPEG</span> before sending it.</p><p>JPEG cuts the image into 8 × 8 blocks and describes each block as a mix of simple patterns, keeping the strong ones and dropping fine detail you'd barely notice. Our frames come out around <strong>40–60 KB</strong>.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">6 · A grid of numbers</span><h4>An image is just numbers</h4><p>That's all a digital image is: a grid of brightness numbers. These are real pixel values from our own TopLeft Thriftiest Cam, around the top-left corner of tag 3. You can see the black border (low numbers), the white edge (high numbers), and the soft, in-between values right at the edge.</p><p>Our full frame is 1280 × 800 of these: <strong>1,024,000 bytes</strong>, about 1 MB.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">7 · JPEG</span><h4>Squeeze it 20 times smaller</h4><p>1 MB × 120 frames a second is 123 MB/s, about 980 megabits a second. USB 2.0 only carries 480 in total, shared by every camera. So a chip in the camera compresses each frame into a <span class="term">JPEG</span> before sending it.</p><p>JPEG cuts the image into 8 × 8 blocks and describes each block as a mix of simple patterns, keeping the strong ones and dropping fine detail you'd barely notice. Real frames from our cameras come out at <strong>49.7–60.4 KB</strong>; the one in this chapter is 52,801 bytes.</p></div></div>
       <div class="step"><div class="box"><span class="stage-label">8 · USB</span><h4>Down the cable, 125 µs at a time</h4><p>USB 2.0 splits time into 125-microsecond slices called <span class="term">microframe</span>s, 8,000 a second. Our camera <span class="term">driver</span> gives each camera a fixed number of bytes in every slice (chapter 10). At our setting, a 50 KB frame takes about <strong>4.9 ms</strong> to cross, then the Jetson decodes it and looks for tags.</p><p>The camera sends this stream as <span class="term">MJPEG</span>: a series of separate JPEG pictures, one per frame.</p></div></div>
     </div>
   </div>
@@ -132,7 +132,7 @@
         <figure><canvas class="px" id="c-by2" width="32" height="32"></canvas><figcaption>Color, after demosaicing</figcaption></figure>
       </div>
       <div class="ctl" style="margin-top:14px"><label>Light level <output></output></label><input type="range" id="c-bylight" min="0.15" max="1" step="0.01" value="0.6"></div>
-      <p class="hint">A real tag corner, 32 × 32 sensor pixels. Same exposure for both sensors; the color sensor's image is brightened 3× to match, which also triples its noise. Look for the false colors along the edges.</p>
+      <p class="hint">A real tag corner from our camera, 32 × 32 sensor pixels. Same exposure for both sensors; the color sensor's image is brightened 3× to match, which also triples its noise. Look for the false colors along the edges.</p>
     </div>
   </div>
 
@@ -147,11 +147,12 @@
     <div class="ctl" style="margin-top:14px"><label>JPEG quality <output></output></label><input type="range" id="c-q" min="5" max="95" step="1" value="75"></div>
     <div class="readout">
       <div><small>Uncompressed</small><b>1,000 KB</b></div>
-      <div><small>JPEG (estimated)</small><b id="c-jkb"></b></div>
+      <div><small>JPEG (this page's estimate)</small><b id="c-jkb"></b></div>
+      <div><small>The camera's real JPEG</small><b>52.8 KB</b></div>
       <div><small>Numbers kept</small><b id="c-jnz"></b></div>
     </div>
     <div class="sizebar"><i id="c-jbar"></i></div>
-    <p class="hint">A simplified JPEG: a real 8 × 8 DCT with the standard quantization tables, but the size is estimated, not a real file. Busy or noisy scenes need more bytes, and this frame (a PhotonVision test image, GPL-3.0, from another camera) is noisier than ours; the size is scaled to our 1280 × 800.</p>
+    <p class="hint">The frame is a real one from our TopLeft Thriftiest Cam; the camera's own JPEG of it is 52,801 bytes. This page re-compresses it with a simplified JPEG (a real 8 × 8 DCT and the standard quantization tables), so its size is an estimate, not a real file.</p>
   </div>
   <div class="callout spectrum"><h5>What we measured</h5><p>Our cameras choose their own JPEG quality. At 120 fps, one of our Thriftiest Cams averaged <strong>47.5 KB</strong> per frame at its normal USB allocation (1280 bytes per microframe). When we halved that allocation, it kept 120 fps and compressed harder instead: <strong>40.8 KB</strong> per frame. That may cost some tag range and precision, which we still have to measure. Blocky JPEG edges are also part of why our calibrations can't get below about 0.8 px of error (chapter 11).</p></div>
 
@@ -196,6 +197,7 @@
         <li>Check the corners. Far below 100% means a tilted lens or a soft corner.</li>
         <li><strong>Lock the lens</strong> with glue or silicone, then recalibrate. Vibration on a robot can turn a loose lens and spoil the calibration.</li>
       </ol>
+      <figure class="photo" style="margin-top:14px"><img src="assets/from-jetson/screenshots/camera-focus-card.webp" alt="The Focus card in our PhotonVision, with its Measure switch" loading="lazy" width="554" height="155" style="max-width:420px"><figcaption>The Focus card in our PhotonVision, Sept 25, 2026 (Measure off).</figcaption></figure>
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Focus the lens</h4></div>
@@ -207,7 +209,7 @@
         <span style="margin-left:auto;font:700 1.3rem var(--font-heading);color:#fff" id="c-fscore"></span>
       </div>
       <div class="focus-grid" id="c-fgrid"></div>
-      <p class="hint">Each cell: its sharpness against its own best since Reset, like our Focus card. The lab starts as if you'd already swept the lens once; press Reset to start fresh. Simplified blur model on a real frame (PhotonVision test image, GPL-3.0).</p>
+      <p class="hint">Each cell: its sharpness against its own best since Reset, like our Focus card. The lab starts as if you'd already swept the lens once; press Reset to start fresh. Simplified blur model on a real frame from our TopLeft camera.</p>
     </div>
   </div>
 

@@ -40,7 +40,7 @@
   </div>
 
   <h3>The camera simulator</h3>
-  <p class="prose">This is a real frame from a robot camera on the 2024 field, with our camera's physics layered on top. Drag the sliders and watch the tags. The robot spin slider moves the camera while the shutter is open, like a robot turning in place. Each tag's badge shows whether a detector would accept it, using the real decision-margin formula from chapter 02 on these pixels.</p>
+  <p class="prose">This starts from a real frame from our own TopLeft Thriftiest Cam, with a camera model layered on top. Drag the sliders and watch the tags. The robot spin slider moves the camera while the shutter is open, like a robot turning in place. The tag's badge shows whether a detector would accept it, using the real decision-margin formula from chapter 02 on these pixels.</p>
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Tune the camera</h4></div>
@@ -54,7 +54,7 @@
     </div>
     <div class="sim">
       <div>
-        <canvas class="view" id="s-view" aria-label="Simulated camera frame with two AprilTags, changing with the settings"></canvas>
+        <canvas class="view" id="s-view" aria-label="Simulated camera frame with tag 3, changing with the settings"></canvas>
         <div class="badges" id="s-badges"></div>
         <canvas class="hist" id="s-hist" aria-label="Brightness histogram"></canvas>
         <div class="readout">
@@ -74,7 +74,7 @@
         <div class="ctl"><label>Robot spin <output></output></label><input type="range" id="s-spin" min="0" max="6" step="0.1" value="3"><div class="note">3 rad/s ≈ 170°/s, a quick turn in place</div></div>
       </div>
     </div>
-    <p class="hint">Simplified model. The light is scaled so short exposures land near our bench margins (about 44 at 3 ms); at longer exposures this frame's bright background and lights clip, so its margins stop growing sooner than on our bench (about 118 at 8.3 ms). The blur matches our numbers: a 3 rad/s spin smears about 11 px at 5 ms and 44 px at 20 ms (at 1280 wide). Blur, noise, gain and the curves are applied in that order, like a real camera. Frame: PhotonVision test image (GPL-3.0), from a color camera, not ours.</p>
+    <p class="hint">Simplified model on a real frame from our TopLeft Thriftiest Cam (Sept 24, 2026). Its exposure wasn't recorded; it was most likely our 5 ms, so at 5 ms with no spin the simulator shows the frame as shot, and our detector really did read this tag with a margin of 90. The badge uses our detector's scale: this page's copy of the AprilTag library formula reads about 43 on the same pixels, so it's multiplied by 2.1. Other settings scale its light, then add blur, noise, gain and the curves in that order, like a real camera. The blur matches our numbers: a 3 rad/s spin smears about 11 px at 5 ms and 44 px at 20 ms (at 1280 wide).</p>
   </div>
 
   <div class="split top">
@@ -135,6 +135,7 @@
   </div>
 
   <h3>Our settings, and why</h3>
+  <figure class="photo reveal" style="margin:10px 0 26px"><img src="assets/from-jetson/screenshots/dashboard-topleft-3d-input-tab-crop.webp" alt="PhotonVision's Input tab for our TopLeft camera: auto exposure off, exposure 50 (5.0 ms), brightness 100, contrast 32, gamma 150, sharpness 5, backlight compensation on, camera gain 75" loading="lazy" width="1320" height="590"><figcaption>Our PhotonVision's Input tab for TopLeft, Sept 25, 2026: exposure 50 shown as 5.0 ms, brightness 100 (at the top of its slider), and the extra controls from <code>photonvision-28</code> at the camera's defaults. The Camera Gain slider shows 75, but our cameras report no gain control, so it probably does nothing.</figcaption></figure>
   <p class="prose">Every AprilTag camera on our robot uses the same settings. New cameras get them automatically: a camera PhotonVision has never seen starts with our team defaults (<code>photonvision-06</code>), so nobody has to remember them.</p>
   <div class="table-wrap"><table class="data">
     <tr><th>Setting</th><th>Value</th><th>Why</th></tr>
@@ -147,6 +148,11 @@
     <tr><td>Processing</td><td>3D, <span class="term">multi-tag</span> on</td><td>The robot's pose code needs both (once the camera is calibrated)</td></tr>
     <tr><td>Stream resolution</td><td>Small</td><td>Only affects the video you watch in the browser; saves CPU</td></tr>
   </table></div>
+
+  <details class="deep"><summary>Our built-in tuning guide, as it appears in PhotonVision</summary><div>
+    <img src="assets/from-jetson/screenshots/dashboard-input-tuning-guide.webp" alt="The Tuning guide on PhotonVision's Input tab: nine steps from resolution and exposure to checking on the field" loading="lazy" width="1296" height="641" style="width:100%;height:auto;border-radius:10px;margin:4px 0 10px">
+    <p class="small muted">The Input tab's Tuning guide in our PhotonVision, Sept 25, 2026 (<code>photonvision-26</code>).</p>
+  </div></details>
 
   <div class="cards">
     <div class="card"><div class="icon">🧭</div><h4>Tuning guide, built in</h4><p>The camera's Input tab has a "Tuning guide: what to set, in order" (<code>photonvision-26</code>): resolution, auto exposure off, exposure as short as tags still decode, brightness 100, decision margin 15, leave the rest, 3D and multi-tag, then check on the field and copy to the other cameras. Each control's tooltip starts with the recommended value.</p><span class="chip">photonvision-26</span></div>

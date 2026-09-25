@@ -8,6 +8,14 @@
   #photonvision .shot img { width: 100%; border-radius: 12px; box-shadow: var(--shadow-lg); display: block; }
   #photonvision .shot figcaption { font-size: .82rem; color: var(--muted); padding-top: 6px; }
   #photonvision .portrait img { aspect-ratio: 4/3; object-fit: cover; object-position: 50% 45%; }
+  #photonvision .tour { padding: 0; }
+  #photonvision .tourbar { padding: 14px 16px 0; }
+  #photonvision .tourbody { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 20px; padding: 14px 16px; align-items: start; }
+  #photonvision .tourimg img { width: 100%; border-radius: 10px; display: block; box-shadow: var(--shadow-md); background: #22303c; }
+  #photonvision .tourtxt { font-size: .93rem; }
+  #photonvision .tourtxt h4 { margin: 0 0 6px; }
+  #photonvision .tourtxt .chip { display: inline-block; margin: 2px 4px 2px 0; font: 600 .72rem var(--mono); background: var(--accent-low); color: var(--p700); padding: 2px 8px; border-radius: 6px; }
+  @media (max-width: 800px) { #photonvision .tourbody { grid-template-columns: 1fr; } }
   #photonvision .types { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 18px 0; }
   #photonvision .types div { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; font-size: .86rem; color: var(--muted); box-shadow: var(--shadow-md); }
   #photonvision .types b { display: block; font-family: var(--font-heading); color: var(--p700); font-size: .98rem; }
@@ -116,6 +124,17 @@
     <div><b>Colored shape</b>Finds blobs of one color, like a bright game piece.</div>
     <div><b>Driver mode</b>Just shows the video, for the drive team.</div>
   </div>
+
+  <h3>A tour of our dashboard</h3>
+  <p class="prose">This is our PhotonVision's real web dashboard, captured on the Jetson. Click through the tabs. Several of these screens exist only because of our patches (the gallery below has them all).</p>
+  <figure class="fig tour">
+    <div class="tourbar"><div class="seg light" id="pv-tour"><button data-v="0" class="on">AprilCudaTag tab</button><button data-v="1">Output tab</button><button data-v="2">Targets tab</button><button data-v="3">Copy settings</button><button data-v="4">Settings page</button></div></div>
+    <div class="tourbody">
+      <div class="tourimg"><img id="pv-tour-img" src="assets/from-jetson/screenshots/dashboard-aprilcudatag-tab-crop.webp" alt="" loading="lazy"></div>
+      <div class="tourtxt" id="pv-tour-txt"></div>
+    </div>
+    <figcaption>Our PhotonVision, Sept 25, 2026. The camera view is flat gray because the room was dark, and no tag was in view.</figcaption>
+  </figure>
 
   <!-- ───────────── Inside PhotonVision ───────────── -->
   <h3>Inside PhotonVision: one frame's path</h3>
@@ -232,8 +251,8 @@
     </article>
 
     <article class="story" id="pv-s32">
-      <div class="vis"><img src="assets/photos/camera-matching.jpg" alt="PhotonVision's Camera Matching page with 5 cameras streaming: 2 Thrifty, 2 Global Shutter and a USB color camera" loading="lazy" style="width:100%;border-radius:8px;display:block"><canvas id="pv-c32" aria-label="The shared USB budget: four cameras at 1280 bytes and one at 1600" style="margin-top:10px"></canvas></div>
-      <div class="txt"><span class="pn">photonvision-31, -32 · diagnostics</span><h4>Seeing the USB budget</h4><p>All the Jetson's USB 2.0 ports share one budget of about 6,700 bytes every 125 µs, and five cameras fill it. The Camera Matching page (above, all 5 streaming) now has a USB bandwidth card: the budget as a bar, what each camera reserves and really sends, and a menu to change a camera's share. Patch 31 spots "not enough bandwidth" in the kernel log and names the port. Try it yourself in <a href="#speed">chapter 10's USB lab</a>.</p></div>
+      <div class="vis"><img src="assets/photos/camera-matching.jpg" alt="PhotonVision's Camera Matching page with 5 cameras streaming: 2 Thrifty, 2 Global Shutter and a USB color camera" loading="lazy" style="width:100%;border-radius:8px;display:block"><img src="assets/from-jetson/screenshots/camera-matching-usb-bandwidth.webp" alt="The USB bandwidth card: budget bar and four cameras' allocations" loading="lazy" style="width:100%;border-radius:8px;display:block;margin-top:10px"><div style="font-size:.72rem;color:var(--lab-muted);padding-top:6px">Top: 5 cameras streaming (earlier photo). Bottom: the USB bandwidth card, our PhotonVision, Sept 25, 2026.</div></div>
+      <div class="txt"><span class="pn">photonvision-31, -32 · diagnostics</span><h4>Seeing the USB budget</h4><p>All the Jetson's USB 2.0 ports share one budget of about 6,700 bytes every 125 µs, and five cameras fill it. The Camera Matching page (top: all 5 streaming) now has a USB bandwidth card (bottom, with 4 cameras): the budget as a bar, what each camera reserves and really sends, and a menu to change a camera's share. Patch 31 spots "not enough bandwidth" in the kernel log and names the port. Try it yourself in <a href="#speed">chapter 10's USB lab</a>.</p></div>
     </article>
 
     <article class="story" id="pv-s34">
@@ -248,7 +267,7 @@
     </article>
 
     <article class="story" id="pv-s25">
-      <div class="vis light"><svg id="pv-c25" viewBox="0 0 440 200" role="img" aria-label="Copy settings: one camera's chosen setting groups copied to other cameras; names, orientation and exposure limits are never copied"></svg></div>
+      <div class="vis" style="padding:10px"><img src="assets/from-jetson/screenshots/copy-settings-dialog-crop.webp" alt="The Copy settings dialog: from camera, from pipeline, and checkboxes for the groups to copy" loading="lazy" style="width:100%;border-radius:8px;display:block"><div style="font-size:.72rem;color:var(--lab-muted);padding-top:6px">Our PhotonVision, Sept 25, 2026 (opened and cancelled; nothing copied).</div></div>
       <div class="txt"><span class="pn">photonvision-25 · usability</span><h4>Copy settings between cameras</h4><p>Before, you photographed one camera's settings and typed them into the next. Now the pipeline menu has <b>Copy settings from…</b>: tick the groups you want, copy from any camera into this one, or into the same pipeline on every camera. Names, orientation and each camera's exposure limits are never copied, and resolution only between cameras that have the same video modes.</p></div>
     </article>
   </div>

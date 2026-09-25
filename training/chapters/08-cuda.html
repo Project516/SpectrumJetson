@@ -290,6 +290,9 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
       <p>We started with FRC 4143's copy of the detector (from about August 2024), then switched to Austin's current code from frc971/bos. In a side-by-side test on the same camera, the detection was identical and the time per frame fell from <strong>2.4–3.0 ms to about 1.7 ms</strong>, 30–40% faster.</p>
       <p>The A/B table shows something interesting: the new code alone ran at the same speed. The speedup came with Austin's recommended tuning, <code>min_white_black_diff</code> 20. More low-contrast tiles become "unknown" and are skipped, so fewer junk blobs reach the later stages. <strong>Measure, and you learn <em>why</em> something got faster.</strong></p>
       <p>At 1.7 ms, the detector could keep up with over 500 frames per second. The camera sends 120. So the GPU wasn't what limited our frame rate; chapter 10 is the detective story of what did.</p>
+      <p>The detector reports its own speed once a second, per camera. A real line from our Jetson, with 4 cameras running and nothing in view:</p>
+      <pre class="code" style="white-space:pre-wrap;word-break:break-word">971 stats h1 1280x800: <span class="n">122.405 calls/s</span>, detect avg <span class="n">0.905 ms</span> max 1.487 ms, jni 0.004 ms, tags/frame 0 [bos]</pre>
+      <p class="small muted">Our PhotonVision's log, Sept 25, 2026. "calls/s" is the frame rate, "detect" is ms per frame (GPU stages plus the CPU decode). With no tag (a dark room) there's less to do: about 0.9–1.1 ms. With a tag in view it was 1.6–1.8 ms. Chapter 10 explains every field.</p>
     </div>
     <figure class="fig pad" style="margin:0">
       <svg id="c-ab" viewBox="0 0 520 250" role="img" aria-label="Bar chart of detect time per frame for each detector build and setting"></svg>
