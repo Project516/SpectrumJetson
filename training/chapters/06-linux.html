@@ -1,0 +1,328 @@
+<style>
+  #linux .split > *, #linux .os > * { min-width: 0; }
+  @media (max-width: 700px) { #linux .flow .node { flex: none; } #linux .clock { font-size: 1.5rem; } #linux .bus-scale span:nth-child(2) { display: none; } }
+  #linux .mark.end span { transform: translateX(-92%); }
+  /* layered OS stack */
+  #linux .os { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 26px; align-items: start; }
+  @media (max-width: 860px) { #linux .os { grid-template-columns: 1fr; } }
+  #linux .stack { position: relative; display: grid; gap: 8px; }
+  #linux .layer { position: relative; display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--lab-line); background: rgba(255,255,255,.04); cursor: pointer; transition: background .25s, border-color .25s, transform .25s; }
+  #linux .layer .ic { font-size: 1.4rem; width: 34px; text-align: center; }
+  #linux .layer b { display: block; font: 700 1rem var(--font-heading); color: #fff; }
+  #linux .layer small { color: var(--lab-muted); font-size: .8rem; line-height: 1.3; display: block; }
+  #linux .layer.on { background: rgba(139,92,246,.22); border-color: var(--accent); transform: translateX(6px); }
+  #linux .layer.k { border-style: solid; }
+  #linux .stack .wall { position: relative; height: 0; border-top: 2px dashed #f59e0b; margin: 2px 0; }
+  #linux .stack .wall span { position: absolute; right: 8px; top: -9px; background: var(--lab-bg); padding: 0 6px; font: 700 .64rem var(--font); letter-spacing: .12em; text-transform: uppercase; color: #f59e0b; }
+  #linux .pkt { position: absolute; left: -9px; width: 14px; height: 14px; border-radius: 4px; background: #a3e635; box-shadow: 0 0 14px #a3e635; transition: top .55s cubic-bezier(.5,0,.3,1); pointer-events: none; }
+  #linux .os-cap { background: rgba(255,255,255,.05); border: 1px solid var(--lab-line); border-radius: 12px; padding: 14px 16px; min-height: 150px; }
+  #linux .os-cap h5 { margin: 0 0 6px; font: 700 .72rem var(--font); letter-spacing: .14em; text-transform: uppercase; color: var(--accent-soft); }
+  #linux .os-cap p { margin: 0 0 .5em; font-size: .92rem; }
+  #linux .os-cap ul { margin: 0; padding-left: 1.2em; font-size: .9rem; }
+  /* versions */
+  #linux .ver { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  #linux .ver span { background: #fff; border: 1px solid var(--border-strong); border-radius: 10px; padding: 8px 12px; font-size: .86rem; box-shadow: var(--shadow-md); }
+  #linux .ver span b { display: block; font: 700 1.05rem var(--font-heading); color: var(--p700); }
+  /* camera path svg */
+  #linux .path-svg { width: 100%; height: auto; display: block; }
+  #linux .path-svg .band { opacity: .9; }
+  #linux .path-svg text { font-family: var(--font); }
+  #linux .path-svg .nd rect { fill: #fff; stroke: var(--border-strong); stroke-width: 1.5; }
+  #linux .path-svg .nd.hi rect { stroke: var(--accent); stroke-width: 2.5; fill: var(--accent-low); }
+  #linux .path-svg .t { font: 700 17px var(--font-heading); fill: var(--p700); }
+  #linux .path-svg .s { font: 500 13.5px var(--font); fill: var(--muted); }
+  #linux .path-svg .m { font: 500 11.5px var(--mono); fill: var(--p600); }
+  /* usb before/after figure */
+  #linux .ub-row { display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: center; margin: 8px 0; font-size: .88rem; }
+  #linux .ub-bus { display: flex; height: 34px; border-radius: 8px; background: var(--surface-alt); border: 1px solid var(--border-strong); overflow: hidden; }
+  #linux .ub-bus i { font: 700 .74rem/34px var(--mono); font-style: normal; color: #fff; background: var(--accent); border-right: 2px solid #fff; padding-left: 6px; white-space: nowrap; overflow: hidden; }
+  #linux .ub-bus i.c { background: var(--p600); }
+  #linux .ub-bus i.no { background: repeating-linear-gradient(45deg, #f43f5e, #f43f5e 6px, #be123c 6px, #be123c 12px); text-align: center; padding: 0; }
+  #linux .ub-scale { display: flex; justify-content: space-between; font: 500 .74rem var(--mono); color: var(--muted); margin: 0 0 14px 120px; }
+  @media (max-width: 560px) { #linux .ub-row { grid-template-columns: 1fr; gap: 4px; } #linux .ub-scale { margin-left: 0; } #linux .ub-scale span:first-child { display: none; } #linux .ub-bus i { font-size: .62rem; padding-left: 3px; } #linux .usbfig .xbar { grid-template-columns: 1fr; gap: 2px; } #linux .usbfig .xbar i { font-size: .66rem; } }
+  #linux .xbar { display: grid; grid-template-columns: 120px 1fr; gap: 8px; align-items: center; font-size: .82rem; margin: 6px 0; }
+  #linux .xbar i { display: block; height: 20px; border-radius: 4px; background: var(--accent-soft); font: 700 .72rem/20px var(--mono); font-style: normal; color: #1a0a2b; padding-left: 6px; white-space: nowrap; }
+  /* diff viewer */
+  #linux .diff, #linux .conf, #linux .svc, #linux .kmsg, #linux code { font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  #linux .diff { background: #0e0518; border-radius: 12px; padding: 12px 0; overflow-x: auto; font: 500 .8rem/1.55 var(--mono); color: #d6ccf0; }
+  #linux .diff div { white-space: pre; padding: 0 14px 0 34px; position: relative; min-width: max-content; }
+  #linux .diff .add { background: rgba(34,197,94,.14); color: #bbf7d0; }
+  #linux .diff .add::before { content: "+"; position: absolute; left: 14px; color: #4ade80; }
+  #linux .diff .del { background: rgba(244,63,94,.16); color: #fecdd3; }
+  #linux .diff .del::before { content: "−"; position: absolute; left: 14px; color: #fb7185; }
+  #linux .diff .hunk { color: #67e8f9; }
+  #linux .diff .file { color: #c4b5fd; font-weight: 700; }
+  #linux .diff .n { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #fff; font: 700 .66rem var(--font); margin-left: 10px; vertical-align: 1px; }
+  #linux .diff.after .del, #linux .diff.before .add { display: none; }
+  #linux .diff.after .add, #linux .diff.before .del { background: transparent; }
+  #linux .diff.after .add::before, #linux .diff.before .del::before { content: ""; }
+  #linux .notes { counter-reset: n; list-style: none; padding: 0; margin: 12px 0 0; }
+  #linux .notes li { position: relative; padding-left: 30px; margin-bottom: 8px; font-size: .9rem; }
+  #linux .notes li::before { counter-increment: n; content: counter(n); position: absolute; left: 0; top: 1px; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font: 700 .7rem var(--font); }
+  /* systemd demo */
+  #linux .svc { font: 500 .82rem/1.6 var(--mono); background: #0e0518; border-radius: 12px; padding: 14px 16px; color: #d6ccf0; }
+  #linux .svc .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 10px #22c55e; margin-right: 8px; vertical-align: 0; transition: background .3s; }
+  #linux .svc .dot.bad { background: #f43f5e; box-shadow: 0 0 10px #f43f5e; }
+  #linux .svc .dot.mid { background: #f59e0b; box-shadow: 0 0 10px #f59e0b; }
+  #linux .svc .log { color: #b8a9d4; margin-top: 8px; min-height: 5em; }
+  #linux .conf { font: 500 .82rem/1.6 var(--mono); background: var(--p900); color: #e9ddff; border-radius: 12px; padding: 14px 16px; margin: 0; overflow-x: auto; }
+  #linux .conf .c { color: #a78bfa; }
+  #linux .conf .k { color: #67e8f9; }
+  /* boot timeline */
+  #linux .boot { position: relative; margin-top: 8px; }
+  #linux .track { margin: 18px 0 26px; }
+  #linux .track h5 { margin: 0 0 6px; font: 700 .8rem var(--font); color: #fff; display: flex; justify-content: space-between; }
+  #linux .track h5 span { font-family: var(--mono); color: var(--accent-soft); font-weight: 500; }
+  #linux .track { position: relative; }
+  #linux .lane { position: relative; height: 34px; background: rgba(255,255,255,.05); border-radius: 8px; overflow: hidden; }
+  #linux .seg-b { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; padding-left: 8px; font: 600 .72rem var(--font); color: #1a0a2b; white-space: nowrap; overflow: hidden; width: 0; }
+  #linux .mark { position: absolute; top: 22px; height: 42px; width: 2px; background: #fff; opacity: 0; transition: opacity .3s; }
+  #linux .mark span { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; font: 600 .68rem var(--font); color: #fff; white-space: nowrap; background: rgba(26,10,43,.9); padding: 1px 5px; border-radius: 4px; }
+  #linux .mark.up span { top: auto; bottom: 100%; margin: 0 0 3px; }
+  #linux .mark.up { top: 8px; height: 56px; }
+  #linux .clock { font: 700 2rem var(--font-heading); color: #fff; font-variant-numeric: tabular-nums; }
+  #linux .axis { display: flex; justify-content: space-between; font: 500 .7rem var(--mono); color: var(--lab-muted); }
+  /* flashing */
+  #linux .flash-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; counter-reset: fs; }
+  @media (max-width: 860px) { #linux .flash-steps { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { #linux .flash-steps { grid-template-columns: 1fr; } }
+  #linux .flash-steps .card { padding: 16px; }
+  #linux .flash-steps .card svg { width: 100%; height: 110px; margin-bottom: 8px; }
+  #linux .flash-steps .card h4::before { counter-increment: fs; content: counter(fs) ". "; color: var(--accent); }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">06</span> · The computer</span>
+    <h2>Linux, drivers, and why we <em>patched one.</em></h2>
+    <p class="lede">A computer is useless without the software that runs its hardware. On the Jetson that's Linux. Because Linux is open source, when its camera driver got in our way, we could read it, change it and build our own.</p>
+  </div>
+
+  <div class="split top">
+    <div class="prose">
+      <h3 style="margin-top:0">What an operating system does</h3>
+      <p>Picture a busy restaurant kitchen. Lots of cooks (programs) want the stoves, the fridge and the one sink (the hardware) at the same time. Without a manager, they'd crash into each other. The <span class="term">operating system</span> is that manager.</p>
+      <p>It decides which program runs on which CPU core and for how long. It hands out memory so programs can't scribble on each other's data. It talks to every device through <span class="term">driver</span>s, so a program can say "give me the next camera frame" without knowing anything about USB.</p>
+      <p>Your phone, laptop, the robot's SystemCore and the Jetson all have one. Click a layer to see what lives there, or send a message through the stack.</p>
+    </div>
+    <div class="lab" style="margin:0" id="l-os">
+      <div class="lab-head"><span class="tag">Lab</span><h4>The layers of a computer</h4></div>
+      <div class="seg" id="l-os-seg" style="margin-bottom:14px"><button data-v="exp" class="on">You change the exposure</button><button data-v="frame">A frame arrives</button></div>
+      <div class="stack" id="l-stack">
+        <div class="layer" data-l="0"><span class="ic">🧑‍💻</span><div><b>You</b><small>a web browser on a laptop</small></div></div>
+        <div class="layer" data-l="1"><span class="ic">☕</span><div><b>Programs</b><small>PhotonVision (Java), with cscore inside</small></div></div>
+        <div class="layer" data-l="2"><span class="ic">⚙️</span><div><b>System services</b><small>systemd, logging, networking</small></div></div>
+        <div class="wall"><span>user space ↑ · kernel ↓</span></div>
+        <div class="layer k" data-l="3"><span class="ic">🐧</span><div><b>Linux kernel</b><small>drivers, scheduler, memory, files</small></div></div>
+        <div class="layer" data-l="4"><span class="ic">🔌</span><div><b>Hardware</b><small>CPU, GPU, RAM, SSD, USB, cameras</small></div></div>
+        <div class="pkt" id="l-pkt"></div>
+      </div>
+      <div class="os-cap" id="l-os-cap" style="margin-top:14px"></div>
+    </div>
+  </div>
+
+  <h3>Linux: free, and everywhere</h3>
+  <div class="split">
+    <div class="prose">
+      <p><span class="term">Linux</span> is an operating system anyone can download, read, change and share for free: it's <span class="term">open source</span>. Linus Torvalds started it in 1991 as a hobby. Today thousands of companies and volunteers improve it together.</p>
+      <p>It runs almost every web server, every Android phone, most supercomputers, the SystemCore, and our Jetson. A "distribution" packages the Linux kernel with programs and tools; ours is <strong>Ubuntu</strong>, with NVIDIA's drivers added.</p>
+    </div>
+    <div class="cards" style="margin:0;grid-template-columns:1fr 1fr">
+      <div class="card"><div class="icon">📱</div><h4>Android phones</h4><p>A Linux kernel underneath.</p></div>
+      <div class="card"><div class="icon">🌐</div><h4>Web servers</h4><p>Most of the internet.</p></div>
+      <div class="card"><div class="icon">🤖</div><h4>SystemCore</h4><p>The robot controller.</p></div>
+      <div class="card"><div class="icon">👁️</div><h4>Our Jetson</h4><p>Ubuntu 22.04.</p></div>
+    </div>
+  </div>
+
+  <p class="prose">NVIDIA bundles everything a Jetson needs into <span class="term">JetPack</span>. Here's exactly what ours runs:</p>
+  <div class="ver reveal">
+    <span><b>JetPack 6.2.3</b>NVIDIA's bundle</span>
+    <span><b>Jetson Linux 36.5.2</b>the board support (L4T)</span>
+    <span><b>Ubuntu 22.04</b>the distribution</span>
+    <span><b>Kernel 5.15</b>the core of Linux</span>
+    <span><b>CUDA 12.6</b>GPU programming</span>
+    <span><b>TensorRT 10.3</b>neural networks</span>
+  </div>
+  <div class="callout idea"><h5>Why JetPack 6 and not 7?</h5><p>JetPack 7 now supports the Orin Nano, but it moves to Ubuntu 24.04 and CUDA 13. Our CUDA AprilTag detector and the CUDA version of PhotonVision were built for JetPack 6. The newest version isn't automatically the best one: pick the one your software was built and tested on. 6.2.3 was the newest 6.x release, with bug fixes over the 6.2 in our original plan.</p></div>
+
+  <h3>Kernel space and user space</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>Linux splits the computer into two worlds. The <span class="term">kernel</span> runs in <strong>kernel space</strong>, with full control of the hardware. Everything else, including PhotonVision, runs in <span class="term">user space</span>, where a program can only touch its own memory.</p>
+      <p>When a program needs hardware, it asks the kernel with a <strong>system call</strong>: "open <code>/dev/video0</code>", "give me the next frame". The kernel checks the request and does it. That wall is why a crashing PhotonVision can't take the whole Jetson down with it.</p>
+      <p>A <span class="term">driver</span> is the part of the kernel that knows one kind of hardware. Here's how a frame reaches PhotonVision:</p>
+      <ol>
+        <li>The camera speaks <span class="term">UVC</span>, the standard language of USB webcams. That's why it works without installing anything.</li>
+        <li>The kernel's UVC driver, <code>uvcvideo</code>, collects the camera's USB packets into complete frames in memory.</li>
+        <li>It hands them out through <span class="term">V4L2</span>, Linux's standard video API, as the file <code>/dev/video0</code>.</li>
+        <li>In user space, <span class="term">cscore</span> (WPILib's camera library, inside PhotonVision) reads frames from that file.</li>
+      </ol>
+    </div>
+    <div class="fig reveal" style="padding:10px"><svg class="path-svg" id="l-path" viewBox="0 0 440 520" role="img" aria-label="A frame's path: camera (UVC) to uvcvideo driver to V4L2 /dev/video0 in the kernel, then across into user space to cscore and PhotonVision"></svg>
+      <figcaption>Every frame crosses from kernel space to user space once. Simplified: the frame's bytes stay in the same memory buffer; what crosses is a note saying "buffer 3 is ready".</figcaption></div>
+  </div>
+
+  <h3>Why we patched the camera driver</h3>
+  <div class="prose">
+    <p>USB 2.0 splits every second into 8,000 slices of 125 µs called <span class="term">microframe</span>s. A camera streaming video <em>reserves</em> a fixed number of bytes in every single slice, like booking seats on a train that leaves every 125 µs. Its seats are guaranteed, even when it doesn't fill them.</p>
+    <p>We measured that the Jetson's whole USB 2.0 bus fits about <strong>6700 bytes per microframe</strong>. The trouble: the stock driver books whatever the camera asks for, and a Thriftiest Cam always asks for the biggest booking, <strong>3060 bytes</strong> (about 196 Mbps), in every mode, even though it only sends 4–7 MB/s. Two cameras fill the train. The third gets "No space left on device".</p>
+  </div>
+
+  <figure class="fig reveal usbfig" style="padding:18px 20px 6px">
+    <div class="ub-row"><b>Stock driver</b><div class="ub-bus"><i style="width:45.7%">Cam 1 · 3060 B</i><i style="width:45.7%">Cam 2 · 3060 B</i><i class="no" style="width:8.6%">✕</i></div></div>
+    <div class="ub-row"><b>Our driver</b><div class="ub-bus"><i style="width:19.1%">1280</i><i style="width:19.1%">1280</i><i style="width:19.1%">1280</i><i style="width:19.1%">1280</i><i class="c" style="width:23.6%">1600 (USB-C hub)</i></div></div>
+    <div class="ub-scale"><span>0</span><span>the whole USB 2.0 bus: about 6700 bytes every 125 µs (measured)</span></div>
+    <div class="xbar"><span>Time per 50 KB frame</span><i style="width:41%">3060 B booked: ≈ 2.0 ms</i></div>
+    <div class="xbar"><span></span><i style="width:98%;background:#fcd34d">1280 B booked: ≈ 4.9 ms</i></div>
+    <figcaption>Stock: two Thriftiest Cams book 6120 bytes, and a third is refused with "No space left on device". Capped: four cameras on the USB-A ports plus a fifth on a USB-C hub fit in 6720. Chapter 10's lab lets you plug in cameras and pick each one's booking yourself.</figcaption>
+  </figure>
+
+  <div class="callout spectrum"><h5>What we did: a one-knob patch</h5><p>Our patch (<code>kernel/uvcvideo-payload-cap.patch</code>) adds one setting to the driver, <code>payload_cap</code>. For the Thriftiest Cam it caps the booking at <strong>1280 bytes</strong> (82 Mbps), still about 1.4× the largest frame we've measured at 120 fps. Now <strong>4 cameras fit on the USB-A ports, plus a 5th</strong> at 1600 bytes on a USB-C hub. Tested with 2 cameras: 122 fps each, every frame complete. The price is that a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so results reach the robot ~2 ms later. Timestamps don't get worse: the driver stamps a frame when its <em>first</em> packet arrives. The patch also counts each camera's bytes and largest frames, which feeds the USB bandwidth card in PhotonVision (chapter 10 goes deep on that).</p></div>
+
+  <h3>What a patch file is</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>A <span class="term">patch</span> is a small text file that says "in this file, near these lines, remove these and add those". Lines starting with <b style="color:var(--bad)">−</b> are removed, lines with <b style="color:var(--good)">+</b> are added, and the rest are context so the tool can find the right spot even if the file has shifted a bit.</p>
+      <p>This is the heart of our driver patch: after the stock driver works out how much bandwidth to book, we cap it. Switch between the diff and the code before and after.</p>
+      <ol class="notes">
+        <li>The file being changed: the stock driver's <code>uvc_video.c</code> (<code>a/</code> is the original, <code>b/</code> ours).</li>
+        <li>The hunk header: "at line 240 of the old file (6 lines shown), which is line 273 of the new one (14 lines)". Our earlier hunks added 33 lines above this spot.</li>
+        <li>Context: the stock driver's own last step, unchanged.</li>
+        <li>Our addition: look up this camera's cap; if it asked for more, log it and book the cap instead.</li>
+      </ol>
+    </div>
+    <div>
+      <div class="seg light" id="l-diff-seg" style="margin-bottom:10px;background:var(--p900)"><button data-v="diff" class="on">Diff</button><button data-v="before">Before</button><button data-v="after">After</button></div>
+      <div class="diff" id="l-diff">
+<div class="file">--- a/drivers/media/usb/uvc/uvc_video.c<span class="n">1</span></div>
+<div class="file">+++ b/drivers/media/usb/uvc/uvc_video.c</div>
+<div class="hunk">@@ -240,6 +273,14 @@<span class="n">2</span></div>
+<div>                     stream->maxpsize);<span class="n">3</span></div>
+<div>        ctrl->dwMaxPayloadTransferSize = stream->maxpsize;</div>
+<div>    }</div>
+<div class="add"></div>
+<div class="add">    cap = uvc_payload_cap(stream);<span class="n">4</span></div>
+<div class="add">    if (cap &amp;&amp; ctrl->dwMaxPayloadTransferSize > cap) {</div>
+<div class="add">        dev_info_ratelimited(&amp;stream->intf->dev,</div>
+<div class="add">            "SpectrumJetson: capping max payload %u -> %u bytes per interval (payload_cap)\n",</div>
+<div class="add">            ctrl->dwMaxPayloadTransferSize, cap);</div>
+<div class="add">        ctrl->dwMaxPayloadTransferSize = cap;</div>
+<div class="add">    }</div>
+<div> }</div>
+      </div>
+      <p class="small muted" style="margin-top:14px">A patch can remove lines too. This one fixed PhotonVision's Settings page on older browsers (<code>photonvision-03</code>, shortened):</p>
+      <div class="diff">
+<div class="del">// @ts-expect-error This uses Intl.DurationFormat which is newly implemented and not available in TS.</div>
+<div class="del">const durationFormatter = new Intl.DurationFormat("en", { style: "narrow" });</div>
+<div class="add">// Intl.DurationFormat is new (Chrome 129+, Firefox 136+). Constructing it unconditionally threw</div>
+<div class="add">// on older browsers and blanked the whole Device Control card (restart/import/export buttons),</div>
+<div class="add">// so fall back to a simple "2h 39m 7s" formatter when it's missing.</div>
+<div>…</div>
+<div class="add">const durationFormatter = IntlDurationFormat</div>
+<div class="add">  ? new IntlDurationFormat("en", { style: "narrow" })</div>
+<div class="add">  : { format: … }</div>
+      </div>
+    </div>
+  </div>
+  <div class="callout idea"><h5>Open source means you can fix it</h5><p>With a closed driver, we'd have been stuck at two cameras, or had to buy different ones. Because Linux is open source, we read the driver, found the one number that mattered, and changed it: about 30 lines. Our whole project works like that: small patches to other people's code, kept as separate files so anyone can see exactly what we changed and why (chapter 09).</p></div>
+
+  <h3>Building a kernel module</h3>
+  <div class="prose">
+    <p>Most drivers aren't baked into the kernel. They're <span class="term">kernel module</span>s: separate files (<code>.ko</code>) the kernel loads when a device shows up, like snapping a cartridge into a console. That's great for us: we can swap in our own <code>uvcvideo</code> without rebuilding all of Linux. <code>scripts/jetson/11-uvcvideo-payload-cap.sh</code> does it in six steps:</p>
+  </div>
+  <div class="flow reveal">
+    <div class="node"><b>1. Fetch</b>the exact stock source for our kernel, v5.15.199</div><div class="arrow">→</div>
+    <div class="node"><b>2. Build stock</b>compile it unchanged</div><div class="arrow">→</div>
+    <div class="node"><b>3. Compare</b>its <code>srcversion</code> must match NVIDIA's installed driver</div><div class="arrow">→</div>
+    <div class="node"><b>4. Patch + build</b>apply our patch, compile again</div><div class="arrow">→</div>
+    <div class="node"><b>5. Install</b>in <code>updates/</code>, which wins over stock</div><div class="arrow">→</div>
+    <div class="node"><b>6. Reload</b><code>modprobe -r</code>, then <code>modprobe</code></div>
+  </div>
+  <div class="prose">
+    <p>Step 3 is the safety check. A module must be built against the exact kernel it will run in, and NVIDIA sometimes changes drivers. If the stock source doesn't produce a byte-for-byte match of the installed driver (<code>srcversion</code> 51AFB22511907605800B082), the script stops instead of installing something subtly different. <code>--undo</code> puts the stock driver back.</p>
+  </div>
+  <details class="deep"><summary>The commands, and why GPL applies</summary><div>
+    <pre class="conf"><span class="c"># build against the running kernel's headers (M= is our folder)</span>
+make -C /lib/modules/$(uname -r)/build M=$PWD CONFIG_USB_VIDEO_CLASS=m modules
+<span class="c"># the setting, applied every time the module loads</span>
+<span class="k">options</span> uvcvideo payload_cap=1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600
+<span class="c"># swap the running driver (PhotonVision stops for a few seconds)</span>
+sudo modprobe -r uvcvideo &amp;&amp; sudo modprobe uvcvideo
+cat /sys/module/uvcvideo/parameters/payload_cap</pre>
+    <p>Each <code>payload_cap</code> entry is <code>vid:pid:bytes</code> (a camera model) or <code>port:bytes</code> (the camera on one USB port, e.g. <code>1-2.4:944</code>, set from PhotonVision's Camera Matching page). The setting is writable while running; a new cap takes effect the next time the driver sets the camera up, so PhotonVision applies it with a USB reset (about 2 s without frames).</p>
+    <p><strong>The license.</strong> Linux is licensed under the <span class="term">GPL</span> version 2. You may change it and share your changes, but anything you distribute that's built from GPL code must also be GPL, with its source available. So our patch is GPL-2.0, like the driver it changes, and it's published in our repo. That's the deal that keeps Linux open: everyone who improves it gives the improvement back.</p>
+  </div></details>
+
+  <h3>systemd: the Jetson's stage manager</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>When Linux boots, the kernel starts one program, <span class="term">systemd</span>, and systemd starts everything else: networking, logging, and <strong>services</strong>, programs that run in the background with no window. PhotonVision is a service.</p>
+      <p>A service is described by a small text file. The part we added tells systemd to restart PhotonVision whenever it exits, for any reason, one second later, and never give up:</p>
+      <pre class="conf"><span class="c"># /etc/systemd/system/photonvision.service.d/90-spectrum-restart.conf</span>
+[Unit]
+<span class="k">StartLimitIntervalSec</span>=0
+[Service]
+<span class="k">Restart</span>=always
+<span class="k">RestartSec</span>=1</pre>
+      <p>systemd also feeds the Jetson's hardware <span class="term">watchdog</span>: a timer on the chip that reboots the whole Jetson if Linux itself freezes for 30 seconds. Chapter 16 covers all our match-day safety nets.</p>
+    </div>
+    <div class="lab" style="margin:0" id="l-svc">
+      <div class="lab-head"><span class="tag">Try it</span><h4>Crash PhotonVision</h4></div>
+      <div class="svc"><div><span class="dot" id="l-dot"></span><b style="color:#fff">photonvision.service</b></div><div id="l-state">Active: <span style="color:#4ade80">active (running)</span></div><div class="log" id="l-log"></div></div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn-sm primary" id="l-crash">💥 Crash it</button><div class="seg" id="l-rs"><button data-v="always" class="on">Restart=always</button><button data-v="no">no restart</button></div></div>
+      <p class="hint">A simplified replay. On our Jetson a crash used to mean ~62 s without vision: Ubuntu's crash reporter spent 28 s writing a 156 MB file first. We made PhotonVision exit cleanly instead; now the worst case is about 8 s.</p>
+    </div>
+  </div>
+
+  <h3>From 57 seconds to 16.5</h3>
+  <p class="prose">A robot is switched on moments before a match, so the Jetson has to boot fast. <code>systemd-analyze</code> told us where the time went: <strong>45 seconds</strong> of every boot was <code>snapd.seeded</code>, a service preparing "snap" packages. We don't use any snaps. So we switched snapd off (masked it) and booted without the desktop.</p>
+  <div class="lab reveal" id="l-boot">
+    <div class="lab-head"><span class="tag">Replay</span><h4>Two boots, side by side</h4><button class="btn-sm primary" id="l-boot-play" style="margin-left:auto">▶ Replay</button></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="clock" id="l-clock">0.0 s</span><span class="hint" style="margin:0">4× speed · seconds since the kernel started</span></div>
+    <div class="boot" id="l-boot-tracks">
+      <div class="track"><h5>Before <span>56.9 s</span></h5><div class="lane" data-t="before"></div></div>
+      <div class="track"><h5>After our tuning <span>16.5 s</span></h5><div class="lane" data-t="after"></div></div>
+    </div>
+    <div class="axis"><span>0</span><span>10</span><span>20</span><span>30</span><span>40</span><span>50</span><span>60 s</span></div>
+    <p class="hint">Measured with <code>systemd-analyze</code> (Sept 24, 2026). Before, PhotonVision already started at ~12 s, but the system was still busy for another 45 s; first detection wasn't measured. After, PhotonVision starts at 14.7 s (it now waits for the clocks to be locked) and both cameras detect tags at 19.9 and 20.1 s.</p>
+  </div>
+
+  <h3>Everything else we tuned</h3>
+  <p class="prose">A laptop and a robot want different things from Linux. <code>scripts/jetson/09-robot-tuning.sh</code> makes ten changes (and <code>--undo</code> reverses them):</p>
+  <div class="cards reveal">
+    <div class="card"><div class="icon">🚫</div><h4>No automatic updates</h4><p>Nothing may update NVIDIA or Java packages in the middle of an event.</p></div>
+    <div class="card"><div class="icon">🖥️</div><h4>Headless</h4><p>Boots to a text console, no desktop. Nobody looks at a screen on a robot.</p></div>
+    <div class="card"><div class="icon">⏱️</div><h4>Clocks locked</h4><p><code>jetson_clocks</code> at every boot: CPU 1728 MHz, GPU 1020 MHz, so timing never wobbles.</p></div>
+    <div class="card"><div class="icon">🔌</div><h4>USB autosuspend off</h4><p>Linux likes to nap idle USB devices to save power. Cameras must never nap.</p></div>
+    <div class="card"><div class="icon">🔋</div><h4>Power-cut safe</h4><p>A robot is switched off, never shut down. Data reaches the SSD within 3 s (not 30), and the system log is kept on the SSD.</p></div>
+    <div class="card"><div class="icon">🌀</div><h4>Fan at full speed</h4><p>Noise doesn't matter on a robot: 56 → 43 °C.</p></div>
+    <div class="card"><div class="icon">🐕</div><h4>Recover from hangs</h4><p>30 s hardware watchdog, reboot 3 s after a kernel panic, PhotonVision always restarted.</p></div>
+    <div class="card"><div class="icon">😴</div><h4>Idle threads sleep</h4><p>OpenCV's helper threads spun in circles waiting for work. Now they sleep.</p></div>
+    <div class="card"><div class="icon">🔁</div><h4>1 s USB retries</h4><p>A stuck camera held up the others on its hub for ~65 s each. Now about 20 s.</p></div>
+    <div class="card"><div class="icon">📜</div><h4>Bigger log</h4><p>Up to 2 GB of system log, so the story of a bad match is still there afterwards.</p></div>
+  </div>
+
+  <h3>Flashing: installing Linux on a Jetson</h3>
+  <p class="prose">A new Jetson's SSD is empty. <span class="term">Flashing</span> writes NVIDIA's operating system onto it, and updates the small boot program stored on the board itself. It's done from an Ubuntu 22.04 laptop over a USB-C cable, and took us about 7 minutes.</p>
+  <div class="flash-steps reveal">
+    <div class="card"><svg id="l-hdr" viewBox="0 0 220 110" role="img" aria-label="The 12-pin button header with pins 9 and 10 joined by a jumper"></svg><h4>Recovery mode</h4><p>Power off. Put a jumper on pins 9 and 10 (FC REC and GND) of the 12-pin button header under the module, not the 40-pin one. Power on, remove the jumper.</p></div>
+    <div class="card"><svg viewBox="0 0 220 110"><rect x="10" y="30" width="80" height="54" rx="6" fill="#1f1b23"/><rect x="16" y="36" width="68" height="36" rx="3" fill="#6b1199"/><rect x="4" y="84" width="92" height="8" rx="3" fill="#635a72"/><path d="M96 80 C130 80 130 58 160 58" fill="none" stroke="#8b5cf6" stroke-width="4"/><rect x="150" y="34" width="62" height="46" rx="6" fill="#10281d"/><rect x="168" y="40" width="30" height="22" rx="3" fill="#1f1b23"/><text x="181" y="96" text-anchor="middle" font-size="11" fill="#635a72" font-family="var(--font)">Jetson</text><text x="50" y="104" text-anchor="middle" font-size="11" fill="#635a72" font-family="var(--font)">Ubuntu laptop</text><text x="128" y="52" text-anchor="middle" font-size="10" fill="#8b5cf6" font-family="var(--font)">USB-C</text></svg><h4>Connect</h4><p>USB-C cable to an Ubuntu laptop. <code>lsusb</code> should list <code>0955:7523 NVIDIA Corp. APX</code>: the Jetson is waiting in recovery mode.</p></div>
+    <div class="card"><svg viewBox="0 0 220 110"><rect x="10" y="14" width="200" height="82" rx="8" fill="#0e0518"/><text x="22" y="36" font-size="10.5" fill="#b8a9d4" font-family="var(--mono)">$ 02-flash-nvme.sh</text><text x="22" y="54" font-size="10.5" fill="#b8a9d4" font-family="var(--mono)">Waiting for target…</text><rect x="22" y="66" width="176" height="10" rx="5" fill="rgba(255,255,255,.1)"/><rect x="22" y="66" width="120" height="10" rx="5" fill="#8b5cf6"><animate attributeName="width" values="10;176;176" dur="4s" repeatCount="indefinite"/></rect></svg><h4>Flash</h4><p>Our script writes the OS to the SSD and the boot program to the board. "Waiting for target to boot-up" for 30 s is normal.</p></div>
+    <div class="card"><svg viewBox="0 0 220 110"><circle cx="110" cy="52" r="34" fill="#dcfce7"/><path d="M92 53 l12 12 l24 -26" fill="none" stroke="#16a34a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg><h4>Wait for "Flash is successful"</h4><p>Not the earlier "Successfully flashed the external device": the board is still writing then. Unplug too soon and you start over.</p></div>
+  </div>
+
+  <div class="deeper">
+    <a class="video" href="https://www.youtube.com/watch?v=rrB13utjYV4" target="_blank" rel="noopener">Fireship: Linux in 100 seconds (2:41)</a>
+  </div>
+
+  <div class="recap reveal">
+    <h5>Chapter 6 recap</h5>
+    <ul>
+      <li>The operating system shares the hardware between programs. Linux is free, open source and everywhere; ours is Ubuntu 22.04 from JetPack 6.2.3 (kernel 5.15, CUDA 12.6).</li>
+      <li>The kernel owns the hardware; programs live in user space and ask through system calls. Drivers are kernel code for one kind of device.</li>
+      <li>Camera path: UVC camera → <code>uvcvideo</code> driver → V4L2 <code>/dev/video0</code> → cscore in PhotonVision.</li>
+      <li>We patched <code>uvcvideo</code> so each camera books 1280 instead of 3060 bytes per microframe: 4–5 cameras fit instead of 2. That's only possible because Linux is open source.</li>
+      <li>systemd restarts PhotonVision on any exit; tuning cut boot time from 57 s to 16.5 s.</li>
+    </ul>
+  </div>
+</div>

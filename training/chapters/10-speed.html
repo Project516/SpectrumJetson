@@ -1,0 +1,250 @@
+<style>
+  #speed figure { margin-left: 0; margin-right: 0; }
+  #speed .split > *, #speed .lab-grid > *, #speed .scrolly > * { min-width: 0; }
+  #speed pre, #speed code { font-variant-ligatures: none; }
+  #speed svg text { font-family: var(--font); }
+  #speed .fig.pad { padding: 16px; }
+  #speed .term-line { background: #0f0a18; color: #e9e0ff; border-radius: 12px; padding: 14px 16px; font: 13px/1.7 var(--mono); overflow-x: auto; white-space: pre; margin: 14px 0; }
+  #speed .term-line .hl { background: rgba(163,230,53,.22); color: #d9f99d; border-radius: 4px; padding: 0 3px; }
+  #speed .term-line .dim { color: #8f80ad; }
+  #speed .scrolly .vis .fig { padding: 14px; }
+  #speed .scrolly canvas { border-radius: 10px; }
+  #speed .cpupair { font-size: .88rem; color: var(--muted); margin-top: 8px; min-height: 2.6em; }
+  #speed .cpupair b { color: var(--p700); font-family: var(--font-heading); font-size: 1.05rem; }
+  /* USB lab */
+  #speed .presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 14px; }
+  #speed .ports { display: grid; gap: 8px; }
+  #speed .port { display: grid; grid-template-columns: 72px 1fr 92px; gap: 6px; align-items: center; background: rgba(255,255,255,.04); border: 1px solid var(--lab-line); border-left: 4px solid var(--c, transparent); border-radius: 10px; padding: 6px 8px; }
+  #speed .port .pn { font: 600 .72rem var(--mono); color: var(--lab-muted); line-height: 1.2; }
+  #speed .port .pn b { display: block; color: #fff; font: 700 .8rem var(--font); }
+  #speed .lab select { width: 100%; background: #1c0d2e; color: #fff; border: 1px solid var(--lab-line); border-radius: 7px; padding: 5px 6px; font: 500 .8rem var(--font); }
+  #speed .lab select:disabled { opacity: .35; }
+  #speed .usbtable { width: 100%; min-width: 620px; border-collapse: collapse; font-size: .8rem; margin-top: 14px; color: var(--lab-ink); }
+  #speed .usbtable th { text-align: left; font: 700 .64rem var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--lab-muted); padding: 6px 8px; border-bottom: 1px solid var(--lab-line); }
+  #speed .usbtable td { padding: 7px 8px; border-bottom: 1px solid rgba(196,181,253,.08); vertical-align: top; }
+  #speed .usbtable td small { display: block; color: var(--lab-muted); font-size: .72rem; }
+  #speed .usbtable .ok { color: #a3e635; font-weight: 700; } #speed .usbtable .sq { color: #f59e0b; font-weight: 700; } #speed .usbtable .no { color: #fb7185; font-weight: 700; }
+  #speed .usbwrap { overflow-x: auto; }
+  #speed .kernel { font: 500 .78rem var(--mono); color: #fb7185; margin-top: 8px; min-height: 1.4em; }
+  /* decode lab */
+  #speed .jpegflow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin: 20px 0; }
+  #speed .jpegflow .st { background: #fff; border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 10px 8px; font-size: .8rem; color: var(--muted); position: relative; box-shadow: var(--shadow-md); }
+  #speed .jpegflow .st b { display: block; font: 700 .92rem var(--font-heading); color: var(--p700); margin-bottom: 2px; }
+  #speed .jpegflow .st .tag { display: inline-block; margin-top: 6px; font: 700 .62rem var(--font); letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; }
+  #speed .jpegflow .st .both { background: #dcfce7; color: #15803d; } #speed .jpegflow .st .skip { background: #fee2e2; color: #b91c1c; }
+  #speed .jpegflow .st svg { width: 100%; height: 46px; display: block; margin-bottom: 6px; }
+  @media (max-width: 900px) { #speed .jpegflow { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 480px) { #speed .jpegflow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  #speed .meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+  #speed .meter { background: rgba(255,255,255,.05); border: 1px solid var(--lab-line); border-radius: 10px; padding: 8px 10px; }
+  #speed .meter small { display: block; font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--lab-muted); }
+  #speed .meter b { font: 700 1.1rem var(--font-heading); color: #fff; }
+  #speed .meter i { display: block; height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); margin-top: 6px; overflow: hidden; position: relative; }
+  #speed .meter i::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--v); background: var(--c); border-radius: 4px; }
+  @media (max-width: 560px) { #speed .meters { grid-template-columns: 1fr; } }
+  #speed .cards .card h4 { font-size: 1.02rem; }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">10</span> · Making it fast</span>
+    <h2>Making it fast: from 33 to <em>122 frames per second.</em></h2>
+    <p class="lede">Our first test ran at 33 frames per second. The cameras can do 120, and the GPU could handle over 500. Somewhere between the lens and the GPU, three quarters of the frames were being lost. This is the detective story of finding them, one measurement at a time.</p>
+  </div>
+
+  <div class="split top">
+    <div class="prose">
+      <h3 style="margin-top:0">First rule: measure before you optimize</h3>
+      <p>The tempting move would have been to speed up the GPU code. It's the fancy part, and it's what everyone talks about. Instead, we added one line to the detector that prints, once a second, how many frames it got and how long each one took.</p>
+      <p>That line settled it on day one. The detector needed <strong>under 2 ms</strong> of every frame. At 61 fps, a frame arrives every 16 ms. So the GPU sat idle about 90% of the time, waiting for frames. Making it faster would have changed nothing. The problem was upstream: the camera, and how PhotonVision reads and decodes frames.</p>
+    </div>
+    <div>
+      <div class="term-line" aria-label="Example 971 stats log line"><span class="dim">$ journalctl -u photonvision -f | grep "971 stats"</span>
+971 stats h0 1280x800: <span class="hl">61.2 calls/s</span>, detect avg <span class="hl">1.79 ms</span> …, tags/frame 1, margin avg 118.5 … [bos]</div>
+      <p class="small muted">The format of the real line (from <code>detector/GpuDetectorJNI.cc</code>), with values from our A/B test at exposure 8.3 ms. "…" marks fields left out here.</p>
+      <div class="callout idea" style="margin-top:10px"><h5>Why it matters</h5><p>Speeding up a part that isn't the bottleneck is wasted work. Find the slowest step first. Here it wasn't even close.</p></div>
+    </div>
+  </div>
+
+  <!-- ───────────── Detective story ───────────── -->
+  <h3>The detective story</h3>
+  <div class="scrolly" id="sp-story">
+    <div class="vis">
+      <div class="fig">
+        <canvas id="sp-chart" aria-label="Chart of frames per second and latency after each change"></canvas>
+        <div class="cpupair" id="sp-cpu"></div>
+      </div>
+    </div>
+    <div class="steps">
+      <div class="step"><div class="box"><h4>1 · 33 fps, 44 ms</h4><p>The first test: one Thriftiest Cam, 1280×800, detecting a tag at <b>33 fps</b> with 44 ms latency. Other teams on Chief Delphi reported the same ~32–36 fps "with an idle GPU". Suspicious.</p></div></div>
+      <div class="step"><div class="box"><h4>2 · The exposure trap</h4><p>The exposure slider said 295. That's in the UVC standard's units of 100 µs, so it meant <b>29.5 ms</b> of light per frame. A camera can't start the next frame until this one's exposure ends: 1000 ÷ 29.5 = <b>34 fps at most</b>. Exposure 83 (8.3 ms): <b>61 fps</b>, 20 ms. Chapter 04 has the lab.</p></div></div>
+      <div class="step"><div class="box"><h4>3 · Ask for gray</h4><p>AprilTags only need brightness, so we asked cscore for grayscale frames instead of converting color in Java (patch 02). Still <b>62 fps</b>, but Java's CPU fell from 155% to 111% of a core. Only half the fix, as it turned out.</p></div></div>
+      <div class="step"><div class="box"><h4>4 · Stop waiting</h4><p>PhotonVision's <b>Low Latency Mode</b> made the loop wait for each new frame. Each frame took a bit longer to process than the camera's 8.3 ms gap, so after every frame it waited for the <em>next</em> one and skipped the one already waiting. Turning it off: <b>~100 fps</b>, same latency. (Lab 3 below shows why.)</p></div></div>
+      <div class="step"><div class="box"><h4>5 · Two cameras</h4><p>Add the second camera: <b>92 and 104 fps</b>, about 23 ms latency, and PhotonVision used <b>3.3 of the 6 CPU cores</b>. Profiling showed each camera's thread busy 98% of the time, mostly inside one cscore call.</p></div></div>
+      <div class="step"><div class="box"><h4>6 · The hidden color decode</h4><p>Inside that call, cscore decoded every JPEG to <b>full color</b>, then converted it to gray, even though we'd asked for gray: <b>8.9 ms</b> a frame. Our detector library now decodes the camera's JPEG straight to gray: <b>2.6 ms</b>. Both cameras: <b>122 fps, 13 ms</b>. (Lab 2.)</p></div></div>
+      <div class="step"><div class="box"><h4>7 · Threads that sleep</h4><p>OpenCV's helper threads were <b>spinning</b>: checking for work in a tight loop instead of sleeping. Five of them at ~22% of a core each. One setting later, 2 cameras use <b>1.3 of 6 cores</b>, down from 3.3. (Lab 3.)</p></div></div>
+      <div class="step"><div class="box"><h4>8 · The JPEG hardware</h4><p>The Jetson has dedicated JPEG decoders (<span class="term">NVJPG</span>), separate from the CPU. Decoding there: same 122 fps, PhotonVision went from <b>0.85 to 0.52 cores</b> on the same scene, back to back. Getting correct frames out of it was its own adventure (Lab 2).</p></div></div>
+      <div class="step"><div class="box"><h4>9 · Nobody's watching</h4><p>PhotonVision prepared the dashboard video for every frame, even with no browser open. Now only while someone watches, at most 30 fps: <b>0.49 → 0.43 cores</b>. From 33 fps and most of the CPU, to the cameras' full speed on well under one core.</p></div></div>
+    </div>
+  </div>
+  <p class="prose small muted">The CPU numbers come from different days and setups, so compare each step's before and after, not steps with each other. All measured on our bench (README "Performance" and <code>docs/VISION-RESEARCH.md</code>).</p>
+
+  <!-- ───────────── Lab 1: USB ───────────── -->
+  <h3>Lab 1: the USB 2.0 bandwidth budget</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>Every camera sends its JPEGs over <span class="term">USB</span> 2.0. USB 2.0 splits time into <span class="term">microframe</span>s: 8,000 slices a second, each 125 µs long. A video camera doesn't just send when it has data. When it starts, it <strong>reserves</strong> a fixed number of bytes in <em>every</em> microframe, whether it uses them or not. That's what keeps video smooth: its share is guaranteed.</p>
+      <p>The catch: the Jetson has <strong>one USB 2.0 bus</strong>. The four USB-A ports, the USB-C port and the Wi-Fi card's Bluetooth are all branches of it, and together they hold about <strong>6,700 bytes per microframe</strong> (about 430 Mbps), whichever ports the cameras are in. Ask for more and the kernel refuses: "No space left on device".</p>
+      <p>Out of the box, each Thriftiest Cam reserves 3,060 bytes (~196 Mbps) while sending only 4–7 MB/s. Two fit. Our patched camera driver lets us cap a camera's reservation. Try the presets, then build your own robot.</p>
+    </div>
+    <figure class="fig pad" style="margin:0">
+      <svg id="sp-bus" viewBox="0 0 520 300" role="img" aria-label="The Jetson's USB controller has one USB 2.0 bus shared by the USB-A hub, the USB-C port and the M.2 Wi-Fi slot, plus a separate USB 3 bus"></svg>
+      <figcaption>Measured 2026-09-24 by setting cameras' reservations directly with PhotonVision stopped.</figcaption>
+    </figure>
+  </div>
+
+  <div class="lab" id="sp-usblab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Fit the cameras on one USB 2.0 bus</h4></div>
+    <div class="presets" id="sp-presets">
+      <button class="btn-sm" data-p="stock2">Stock driver, 2 cameras</button>
+      <button class="btn-sm" data-p="stock3">Stock, add a 3rd</button>
+      <button class="btn-sm" data-p="usbc">"Use the USB-C port!"</button>
+      <button class="btn-sm primary" data-p="ours">What we run</button>
+      <button class="btn-sm" data-p="greedy">One allocation too big</button>
+    </div>
+    <div class="lab-grid">
+      <div>
+        <canvas id="sp-usb" aria-label="The shared USB budget as a bar, and microframes scrolling past with each camera's reserved slice"></canvas>
+        <div class="kernel" id="sp-kernel"></div>
+      </div>
+      <div class="ports" id="sp-ports"></div>
+    </div>
+    <div class="usbwrap"><table class="usbtable" id="sp-usbtable"></table></div>
+    <p class="hint">Frame sizes are from our bench measurements (Thriftiest 48–59 KB average, 62 KB largest at 121 fps; Global Shutter 39–57 KB at 60 fps; color 37 KB at 30 fps). When a camera is given less than it wants, it compresses harder instead of dropping frames: our measured "squeezed" behavior. Between 6,720 bytes (fit) and 7,400 (refused) we haven't tested.</p>
+  </div>
+
+  <div class="split top">
+    <div class="prose">
+      <h4 style="margin-top:0">What happens when a camera is squeezed</h4>
+      <p>A camera can't send more than its allocation: the host only lets it use its slice of each microframe. So what does it do when a frame won't fit in time? We tested it by giving two cameras less than they were sending. Both kept their frame rate. They <strong>compressed harder</strong> instead: smaller, lower-quality JPEGs, taking longer to cross USB.</p>
+      <p>For AprilTag cameras we keep them out of the squeeze (under 90% used) with room to spare ("fits" 1.3× or more). The price of going smaller is latency: a 60 KB frame takes 5.9 ms to cross at 1,280 bytes, and 8.0 ms at 944. It doesn't hurt timestamp accuracy, because the driver stamps a frame when its <em>first</em> packet arrives.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="data">
+        <tr><th>Camera</th><th>Allocation</th><th>fps</th><th>Avg frame</th><th>On USB</th></tr>
+        <tr><td>Thriftiest</td><td>1280 B (10.2 MB/s)</td><td>121</td><td>47.5 KB</td><td>4.6 ms</td></tr>
+        <tr class="hl"><td>Thriftiest</td><td>640 B (5.1 MB/s)</td><td>121</td><td>40.8 KB</td><td>8.0 ms</td></tr>
+        <tr><td>Color, 640×480</td><td>256 B (2.0 MB/s)</td><td>30</td><td>36.6 KB</td><td>18 ms</td></tr>
+        <tr class="hl"><td>Color</td><td>128 B (1.0 MB/s)</td><td>30</td><td>31.5 KB</td><td>31 ms</td></tr>
+      </table>
+      <p class="small muted">Measured 2026-09-24. Highlighted rows: squeezed. We haven't yet pushed a camera far enough to drop frames, or measured whether squeezed JPEGs cost tag range.</p>
+    </div>
+  </div>
+  <div class="callout pitfall"><h5>The USB-C port doesn't add bandwidth</h5><p>It feels like a separate port should have its own budget. It doesn't: it's another branch of the same USB 2.0 bus. Real ways to get more: a <strong>USB 3 camera</strong> (it streams on the separate USB 3 bus), or a <strong>PCIe USB controller card</strong> in the dev kit's empty M.2 Key M slot, which would add a second USB 2.0 bus (untested).</p></div>
+
+  <!-- ───────────── Lab 2: decoding ───────────── -->
+  <h3>Lab 2: the decoding race</h3>
+  <p class="prose">A <span class="term">JPEG</span> is a compressed picture: about 50 KB instead of the 1 MB of raw pixels. Before the detector can look at it, it has to be decoded back into pixels. That takes several steps, and it's where most of our CPU was going.</p>
+  <div class="jpegflow" id="sp-jflow"></div>
+  <div class="split top">
+    <div class="prose">
+      <h4 style="margin-top:0">The frequency trick</h4>
+      <p>JPEG cuts the image into 8×8 blocks and stores each block not as 64 pixels, but as 64 <em>frequencies</em>: how much of each checkerboard-like pattern to add up. Most of the picture lives in the first few; the fine detail in the rest is rounded off, which is where the space is saved. Decoding runs this backwards with the <span class="term">IDCT</span>. Slide to rebuild a block of a tag's corner from its frequencies.</p>
+      <p><strong>Why color costs more:</strong> a color JPEG stores brightness (Y) plus two color channels (Cb, Cr) at lower resolution. cscore decoded our mono camera's frames into a full blue-green-red image (three identical channels, for a gray camera!), three bytes per pixel, then averaged it back to gray. Decoding straight to gray skips building and undoing that color image, and skips the color channels' IDCT and upsampling when a JPEG has them.</p>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Rebuild an 8×8 block</h4></div>
+      <canvas id="sp-idct" aria-label="An 8 by 8 block of a tag corner rebuilt from a growing number of JPEG frequencies"></canvas>
+      <div class="ctl" style="margin-top:12px"><label>Frequencies used (of 64) <output></output></label><input type="range" id="sp-idct-n" min="1" max="64" value="6"></div>
+    </div>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Three ways to decode one frame</h4></div>
+    <canvas id="sp-race" aria-label="Three decode paths racing: cscore's color then gray at 8.9 ms, gray-only at 2.6 ms, and the NVJPG hardware at about 2.6 ms with little CPU"></canvas>
+    <div class="meters" id="sp-meters"></div>
+    <p class="hint">Times are our measurements for one 1280×800 frame. The split between steps inside each bar is illustrative. The CPU meters show decode CPU per camera at 122 fps; "1.09 cores" means one camera's thread can't keep up, which is why two cameras were stuck at 92 and 104 fps. NVJPG's CPU (about 1 ms a frame for hand-off and copying) is from our test harness.</p>
+  </div>
+
+  <div class="split">
+    <div class="prose">
+      <h4 style="margin-top:0">The hardware decoder that froze</h4>
+      <p>The obvious way to call NVIDIA's JPEG library (the way another FRC codebase does it) looked amazing in a speed test. It also returned the <strong>first frame, over and over</strong>, while reporting success every time. We only caught it by decoding every frame both ways and comparing them <em>pixel by pixel</em>.</p>
+      <p>We call it differently now. And because a mistake here would be invisible, a safety net stays on forever: every ~2 s, one frame per camera is decoded again on the CPU and compared. Any difference switches the hardware off.</p>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Spot the frozen frames</h4></div>
+      <canvas id="sp-frozen" aria-label="Two film strips: the CPU decoder's frames change as the tag moves, the wrong hardware call repeats frame 0 while saying success"></canvas>
+      <div class="ctlrow" style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap"><button class="btn-sm primary" id="sp-compare">🔍 Compare pixel by pixel</button></div>
+    </div>
+  </div>
+
+  <div class="split flip">
+    <div class="prose">
+      <h4 style="margin-top:0">250 KB a frame</h4>
+      <p>Then PhotonVision grew to <strong>5.6 GB</strong> of memory within minutes, and Linux killed it. Twice. NVIDIA's library leaks about 250 KB on every frame unless it's put in its "MJPEG" mode, which NVIDIA's own example code does without explaining why. One setting fixed it: memory stayed flat for 8 minutes and about 116,000 frames.</p>
+      <p>Our tests had only ever run for a minute at a time, so they never saw it. Now the test fails if memory grows, and the health check warns if PhotonVision passes 2.5 GB or was killed for running out.</p>
+      <div class="callout pitfall"><h5>Lesson</h5><p>Run new code for a long time and watch its memory, not just its speed.</p></div>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Chart</span><h4>PhotonVision's memory</h4></div>
+      <canvas id="sp-leak" aria-label="Memory over 8 minutes: before the fix it climbs to 5.6 GB and is killed, after the fix it stays flat near 1.1 GB"></canvas>
+      <div class="ctlrow" style="display:flex;gap:10px;margin-top:10px"><div class="seg" id="sp-leak-seg"><button data-v="before" class="on">Before</button><button data-v="after">With mjpeg_decode</button></div></div>
+      <p class="hint">"Before" is an illustration from ~250 KB × 244 frames a second (2 cameras). "After" is our 8-minute measurement: 1.078 → 1.092 GB.</p>
+    </div>
+  </div>
+
+  <!-- ───────────── Lab 3: threads ───────────── -->
+  <h3>Lab 3: threads, spinning and sleeping</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>A <span class="term">thread</span> is one sequence of instructions a program is working through. PhotonVision has dozens: one per camera for the pipeline, one for each stream, helpers for math, networking, logging. The Jetson has 6 CPU cores, so at most 6 threads run at any instant.</p>
+      <p>The operating system's <span class="term" data-term="scheduler" data-def="The part of the operating system that decides which thread runs on which core, and for how long, switching many times a second.">scheduler</span> shares the cores out, switching threads many times a second, so everything seems to run at once. A thread with nothing to do should <strong>sleep</strong>: tell the scheduler "wake me when there's work", and give its core away.</p>
+      <p>Some threads instead <strong>spin</strong> (<span class="term" data-term="busy-wait" data-def="Waiting by checking a condition over and over in a tight loop, keeping a CPU core busy, instead of sleeping until woken. Fast to react, expensive in CPU.">busy-wait</span>): they check "is there work yet?" in a tight loop. That reacts a hair faster, but it burns a core doing nothing. OpenCV's helper pool spins for a while after each job by default. For us that was five threads at ~22% of a core each.</p>
+    </div>
+    <div class="callout analogy" style="margin-top:0"><h5>Analogy: waiting for a pizza</h5><p>Spinning is standing at the door, checking the peephole every second. Sleeping is sitting on the couch until the doorbell rings. The pizza arrives at the same time either way, but only one of them lets you do your homework meanwhile.</p></div>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Six cores, many threads</h4></div>
+    <canvas id="sp-sched" aria-label="Six CPU cores over time; colored blocks are threads doing work, red hatching is threads spinning"></canvas>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px">
+      <div class="seg" id="sp-spin"><button data-v="spin" class="on">OpenCV threads spin</button><button data-v="sleep">OpenCV threads sleep</button></div>
+    </div>
+    <div class="readout"><div><small>CPU busy</small><b id="sp-s-busy">–</b></div><div><small>Useful work</small><b id="sp-s-work">–</b></div><div><small>Wasted spinning</small><b id="sp-s-waste">–</b></div></div>
+    <p class="hint">Simplified model of 2 cameras: each camera's pipeline thread (purple, cyan) wakes 5 helper threads (amber) for a short job every frame. Measured on the Jetson: 1.95 → 1.29 cores for 2 cameras, from one setting (<code>OPENCV_THREAD_POOL_ACTIVE_WAIT_WORKER=0</code>, tuning step 9).</p>
+  </div>
+
+  <h4>Low Latency Mode: waiting for the next frame</h4>
+  <p class="prose">A related trap. With Low Latency Mode on, PhotonVision's loop waited for a <em>new</em> frame after finishing each one. If the work takes even a little longer than the gap between frames, the frame that arrived during the work is thrown away, and the loop waits for the one after. Drag the processing time and watch the frame rate fall off a cliff.</p>
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Blocking wait vs grab the newest</h4></div>
+    <canvas id="sp-llm" aria-label="Two timelines of frames arriving every 8.3 ms: one waits for a new frame and skips frames, the other takes the newest frame right away"></canvas>
+    <div class="ctl" style="margin-top:12px;max-width:520px"><label>Processing time per frame <output></output></label><input type="range" id="sp-llm-p" min="4" max="15" step="0.5" value="10"></div>
+    <div class="readout"><div><small>Low Latency Mode on</small><b id="sp-llm-on">–</b></div><div><small>Off (non-blocking)</small><b id="sp-llm-off">–</b></div></div>
+    <p class="hint">Camera at 120 fps (a frame every 8.3 ms). At about 10 ms of work per frame, what our pipeline took before the decode fix, this simple model gives exactly what we measured: 61 fps with it on, ~100 with it off.</p>
+  </div>
+
+  <!-- ───────────── Other lessons ───────────── -->
+  <h3>The smaller lessons</h3>
+  <div class="cards">
+    <div class="card reveal"><div class="icon">⏱️</div><h4>Short exposure, lower cutoff</h4><p>Short exposure means less motion blur but a darker image and lower decision margins (about 44 at 3 ms, 118 at 8.3 ms). We run 5 ms with the cutoff at 15. <a href="#settings">Chapter 04</a>.</p></div>
+    <div class="card reveal"><div class="icon">📷</div><h4>0.6 of a core per camera</h4><p>After the decode fix, each camera at 122 fps costs about 0.6 of a CPU core (it was 1.4), and less with the JPEG hardware. That's what makes 4 cameras fit on 6 cores.</p></div>
+    <div class="card reveal"><div class="icon">🖥️</div><h4>The dashboard costs CPU</h4><p>Each open camera stream makes the Jetson shrink, draw and encode video. Four open streams added about half a core and 1–2 ms to the slowest frames. Close it before measuring.</p></div>
+    <div class="card reveal"><div class="icon">🔁</div><h4>Measure twice</h4><p>The same settings varied by up to 2 ms from one restart to the next. One run made a setting look like a big win; eleven showed maybe 0.5 ms. <a href="#cuda">Chapter 08</a>.</p></div>
+  </div>
+
+  <div class="deeper">
+    <a class="video" href="https://www.youtube.com/watch?v=wdgULBpRoXk" target="_blank" rel="noopener">Ben Eater: How does a USB keyboard work? The USB protocol, bit by bit (34:15)</a>
+  </div>
+
+  <div class="recap reveal">
+    <h5>Chapter 10 recap</h5>
+    <ul>
+      <li>Measure first: a one-line stats log showed the GPU was idle, so the problem was the camera and the CPU path.</li>
+      <li>33 → 122 fps came from exposure (29.5 ms capped us at 34 fps), not waiting for frames, decoding straight to gray, sleeping threads, JPEG hardware and a lazier dashboard stream.</li>
+      <li>All USB 2.0 ports share about 6,700 bytes per 125 µs microframe. Capped cameras fit 4 plus a 5th; a squeezed camera compresses harder and adds latency.</li>
+      <li>Decoding color you don't need is expensive. Hardware decoders are fast but must be checked pixel by pixel, and long tests catch leaks.</li>
+      <li>Spinning threads burn cores doing nothing; a blocking wait can halve your frame rate.</li>
+    </ul>
+  </div>
+</div>

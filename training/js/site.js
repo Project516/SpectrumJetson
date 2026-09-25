@@ -1,0 +1,299 @@
+// Spectrum 3847 Vision Training — shared runtime.
+// Loads chapter partials, runs each chapter's init once it's near the screen, and
+// provides small helpers (canvas setup, animation loops that pause off-screen, AprilTags).
+(() => {
+  const inits = {};
+  const Site = (window.Site = {});
+
+  // A chapter script calls Site.chapter('apriltags', root => {...}).
+  Site.chapter = (id, fn) => { inits[id] = fn; };
+
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  Site.css = css;
+  Site.clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  Site.lerp = (a, b, t) => a + (b - a) * t;
+  Site.ease = (t) => (t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  Site.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Retina canvas. Returns a state object whose w/h are CSS pixels; re-sizes with the element.
+  // Pass aspect (h/w) to keep a fixed shape.
+  Site.canvas = (cv, aspect, onResize) => {
+    const st = { cv, ctx: cv.getContext('2d'), w: 0, h: 0, dpr: 1 };
+    const fit = () => {
+      const w = cv.clientWidth || cv.parentElement.clientWidth;
+      const h = aspect ? w * aspect : cv.clientHeight;
+      st.dpr = Math.min(devicePixelRatio || 1, 2);
+      st.w = w; st.h = h;
+      cv.width = Math.round(w * st.dpr); cv.height = Math.round(h * st.dpr);
+      if (aspect) cv.style.height = h + 'px';
+      st.ctx.setTransform(st.dpr, 0, 0, st.dpr, 0, 0);
+      onResize && onResize(st);
+    };
+    new ResizeObserver(fit).observe(cv.parentElement);
+    fit();
+    return st;
+  };
+
+  // Calls cb(visible) whenever el enters/leaves the viewport.
+  Site.onVisible = (el, cb, margin = '100px') => {
+    new IntersectionObserver((es) => es.forEach((e) => cb(e.isIntersecting)), { rootMargin: margin }).observe(el);
+  };
+
+  // requestAnimationFrame loop that only runs while el is on screen. fn(t seconds, dt).
+  Site.loop = (el, fn) => {
+    let on = false, last = 0, raf = 0;
+    const tick = (ms) => {
+      const t = ms / 1000, dt = Math.min(.05, last ? t - last : 0);
+      last = t; fn(t, dt);
+      if (on) raf = requestAnimationFrame(tick);
+    };
+    Site.onVisible(el, (v) => {
+      if (v && !on) { on = true; last = 0; raf = requestAnimationFrame(tick); }
+      if (!v) { on = false; cancelAnimationFrame(raf); }
+    });
+  };
+
+  // 0 when el's top reaches the bottom of the screen, 1 when its bottom leaves the top.
+  Site.progress = (el) => {
+    const r = el.getBoundingClientRect(), vh = innerHeight;
+    return Site.clamp((vh - r.top) / (vh + r.height), 0, 1);
+  };
+
+  // Scrollytelling: calls cb(index, stepEl) as each .step crosses the middle of the screen.
+  Site.scrolly = (root, cb) => {
+    const steps = [...root.querySelectorAll('.step')];
+    let cur = -1;
+    const io = new IntersectionObserver((es) => {
+      es.forEach((e) => {
+        if (!e.isIntersecting) return;
+        const i = steps.indexOf(e.target);
+        if (i === cur) return;
+        cur = i;
+        steps.forEach((s, j) => s.classList.toggle('active', j === i));
+        cb(i, e.target);
+      });
+    }, { rootMargin: '-45% 0px -45% 0px' });
+    steps.forEach((s) => io.observe(s));
+    return steps;
+  };
+
+  // Binds a range input to an <output>, calling fn(value) now and on every change.
+  Site.range = (input, fn, fmt = (v) => v) => {
+    const out = input.closest('.ctl')?.querySelector('output');
+    const run = () => { const v = +input.value; if (out) out.textContent = fmt(v); fn(v); };
+    input.addEventListener('input', run);
+    run();
+  };
+
+  // Segmented buttons: <div class="seg"><button data-v="a">. fn(value) on click.
+  Site.seg = (el, fn) => {
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      el.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      fn(b.dataset.v, b);
+    });
+    const on = el.querySelector('.on') || el.querySelector('button');
+    on.classList.add('on');
+    fn(on.dataset.v, on);
+  };
+
+  /* ── AprilTags (tag36h11) ─────────────────────────────────
+     Codes and bit positions from AprilRobotics/apriltag tag36h11.c; checked pixel for pixel
+     against the official tag images. Grid is 10x10: white ring, black ring, 6x6 data. */
+  const CODES = [0xd7e00984b,0xdda664ca7,0xdc4a1c821,0xe17b470e9,0xef91d01b1,0xf429cdd73,0x5da29225,0x1106cba43,0x223bed79d,0x21f51213c,0x33eb19ca6,0x3f76eb0f8,0x469a97414,0x45dcfe0b0,0x4a6465f72,0x51801db96,0x5eb946b4e,0x68a7cc2ec,0x6f0ba2652,0x78765559d,0x87b83d129,0x86cc4a5c5,0x8b64df90f,0x9c577b611,0xa3810f2f5,0xaf4d75b83,0xb59a03fef,0xbb1096f85,0xd1b92fc76,0xd0dd509d2,0xe2cfda160,0x2ff497c63,0x47240671b,0x5047a2e55,0x635ca87c7,0x691254166,0x68f43d94a,0x6ef24bdb6,0x8cdd8f886,0x9de96b718,0xaff6e5a8a,0xbae46f029,0xd225b6d59,0xdf8ba8c01,0xe3744a22f,0xfbb59375d,0x18a916828,0x22f29c1ba];
+  const BX = [1,2,3,4,5,2,3,4,3,6,6,6,6,6,5,5,5,4,6,5,4,3,2,5,4,3,4,1,1,1,1,1,2,2,2,3];
+  const BY = [1,1,1,1,1,2,2,2,3,1,2,3,4,5,2,3,4,3,6,6,6,6,6,5,5,5,4,6,5,4,3,2,5,4,3,4];
+  Site.TAG_COUNT = CODES.length;
+  Site.tagCode = (id) => CODES[id];
+  // 10x10 array of rows, 1 = white. bitOf lets callers see which data bit each cell holds.
+  Site.tagGrid = (id) => {
+    const g = Array.from({ length: 10 }, (_, y) => Array.from({ length: 10 }, (_, x) => (x === 0 || y === 0 || x === 9 || y === 9 ? 1 : 0)));
+    const code = CODES[id];
+    for (let i = 0; i < 36; i++) if (Math.floor(code / 2 ** (35 - i)) % 2) g[BY[i] + 1][BX[i] + 1] = 1;
+    return g;
+  };
+  Site.tagBitIndex = (x, y) => { for (let i = 0; i < 36; i++) if (BX[i] + 1 === x && BY[i] + 1 === y) return i; return -1; };
+  // Draw tag id with its outer black border filling size px (the white ring is outside it
+  // when quiet=true, as on a real field tag).
+  Site.drawTag = (ctx, id, x, y, size, { quiet = false, white = '#fff', black = '#000' } = {}) => {
+    const g = Site.tagGrid(id), c = size / 8, o = quiet ? 0 : 1;
+    ctx.fillStyle = white;
+    if (quiet) ctx.fillRect(x - c, y - c, size + 2 * c, size + 2 * c);
+    for (let r = 1; r < 9; r++) for (let q = 1; q < 9; q++) {
+      ctx.fillStyle = g[r][q] ? white : black;
+      ctx.fillRect(x + (q - 1) * c - .25, y + (r - 1) * c - .25, c + .5, c + .5);
+    }
+    return o;
+  };
+  // Tag as an SVG string (for inline figures). Includes the white quiet ring.
+  Site.tagSVG = (id, px = 100) => {
+    const g = Site.tagGrid(id);
+    let r = '';
+    for (let y = 0; y < 10; y++) for (let x = 0; x < 10; x++) if (!g[y][x]) r += `<rect x="${x}" y="${y}" width="1.02" height="1.02"/>`;
+    return `<svg viewBox="0 0 10 10" width="${px}" height="${px}" shape-rendering="crispEdges"><rect width="10" height="10" fill="#fff"/><g fill="#000">${r}</g></svg>`;
+  };
+
+  // Projective warp: draw a unit-square image (source canvas) into 4 destination corners
+  // by splitting into small triangles. Good enough for teaching visuals.
+  Site.drawQuad = (ctx, img, pts, n = 10) => {
+    const sw = img.width, sh = img.height;
+    const at = (u, v) => {
+      // bilinear-in-homography: use proper projective mapping via corner homography
+      return Site._homog(pts, u, v);
+    };
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      const u0 = i / n, u1 = (i + 1) / n, v0 = j / n, v1 = (j + 1) / n;
+      const p00 = at(u0, v0), p10 = at(u1, v0), p01 = at(u0, v1), p11 = at(u1, v1);
+      tri(ctx, img, [u0 * sw, v0 * sh, u1 * sw, v0 * sh, u0 * sw, v1 * sh], [p00, p10, p01]);
+      tri(ctx, img, [u1 * sw, v0 * sh, u1 * sw, v1 * sh, u0 * sw, v1 * sh], [p10, p11, p01]);
+    }
+  };
+  function tri(ctx, img, s, d) {
+    const [x0, y0, x1, y1, x2, y2] = s;
+    const [[X0, Y0], [X1, Y1], [X2, Y2]] = d;
+    ctx.save();
+    ctx.beginPath();
+    // expand the clip triangle a hair to hide seams
+    const cx = (X0 + X1 + X2) / 3, cy = (Y0 + Y1 + Y2) / 3, k = 1.02;
+    ctx.moveTo(cx + (X0 - cx) * k, cy + (Y0 - cy) * k);
+    ctx.lineTo(cx + (X1 - cx) * k, cy + (Y1 - cy) * k);
+    ctx.lineTo(cx + (X2 - cx) * k, cy + (Y2 - cy) * k);
+    ctx.closePath(); ctx.clip();
+    const den = x0 * (y2 - y1) - x1 * y2 + x2 * y1 + (x1 - x2) * y0;
+    if (den) {
+      const a = -(y0 * (X2 - X1) - y1 * X2 + y2 * X1 + (y1 - y2) * X0) / den;
+      const b = (y1 * Y2 + y0 * (Y1 - Y2) - y2 * Y1 + (y2 - y1) * Y0) / den;
+      const c = (x0 * (X2 - X1) - x1 * X2 + x2 * X1 + (x1 - x2) * X0) / den;
+      const d2 = -(x1 * Y2 + x0 * (Y1 - Y2) - x2 * Y1 + (x2 - x1) * Y0) / den;
+      const e = (x0 * (y2 * X1 - y1 * X2) + y0 * (x1 * X2 - x2 * X1) + (x2 * y1 - x1 * y2) * X0) / den;
+      const f = (x0 * (y2 * Y1 - y1 * Y2) + y0 * (x1 * Y2 - x2 * Y1) + (x2 * y1 - x1 * y2) * Y0) / den;
+      ctx.transform(a, b, c, d2, e, f);
+      ctx.drawImage(img, 0, 0);
+    }
+    ctx.restore();
+  }
+  // Maps (u,v) in the unit square to the quad pts=[[x,y] TL, TR, BR, BL] with a true homography.
+  Site._homog = (pts, u, v) => {
+    const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = pts;
+    const dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2;
+    const sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3;
+    let g = 0, h = 0;
+    const den = dx1 * dy2 - dx2 * dy1;
+    if (den) { g = (sx * dy2 - dx2 * sy) / den; h = (dx1 * sy - sx * dy1) / den; }
+    const a = x1 - x0 + g * x1, b = x3 - x0 + h * x3, c = x0;
+    const d = y1 - y0 + g * y1, e = y3 - y0 + h * y3, f = y0;
+    const w = g * u + h * v + 1;
+    return [(a * u + b * v + c) / w, (d * u + e * v + f) / w];
+  };
+  // Offscreen canvas holding tag id (with quiet ring), px pixels square.
+  const tagCache = {};
+  Site.tagCanvas = (id, px = 200) => {
+    const k = id + ':' + px;
+    if (tagCache[k]) return tagCache[k];
+    const c = document.createElement('canvas');
+    c.width = c.height = px;
+    const x = c.getContext('2d');
+    x.imageSmoothingEnabled = false;
+    const g = Site.tagGrid(id), s = px / 10;
+    for (let r = 0; r < 10; r++) for (let q = 0; q < 10; q++) { x.fillStyle = g[r][q] ? '#fff' : '#000'; x.fillRect(Math.floor(q * s), Math.floor(r * s), Math.ceil(s), Math.ceil(s)); }
+    return (tagCache[k] = c);
+  };
+
+  /* ── Glossary tooltips: <span class="term" data-term="GPU">GPUs</span> ── */
+  Site.glossary = {};
+  let tip;
+  document.addEventListener('mouseover', (e) => {
+    const t = e.target.closest('.term');
+    if (!t) { tip && tip.remove(); tip = null; return; }
+    const key = t.dataset.term || t.textContent.trim();
+    const def = t.dataset.def || Site.glossary[key] || Site.glossary[key.toLowerCase()];
+    if (!def) return;
+    tip && tip.remove();
+    tip = document.createElement('div');
+    tip.className = 'term-tip';
+    tip.innerHTML = `<b>${key}</b> — ${def}`;
+    document.body.appendChild(tip);
+    const r = t.getBoundingClientRect();
+    const x = Site.clamp(r.left + scrollX, 8, scrollX + innerWidth - tip.offsetWidth - 8);
+    tip.style.left = x + 'px';
+    tip.style.top = r.bottom + scrollY + 8 + 'px';
+  });
+
+  /* ── Page chrome ───────────────────────────────────────── */
+  const reveal = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); reveal.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });
+  Site.watchReveals = (root) => root.querySelectorAll('.reveal').forEach((el) => reveal.observe(el));
+
+  async function load() {
+    const secs = [...document.querySelectorAll('section.chapter[data-src]')];
+    // Fetch every partial in parallel, insert in order.
+    const htmls = await Promise.all(secs.map((s) => fetch(s.dataset.src).then((r) => (r.ok ? r.text() : `<div class="shell"><p>Missing ${s.dataset.src}</p></div>`)).catch(() => `<div class="shell"><p>Could not load ${s.dataset.src}. Open this site through a web server (see training/README.md).</p></div>`)));
+    secs.forEach((s, i) => { s.innerHTML = htmls[i]; });
+    buildToc();
+    Site.watchReveals(document);
+    // Initialise each chapter's interactive parts when it gets near the screen.
+    secs.forEach((s) => {
+      const io = new IntersectionObserver((es) => {
+        if (!es[0].isIntersecting) return;
+        io.disconnect();
+        const fn = inits[s.id];
+        if (fn) { try { fn(s); } catch (err) { console.error('chapter', s.id, err); } }
+      }, { rootMargin: '600px 0px' });
+      io.observe(s);
+    });
+    if (location.hash) document.querySelector(location.hash)?.scrollIntoView();
+  }
+
+  function buildToc() {
+    const toc = document.querySelector('.toc nav');
+    const road = document.querySelector('.roadmap-grid');
+    let html = '', roadHtml = '', part = null;
+    document.querySelectorAll('section.part, section.chapter').forEach((s) => {
+      if (s.classList.contains('part')) {
+        if (part) roadHtml += '</div>';
+        part = s;
+        html += `<h4>Part ${s.dataset.num} · ${s.dataset.title}</h4>`;
+        roadHtml += `<div class="road-part reveal"><h4><span>${s.dataset.num}</span>${s.dataset.title}</h4><p>${s.querySelector('p')?.textContent || ''}</p>`;
+      } else {
+        const t = s.dataset.title, n = s.dataset.n;
+        html += `<a href="#${s.id}"><b>${n}</b>${t}</a>`;
+        roadHtml += `<a href="#${s.id}"><b>${n}</b>${t}</a>`;
+      }
+    });
+    toc.innerHTML = html;
+    if (road) road.innerHTML = roadHtml + '</div>';
+  }
+
+  function chrome() {
+    const nav = document.querySelector('.topnav');
+    const bar = nav.querySelector('.progress');
+    const now = nav.querySelector('.now');
+    const toc = document.querySelector('.toc'), scrim = document.querySelector('.scrim');
+    const open = (v) => { toc.classList.toggle('open', v); scrim.classList.toggle('open', v); };
+    nav.querySelector('.menu').onclick = () => open(true);
+    toc.querySelector('.close').onclick = () => open(false);
+    scrim.onclick = () => open(false);
+    toc.addEventListener('click', (e) => { if (e.target.closest('a')) open(false); });
+    addEventListener('keydown', (e) => { if (e.key === 'Escape') open(false); });
+    let ticking = false;
+    addEventListener('scroll', () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        ticking = false;
+        const h = document.documentElement;
+        bar.style.width = (100 * h.scrollTop) / (h.scrollHeight - innerHeight) + '%';
+        // which chapter is at the top?
+        let cur = null;
+        for (const s of document.querySelectorAll('section.chapter')) { if (s.getBoundingClientRect().top < innerHeight * .3) cur = s; else break; }
+        const label = cur ? `<b>${cur.dataset.n}</b>${cur.dataset.title}` : '';
+        if (now.innerHTML !== label) {
+          now.innerHTML = label;
+          toc.querySelectorAll('a').forEach((a) => a.classList.toggle('active', cur && a.getAttribute('href') === '#' + cur.id));
+        }
+      });
+    }, { passive: true });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => { chrome(); load(); });
+})();

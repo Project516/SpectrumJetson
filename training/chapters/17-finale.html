@@ -1,0 +1,162 @@
+<style>
+  #finale .player { background: radial-gradient(ellipse at top right, var(--lab-bg2), var(--lab-bg) 70%); border-radius: 20px; padding: 22px; color: var(--lab-ink); box-shadow: 0 30px 60px -20px rgba(42,0,68,.55); margin: 36px 0; }
+  #finale .stage-wrap { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+  @media (max-width: 900px) { #finale .stage-wrap { grid-template-columns: minmax(0, 1fr); } }
+  #finale #fn-stage { width: 100%; border-radius: 12px; background: #0e0518; display: block; }
+  #finale .now h5 { margin: 0; font: 700 .72rem var(--font); letter-spacing: .14em; text-transform: uppercase; color: var(--accent-soft); }
+  #finale .now h4 { margin: 4px 0 6px; font: 800 1.5rem var(--font-heading); color: #fff; }
+  #finale .now .t { font: 600 .85rem var(--mono); color: #a3e635; }
+  #finale .now p { color: var(--lab-muted); font-size: .93rem; margin: 10px 0; }
+  #finale .now .data { font: .78rem/1.55 var(--mono); background: #0e0518; border: 1px solid var(--lab-line); border-radius: 10px; padding: 10px 12px; color: #e9ddf7; white-space: pre-wrap; word-break: break-word; min-height: 5.5em; }
+  #finale .now a { color: var(--accent-soft); font-weight: 600; font-size: .88rem; }
+  #finale .controls { display: flex; gap: 12px; align-items: center; margin: 16px 0 6px; }
+  #finale .controls input { flex: 1; }
+  #finale .journey { list-style: none; padding: 0; margin: 14px 0 0; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; counter-reset: j; }
+  #finale .journey li button { all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%; height: 100%; padding: 8px 8px 9px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--lab-line); position: relative; overflow: hidden; }
+  #finale .journey li button:focus-visible { outline: 2px solid var(--accent); }
+  #finale .journey li button .fill { position: absolute; left: 0; bottom: 0; height: 3px; background: #a3e635; width: 0; }
+  #finale .journey li button b { display: block; font: 700 .8rem var(--font-heading); color: #fff; line-height: 1.2; }
+  #finale .journey li button small { display: block; font: 500 .68rem var(--mono); color: var(--lab-muted); margin-top: 3px; }
+  #finale .journey li button i { font-style: normal; font: 700 .62rem var(--mono); color: var(--accent-soft); }
+  #finale .journey li.on button { background: rgba(139,92,246,.3); border-color: var(--accent); }
+  #finale .journey li.done button b { color: #d9ccf5; }
+  @media (max-width: 900px) {
+    #finale .journey { grid-template-columns: 1fr; gap: 0; position: relative; padding-left: 22px; }
+    #finale .journey::before { content: ""; position: absolute; left: 7px; top: 10px; bottom: 10px; width: 2px; background: var(--lab-line); }
+    #finale .journey li { position: relative; padding: 3px 0; }
+    #finale .journey li::before { content: ""; position: absolute; left: -20px; top: 16px; width: 12px; height: 12px; border-radius: 50%; background: #251038; border: 2px solid var(--lab-muted); }
+    #finale .journey li.done::before { background: #a3e635; border-color: #a3e635; }
+    #finale .journey li.on::before { background: var(--accent); border-color: #fff; }
+    #finale .journey li button { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+    #finale .journey li button small { margin: 0; }
+  }
+  #finale .quiz { display: grid; gap: 16px; margin-top: 20px; }
+  #finale .q { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow-md); }
+  #finale .q h4 { font-size: 1.05rem; margin-bottom: 12px; display: flex; gap: 10px; }
+  #finale .q h4 span { font: 700 .75rem var(--mono); color: #fff; background: var(--p700); border-radius: 6px; padding: 3px 7px; height: fit-content; }
+  #finale .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+  #finale .opts button { all: unset; box-sizing: border-box; cursor: pointer; border: 1.5px solid var(--border-strong); border-radius: 10px; padding: 9px 12px; font-size: .92rem; background: var(--surface-alt); transition: border-color .15s, background .15s; }
+  #finale .opts button:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-low); }
+  #finale .opts button:focus-visible { outline: 2px solid var(--accent); }
+  #finale .opts button.right { border-color: #16a34a; background: #dcfce7; font-weight: 600; }
+  #finale .opts button.wrong { border-color: #dc2626; background: #fee2e2; }
+  #finale .opts button:disabled { cursor: default; }
+  #finale .fb { margin-top: 10px; font-size: .9rem; display: none; }
+  #finale .fb.show { display: block; }
+  #finale .fb b.ok { color: #15803d; } #finale .fb b.no { color: #b91c1c; }
+  #finale .score { position: sticky; bottom: 14px; z-index: 5; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--p800); color: #fff; border-radius: 14px; padding: 12px 18px; box-shadow: var(--shadow-lg); margin-top: 18px; }
+  #finale .score b { font: 800 1.3rem var(--font-heading); }
+  #finale .score .bar { flex: 1; min-width: 120px; height: 8px; background: rgba(255,255,255,.15); border-radius: 4px; overflow: hidden; }
+  #finale .score .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent-soft), #a3e635); transition: width .4s; }
+  #finale .gloss-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+  #finale .gloss-tools input { flex: 1; min-width: 200px; font: 500 1rem var(--font); padding: 11px 14px; border-radius: 10px; border: 1.5px solid var(--border-strong); background: #fff; }
+  #finale .gloss-tools input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  #finale .gloss { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 0 28px; margin: 0; max-height: 72vh; overflow-y: auto; padding: 4px 18px 14px; background: #fff; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-md); }
+  #finale .gloss .g { padding: 9px 0; border-bottom: 1px dashed var(--border); }
+  #finale .gloss dt { font: 700 1rem var(--font-heading); color: var(--p700); }
+  #finale .gloss dd { margin: 2px 0 0; font-size: .92rem; color: var(--muted); }
+  #finale .gloss .letter { grid-column: 1 / -1; font: 800 1.4rem var(--font-heading); color: var(--accent); margin: 14px 0 0; position: sticky; top: 0; background: #fff; z-index: 1; padding: 4px 0; border-bottom: 2px solid var(--accent-low); }
+  #finale .links h4 { margin: 20px 0 4px; }
+  #finale .credits { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin: 20px 0; }
+  #finale .credit { background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow-md); }
+  #finale .credit b { font-family: var(--font-heading); color: var(--p700); display: block; }
+  #finale .credit span { font-size: .88rem; color: var(--muted); }
+  #finale .finale-end { text-align: center; padding: 50px 0 10px; }
+  #finale .finale-end h3 { font-size: clamp(1.6rem, 3.5vw, 2.4rem); }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">17</span> · On the robot</span>
+    <h2>Putting it all <em>together.</em></h2>
+    <p class="lede">You've seen every piece. Now watch one frame make the whole trip, from light bouncing off a tag to a dot on the robot's field map, in about 15 milliseconds. Then test yourself.</p>
+  </div>
+
+  <h3>Follow one frame</h3>
+  <p class="prose">This is a real frame from an FRC field camera, facing the 2024 speaker from 63 inches away. Press play, drag the slider, or tap a stage. Each stage names the chapter that explains it. Times are for our system; ≈ marks an estimate.</p>
+
+  <div class="player">
+    <div class="stage-wrap">
+      <canvas id="fn-stage" aria-label="Animated view of one camera frame at each stage of its journey"></canvas>
+      <div class="now" id="fn-now" aria-live="polite"></div>
+    </div>
+    <div class="controls">
+      <button class="btn-sm primary" id="fn-play">▶ Play</button>
+      <input type="range" id="fn-scrub" min="0" max="1000" value="0" aria-label="Scrub through the frame's journey">
+    </div>
+    <ol class="journey" id="fn-journey"></ol>
+    <p class="hint" style="color:var(--lab-muted);font-size:.8rem;margin:10px 0 0">Camera frame: PhotonVision test images (GPL-3.0). Tag corners are real detections from the AprilTag library on this image. The frame is shown in gray, the way our mono cameras see; the pose, packet and field views are illustrations.</p>
+  </div>
+
+  <h3>Quiz: how well does it stick?</h3>
+  <p class="prose">Fifteen questions, one or two from each part of the course. You get the answer and a one-line reason right away, with a link back to the chapter. Your answers are saved in this browser.</p>
+  <div class="quiz-wrap">
+  <div class="quiz" id="fn-quiz"></div>
+  <div class="score" id="fn-score"><span>Score <b id="fn-sc">0 / 15</b></span><div class="bar"><i id="fn-bar"></i></div><span id="fn-msg" class="small">Pick an answer to start.</span><button class="btn-sm" id="fn-reset">Reset</button></div>
+  </div>
+
+  <h3>Glossary</h3>
+  <p class="prose">Every dotted word in the course, in one place.</p>
+  <div class="gloss-tools"><input type="search" id="fn-gsearch" placeholder="Filter terms, e.g. USB, pose, GPU…" aria-label="Filter the glossary"><span class="small muted" id="fn-gcount"></span></div>
+  <dl class="gloss" id="fn-gloss"></dl>
+
+  <h3>Where to go next</h3>
+  <div class="links">
+    <h4>Our system</h4>
+    <div class="deeper">
+      <a href="https://github.com/Spectrum3847/SpectrumJetson/blob/main/README.md">SpectrumJetson README</a>
+      <a href="https://github.com/Spectrum3847/SpectrumJetson/blob/main/docs/TECHNICAL.md">Technical reference</a>
+      <a href="https://github.com/Spectrum3847/SpectrumJetson/blob/main/docs/VISION-RESEARCH.md">Vision research: other teams' systems</a>
+      <a href="https://github.com/Spectrum3847/SpectrumJetson/blob/main/docs/LIMELIGHT-COMPARISON.md">Limelight 4 comparison</a>
+      <a href="https://github.com/Spectrum3847/SpectrumJetson/blob/main/docs/REWIND.md">Rewind recording</a>
+    </div>
+    <h4>PhotonVision and WPILib</h4>
+    <div class="deeper">
+      <a href="https://docs.photonvision.org/en/latest/">PhotonVision docs</a>
+      <a href="https://docs.photonvision.org/en/latest/docs/programming/photonlib/robot-pose-estimator.html">PhotonLib pose estimator</a>
+      <a href="https://docs.wpilib.org/en/stable/docs/software/advanced-controls/state-space/state-space-pose-estimators.html">WPILib pose estimators</a>
+      <a href="https://docs.wpilib.org/en/stable/docs/software/vision-processing/apriltag/apriltag-intro.html">WPILib: AprilTag introduction</a>
+      <a href="https://docs.wpilib.org/en/stable/docs/software/networktables/networktables-intro.html">WPILib: NetworkTables</a>
+    </div>
+    <h4>AprilTags and the GPU detector</h4>
+    <div class="deeper">
+      <a href="https://april.eecs.umich.edu/software/apriltag">AprilTag (APRIL Robotics Lab)</a>
+      <a href="https://april.eecs.umich.edu/papers/details.php?name=olson2011tags">AprilTag paper (Olson, 2011)</a>
+      <a href="https://april.eecs.umich.edu/papers/details.php?name=wang2016iros">AprilTag 2 paper (Wang &amp; Olson, 2016)</a>
+      <a href="https://github.com/AprilRobotics/apriltag">AprilTag library source</a>
+      <a href="https://github.com/RealtimeRoboticsGroup/aos">Austin Schuh's detector (RealtimeRoboticsGroup/aos)</a>
+    </div>
+    <h4>Talks worth watching</h4>
+    <div class="deeper">
+      <a class="video" href="https://www.youtube.com/watch?v=jdWWU6gDu5U" target="_blank" rel="noopener">FRC 6328: Beyond the coprocessor, lessons in vision and localization (40:31)</a>
+    </div>
+  </div>
+
+  <h3>Credits</h3>
+  <div class="credits">
+    <div class="credit"><b>Austin Schuh and FRC 971</b><span>The CUDA AprilTag detector at the heart of the system, now developed in RealtimeRoboticsGroup/aos. We built from frc971/bos.</span></div>
+    <div class="credit"><b>FRC 4143</b><span>The CUDA version of PhotonVision our build starts from.</span></div>
+    <div class="credit"><b>The PhotonVision team</b><span>The open-source vision software, PhotonLib, and the test images used in this course's frame journey.</span></div>
+    <div class="credit"><b>WPILib</b><span>NetworkTables, cscore, pose estimators and the libraries the detector links against.</span></div>
+    <div class="credit"><b>APRIL Robotics Lab, University of Michigan</b><span>AprilTags themselves.</span></div>
+    <div class="credit"><b>NVIDIA</b><span>The Jetson, JetPack and CUDA, and the Jetson CAD used in the 3D models.</span></div>
+    <div class="credit"><b>The Thrifty Bot</b><span>The Thriftiest Cam and its CAD.</span></div>
+    <div class="credit"><b>Team 2826 Wave Robotics</b><span>The FUEL game-piece model.</span></div>
+    <div class="credit"><b>Spectrum 3847, with Claude</b><span>Built the vision system and this course with Claude (Anthropic), working in Claude Code.</span></div>
+  </div>
+
+  <div class="finale-end">
+    <h3>That's how our robot <em>sees.</em></h3>
+    <p class="muted prose" style="margin:0 auto">Light, pixels, JPEG, USB, memory, 1,024 GPU cores, geometry, time and a lot of careful testing, every 8 milliseconds, on every camera. Now go make it better.</p>
+  </div>
+
+  <div class="recap reveal">
+    <h5>Course recap</h5>
+    <ul>
+      <li>AprilTags give the robot known landmarks; a global-shutter camera with a short exposure captures them sharply.</li>
+      <li>Frames cross one shared USB 2.0 budget as JPEGs, get decoded on NVJPG and searched on the GPU in ~2 ms.</li>
+      <li>Calibration and PnP turn four corners into a pose; multi-tag and the gyro make it trustworthy.</li>
+      <li>Timestamps at mid-exposure, synced to the robot's clock, let the pose estimator correct the past.</li>
+      <li>NetworkTables carries results to the robot, and layers of watchdogs keep it all running on match day.</li>
+    </ul>
+  </div>
+</div>

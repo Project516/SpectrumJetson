@@ -1,0 +1,320 @@
+<style>
+  #apriltags .fieldmap svg { width: 100%; height: auto; display: block; }
+  #apriltags .fieldmap .tg { cursor: pointer; }
+  #apriltags .fieldmap .tg rect { transition: fill .15s; }
+  #apriltags .fieldmap .tg:hover rect, #apriltags .fieldmap .tg.on rect { fill: var(--accent); }
+  #apriltags .fieldmap .tg.on path { stroke: var(--accent); }
+  #apriltags .fieldmap text.lb { font: 700 44px var(--font-heading); fill: #1f1b23; paint-order: stroke; stroke: rgba(255,255,255,.75); stroke-width: 8px; stroke-linejoin: round; }
+  #apriltags .fieldmap text.lb.zone { font: 800 38px var(--font); letter-spacing: .12em; stroke: none; }
+  #apriltags .fieldmap text.lb.minor { font-size: 36px; font-weight: 600; }
+  #apriltags .fieldmap text.lb[style*="#fff"] { stroke: none; }
+  @media (max-width: 640px) { #apriltags .fieldmap text.lb { font-size: 64px; } #apriltags .fieldmap text.lb.zone { font-size: 46px; letter-spacing: .04em; } #apriltags .fieldmap text.lb.minor { display: none; } }
+  #apriltags .fm-foot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; padding: 0 14px 14px; }
+  @media (max-width: 760px) { #apriltags .fm-foot { grid-template-columns: 1fr; } }
+  #apriltags .fm-foot figcaption { padding: 0; }
+  #apriltags .json { font: 12.5px/1.55 var(--mono); background: #1a0a2b; color: #e9e2ff; border-radius: 12px; padding: 14px 16px; margin: 0; white-space: pre; overflow-x: auto; }
+  #apriltags .json .k { color: #c4b5fd; } #apriltags .json .n { color: #a3e635; }
+  #apriltags .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: end; padding: 18px; }
+  #apriltags .vs figure { margin: 0; text-align: center; }
+  #apriltags .vs svg { width: 100%; max-width: 220px; margin: 0 auto; height: auto; }
+  #apriltags .vs figcaption { font-size: .85rem; color: var(--muted); margin-top: 8px; }
+  /* anatomy lab */
+  #apriltags .anat { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 26px; align-items: start; }
+  @media (max-width: 860px) { #apriltags .anat { grid-template-columns: 1fr; } }
+  #apriltags .bigtag { width: 100%; max-width: 440px; margin: 0 auto; display: block; background: #fff; border-radius: 10px; touch-action: manipulation; }
+  #apriltags .bigtag rect.c { stroke: rgba(139,92,246,0); stroke-width: .04; cursor: pointer; }
+  #apriltags .bigtag rect.c.hi { stroke: #f59e0b; stroke-width: .09; }
+  #apriltags .bigtag text { font: .28px var(--mono); pointer-events: none; }
+  #apriltags .info { background: rgba(255,255,255,.05); border: 1px solid var(--lab-line); border-radius: 12px; padding: 14px 16px; min-height: 118px; }
+  #apriltags .info b { color: #fff; font-family: var(--font-heading); font-size: 1.05rem; display: block; margin-bottom: 4px; }
+  #apriltags .info p { margin: 0; font-size: .9rem; }
+  #apriltags .bits { display: grid; grid-template-columns: repeat(18, 1fr); gap: 3px; margin: 10px 0 4px; }
+  #apriltags .bits span { aspect-ratio: 1; border-radius: 3px; font: 600 10px/1 var(--mono); display: grid; place-items: center; border: 1px solid rgba(196,181,253,.25); cursor: pointer; }
+  #apriltags .bits span.b1 { background: #fff; color: #000; }
+  #apriltags .bits span.b0 { background: #000; color: #fff; }
+  #apriltags .bits span.hi { outline: 2px solid #f59e0b; outline-offset: 1px; }
+  #apriltags .hex { font: 500 1.15rem var(--mono); color: var(--accent-soft); letter-spacing: .04em; overflow-wrap: anywhere; }
+  #apriltags .idrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  #apriltags .idrow input[type=number] { width: 70px; background: rgba(255,255,255,.08); color: #fff; border: 1px solid var(--lab-line); border-radius: 8px; padding: 7px 8px; font: 600 1rem var(--mono); }
+  #apriltags .key { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--lab-muted); margin-top: 10px; }
+  #apriltags .key i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; border: 1px solid rgba(255,255,255,.3); }
+  /* distance lab */
+  #apriltags .dist-views { display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: 14px; }
+  @media (max-width: 700px) { #apriltags .dist-views { grid-template-columns: 1fr 1fr; } #apriltags .dist-views .frame { grid-column: 1 / -1; } }
+  #apriltags .dist-views figure { margin: 0; }
+  #apriltags .dist-views canvas { width: 100%; image-rendering: pixelated; }
+  #apriltags .dist-views figcaption { font-size: .8rem; color: var(--lab-muted); margin-top: 6px; }
+  #apriltags .verdict { display: inline-block; font: 700 .72rem var(--font); letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; margin-top: 4px; }
+  #apriltags .ok { background: rgba(163,230,53,.18); color: #a3e635; }
+  #apriltags .meh { background: rgba(245,158,11,.18); color: #f59e0b; }
+  #apriltags .no { background: rgba(244,63,94,.18); color: #fb7185; }
+  /* hamming lab */
+  #apriltags .ham { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  @media (max-width: 860px) { #apriltags .ham { grid-template-columns: 1fr; } }
+  #apriltags .hgrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 0; width: 100%; max-width: 330px; margin: 0 auto; border: 12px solid #fff; border-radius: 4px; touch-action: manipulation; }
+  #apriltags .hgrid span { aspect-ratio: 1; background: #000; }
+  #apriltags .hgrid span.d { cursor: pointer; transition: background .12s; }
+  #apriltags .hgrid span.w { background: #fff; }
+  #apriltags .hgrid span.flip { box-shadow: inset 0 0 0 3px #f59e0b; }
+  #apriltags .hgrid span.bad { box-shadow: inset 0 0 0 3px #f43f5e; }
+  #apriltags .twin { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  #apriltags .twin canvas, #apriltags canvas#a-open, #apriltags canvas#a-far { width: 100%; height: auto; border-radius: 8px; }
+  #apriltags .hbars { width: 100%; height: auto; margin-top: 8px; }
+  /* scrolly */
+  #apriltags .scrolly { grid-template-columns: minmax(0, 1.35fr) minmax(0, .85fr); }
+  @media (max-width: 900px) { #apriltags .scrolly { grid-template-columns: 1fr; } }
+  #apriltags .scrolly .vis figure { margin: 0; }
+  #apriltags .scrolly .vis canvas { width: 100%; border-radius: 12px; background: #0e0518; box-shadow: var(--shadow-lg); }
+  #apriltags .scrolly .vis figcaption { font-size: .82rem; color: var(--muted); padding: 8px 2px 0; }
+  #apriltags .stage-label { font: 700 .72rem var(--font); letter-spacing: .14em; text-transform: uppercase; color: var(--p600); }
+  #apriltags .gpu { display: inline-block; font: 700 .66rem var(--font); letter-spacing: .1em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px; background: #ecfccb; color: #3f6212; margin-left: 6px; vertical-align: 2px; }
+  #apriltags .gpu.cpu { background: #e0f2fe; color: #075985; }
+  /* margin lab */
+  #apriltags .mrow { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 22px; align-items: center; }
+  #apriltags .mctl { display: grid; grid-template-columns: 1fr 1fr; gap: 0 26px; margin-top: 16px; }
+  @media (max-width: 600px) { #apriltags .mctl { grid-template-columns: 1fr; } }
+  @media (max-width: 600px) { #apriltags .mrow { grid-template-columns: 1fr; gap: 10px; } #apriltags .mrow canvas.mt { width: 120px; margin: 0 auto; } }
+  #apriltags code { overflow-wrap: anywhere; }
+  #apriltags .mrow canvas.mt { image-rendering: pixelated; }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">02</span> · The big picture</span>
+    <h2>AprilTags: why a black-and-white square is <em>special.</em></h2>
+    <p class="lede">An AprilTag looks like a chunky QR code. It's really a carefully designed landmark: easy to spot from across the field, hard to mistake for anything else, and shaped so a computer can tell exactly where it is in 3D.</p>
+  </div>
+
+  <figure class="fig reveal" style="margin:0 0 40px">
+    <canvas id="a-open" width="1600" height="747" aria-label="The 2026 blue outpost and tower with FUEL balls; four AprilTags outlined and labeled 29, 30, 31 and 32"></canvas>
+    <figcaption>The 2026 field (REBUILT) through a camera: the blue outpost holds tags 29 and 30, the tower beside it tags 31 and 32. The green outlines are real detections: the AprilTag library found all four in this frame. (PhotonVision test image, GPL-3.0.)</figcaption>
+  </figure>
+
+  <div class="split top" style="margin-bottom:26px">
+    <div class="prose">
+      <h3 style="margin-top:0">A landmark a computer can read</h3>
+      <p>An <span class="term">AprilTag</span> is a printed square pattern. A program can find it in a camera picture very quickly, read its ID number, and work out exactly where its four corners are.</p>
+      <p>FRC uses the <strong>tag36h11</strong> family. Each tag is a <strong>6.5 inch (165.1 mm) black square</strong> on a white plate. Inside the black border is a 6 × 6 grid of black and white squares that spells out the tag's ID.</p>
+      <p>The tags are bolted to the field elements (the hubs, trenches, towers and outposts) at <strong>published positions</strong>. <em>FIRST</em> gives every team a <span class="term">field layout</span> file that lists each tag's x, y and height, and which way it faces. So when the robot sees tag 26, it knows exactly where tag 26 is. Tap a tag on the map below to see its entry.</p>
+
+    </div>
+    <div><div class="callout idea"><h5>The big idea</h5><p>If you know where a landmark is, and you can measure where it appears in your camera, you can work backwards to where <em>you</em> are. That's the whole trick of this course, done 120 times a second.</p></div>
+      <div class="callout spectrum"><h5>Our layout</h5><p>Events use either a welded field or an AndyMark field, and the tags sit a few centimeters differently on each. Our robot uses the <strong>2026 Rebuilt AndyMark</strong> layout, and the robot code must use the same file as PhotonVision.</p></div>
+    </div>
+  </div>
+    <figure class="fig fieldmap reveal" style="margin:0 0 30px">
+      <svg id="a-field" viewBox="0 0 2059 980" role="img" aria-label="Top-down view of the 2026 FRC field, REBUILT, with its hubs, bumps, trenches, towers, depots and outposts, and the 32 AprilTag positions; tap a tag to see its layout entry"></svg>
+      <div class="fm-foot"><pre class="json" id="a-json"></pre><figcaption>The 2026 FRC field, REBUILT, seen from above: a render of <em>FIRST</em>'s official field CAD (the welded field; the AndyMark field our robot uses differs by a few cm). The 32 tags are drawn at their AndyMark layout positions, in meters from the blue corner; the amber arrow shows which way each tag faces. Tap one.</figcaption></div>
+    </figure>
+
+  <h3>Why not just use a QR code?</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>A QR code is built to hold a lot of data (a whole web address) and to be read by a phone held a few inches away. A robot has the opposite problem. It needs to read a tiny, tilted, blurry tag from across the field, dozens of times a second, and it only needs one small number. So an AprilTag makes different trade-offs:</p>
+      <ul>
+        <li><strong>Few, big bits.</strong> Only 36 data squares, so each one is big. Big squares survive being far away, low-resolution and seen at a steep angle.</li>
+        <li><strong>Fast to find.</strong> A thick black square border against a white edge is easy to spot. The detector looks for dark four-sided shapes and ignores everything else.</li>
+        <li><strong>Four corners you can measure.</strong> The tag's size is known exactly, so where its 4 corners land in the image tells you its distance and angle: a full 3D <span class="term">pose</span>.</li>
+        <li><strong>Hard to misread.</strong> The codes are chosen so that any two differ in at least 11 squares. Random patterns, or a tag with a few squares misread, don't turn into the wrong ID.</li>
+      </ul>
+    </div>
+    <div class="fig vs reveal">
+      <figure><div id="a-vs-tag"></div><figcaption><b>AprilTag</b> (tag36h11, ID 3)<br>6 × 6 = 36 data squares</figcaption></figure>
+      <figure><div id="a-vs-qr"></div><figcaption><b>QR-style code</b> (25 × 25 modules)<br>625 squares, each 3× smaller</figcaption></figure>
+    </div>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Anatomy of a tag</h4></div>
+    <div class="anat">
+      <div>
+        <svg class="bigtag" id="a-big" viewBox="-0.1 -0.1 10.2 10.2" shape-rendering="crispEdges" role="img" aria-label="A tag36h11 AprilTag. Hover or tap a square to learn what it is."></svg>
+        <div class="key"><span><i style="background:#fff"></i>white = 1</span><span><i style="background:#000"></i>black = 0</span><label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="a-nums"> show bit numbers</label></div>
+      </div>
+      <div>
+        <div class="idrow">
+          <button class="btn-sm" id="a-prev" aria-label="Previous ID">◀</button>
+          <input type="number" id="a-id" min="0" max="47" value="3" aria-label="Tag ID">
+          <button class="btn-sm" id="a-next" aria-label="Next ID">▶</button>
+          <span class="hint" style="margin:0">IDs 0–47 shown here</span>
+        </div>
+        <div class="info" id="a-info"><b>Hover or tap any square</b><p>Every square in the tag has a job. Try the white edge, the black border, and the squares in the middle.</p></div>
+        <p style="margin:14px 0 0;font-size:.85rem">The 36-bit code, bit 0 first (hover a bit to find its square):</p>
+        <div class="bits" id="a-bits"></div>
+        <div class="readout" style="margin-top:8px">
+          <div><small>Hex</small><b class="hex" id="a-hex"></b></div>
+          <div><small>Decimal</small><b id="a-dec" style="font-size:1rem;font-family:var(--mono)"></b></div>
+        </div>
+        <p class="hint">The ID is not written in binary directly. ID 3 is the 4th code in the family's list, and the list was picked by a computer search so the codes are as different from each other as possible.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>How far away can you read it?</h3>
+  <p class="prose">A camera doesn't see a tag, it sees <span class="term">pixel</span>s. The farther away the tag, the fewer pixels land on it. Our camera has 1280 pixels across an 82° view, which works out to a focal length of about <strong>737 pixels</strong> (we measured it in calibration, chapter 11). That gives a simple rule:</p>
+  <p class="prose center" style="font:600 1.15rem var(--mono);color:var(--p700)">pixels across the tag ≈ 737 × 0.1651 m ÷ distance</p>
+  <p class="prose">Drag the slider and watch what the camera actually gets. Each little square below is one real sensor pixel.</p>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>The distance test: AprilTag vs QR code</h4></div>
+    <div class="ctl"><label>Distance from camera <output id="a-dout"></output></label><input type="range" id="a-d" min="0.5" max="12" step="0.05" value="3"></div>
+    <div class="dist-views">
+      <figure><canvas id="a-dtag" width="180" height="180"></canvas><figcaption>AprilTag, as pixels <br><span class="verdict" id="a-vt"></span></figcaption></figure>
+      <figure><canvas id="a-dqr" width="180" height="180"></canvas><figcaption>Same-size QR-style code <br><span class="verdict" id="a-vq"></span></figcaption></figure>
+      <figure class="frame"><canvas id="a-dframe" width="320" height="200"></canvas><figcaption>Where it sits in the whole 1280 × 800 frame (tag outlined)</figcaption></figure>
+    </div>
+    <div class="readout">
+      <div><small>Tag width</small><b id="a-rpx"></b></div>
+      <div><small>Pixels per tag square</small><b id="a-rcell"></b></div>
+      <div><small>Pixels per QR square</small><b id="a-rqr"></b></div>
+    </div>
+    <p class="hint">Simplified: the tag is face-on and centered, and every pixel averages the light that falls on it. Real images also have lens blur, JPEG blocks and motion blur, which make things worse.</p>
+  </div>
+
+  <div class="split top">
+    <div class="prose">
+      <h4 style="margin-top:0">The rule of thumb: about 2 pixels per square</h4>
+      <p>To tell whether a square is black or white, the detector samples the middle of it. If a square is only 1 pixel wide, that pixel usually straddles two squares and comes out gray, and the code turns to mush. With about <strong>2 or more pixels per square</strong>, most squares have a "clean" pixel in the middle.</p>
+      <p>An AprilTag has 8 squares across its black part (6 data + 2 border), so each is 20.6 mm. A same-size QR code with 25 modules has squares of only 6.6 mm. That's why the tag stays readable about <strong>3 times farther away</strong>.</p>
+    </div>
+    <div class="callout spectrum" style="margin-top:0"><h5>What we measured</h5><p>We took 40 real frames of tag 3, shrank them to smaller and smaller sizes, re-compressed them with the camera's own JPEG settings, and ran our real detector on them. The tag was found in <strong>85% of frames at 20 pixels wide</strong> (about 6 m face-on), 52% at 18 px, and only 2% at 14 px.</p><p>20 px is 2.5 pixels per square, so the rule of thumb holds. Our GPU detector looks for tag outlines on a half-size image to save time, which costs some range: searching at full size found 98% at 12 px (about 10 m). Real far-away tags are blurrier than shrunk ones, so real ranges are a bit shorter.</p></div>
+  </div>
+
+  <h3>36h11: codes that can't be confused</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>The name <strong>tag36h11</strong> is a spec sheet: <strong>36</strong> data bits, and a minimum <span class="term">Hamming distance</span> of <strong>11</strong>. Hamming distance just means "how many squares are different". Any two tags in the family differ in at least 11 of their 36 squares.</p>
+      <p>Why does that matter? A bit can be misread: glare on one square, a shadow on another. If two tags differed in only one square, a single mistake would turn tag 7 into tag 8, and the robot would think it's somewhere else entirely. With 11 squares between every pair of codes, a few mistakes leave the pattern much closer to the right tag than to any other one, or close to no tag at all.</p>
+      <p><strong>Rotation is built in.</strong> A tag can appear sideways or upside down. The detector reads the grid, then compares it against every code <em>in all four rotations</em>. The family was chosen so each code is at least 11 squares away from every rotation of every other code, and from its own rotations too. So a match tells you both the ID <em>and</em> which way up the tag is, and that's how the detector knows which corner is which.</p>
+    </div>
+    <div class="callout analogy" style="margin-top:0"><h5>Analogy</h5><p>Imagine phone numbers chosen so any two differ in at least 5 of their 10 digits. Misdial one digit and you won't reach a stranger; the number you dialed doesn't belong to anybody, and you can tell which number you meant. The full tag36h11 family has only <strong>587</strong> codes out of 68 billion possible 36-bit patterns, which is what buys that safety.</p></div>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Flip the bits: how wrong can a tag be?</h4></div>
+    <div class="ham">
+      <div>
+        <div class="hgrid" id="a-hgrid" role="group" aria-label="Tag bit grid. Click data squares to flip them."></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:14px">
+          <button class="btn-sm" id="a-h1">Flip 1 random</button>
+          <button class="btn-sm" id="a-h5">Flip 5 random</button>
+          <button class="btn-sm" id="a-hrot">Rotate 90°</button>
+          <button class="btn-sm" id="a-hrand">Random pattern</button>
+          <button class="btn-sm primary" id="a-hreset">Next clean tag</button>
+        </div>
+        <p class="hint center">Click squares in the middle to flip them. Orange outline = you flipped it.</p>
+      </div>
+      <div>
+        <div class="readout" style="margin-top:0">
+          <div><small>Closest real tag</small><b id="a-hid"></b></div>
+          <div><small>Squares different</small><b id="a-hd"></b></div>
+          <div><small>Next closest</small><b id="a-h2"></b></div>
+        </div>
+        <p id="a-hverdict" style="margin:12px 0 6px;font-size:.95rem"></p>
+        <svg class="hbars" id="a-hbars" viewBox="0 0 400 130" aria-label="Distance to each of the 48 codes"></svg>
+        <p class="hint">Bars: how many squares differ from each of IDs 0–47 (best of 4 rotations). The dashed line is 11. Compared against the 48 codes on this page; the full family has 587.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout spectrum"><h5>What we run</h5><p>Our detector library is set up to repair at most <strong>1</strong> wrong square (<code>apriltag_detector_add_family_bits(td, family, 1)</code> in <code>detector/GpuDetectorJNI.cc</code>). PhotonVision keeps only tags read with <strong>0</strong> wrong squares by default (its hamming setting). Because every code is 11 squares from every other, a random pattern of shadows almost never lines up perfectly with a real tag. That's why we can also run a low <strong>decision margin cutoff of 15</strong> (explained below) without seeing fake tags.</p></div>
+
+  <div class="split top">
+    <div class="prose">
+      <h4 style="margin-top:0">A real misread</h4>
+      <p>This happens on real fields. In this frame from the 2024 field, the AprilTag library read tag 7 perfectly, but read tag 6 with <strong>2 wrong squares</strong> (and a low decision margin of 32.5). The library was allowed to fix up to 2, so it still reported tag 6.</p>
+      <p>Our system is stricter. Our detector would only repair 1 square, and PhotonVision's hamming 0 setting would drop even that. We'd simply skip tag 6 in this frame and use the next one, 8 ms later. Missing one frame is cheap; trusting a bad reading is not.</p>
+    </div>
+    <div class="fig" style="padding:14px">
+      <div class="twin"><canvas id="a-ham7" aria-label="Tag 7, read with 0 wrong squares"></canvas><canvas id="a-ham6" aria-label="Tag 6, read with 2 wrong squares"></canvas></div>
+      <figcaption style="padding:10px 2px 0">Two tags from one real frame, zoomed in. Green: read exactly. Amber: 2 squares wrong. (PhotonVision test image, GPL-3.0; detections by the AprilTag library.)</figcaption>
+    </div>
+  </div>
+
+  <h3>How the detector finds a tag, step by step</h3>
+  <p class="prose">Here's the real process, run live in your browser on a real frame from a robot camera on the 2024 field. Every image is actually computed by the step it describes, except the line fitting in step 4, where we use the corners the real AprilTag library found. Scroll through it.</p>
+
+  <div class="scrolly" id="a-scrolly">
+    <div class="vis"><figure><canvas id="a-det" width="1280" height="720" aria-label="Detection pipeline stages on a real robot camera frame with two AprilTags"></canvas><figcaption id="a-detcap">A real frame from a robot camera on the 2024 field.</figcaption></figure></div>
+    <div class="steps">
+      <div class="step"><div class="box"><span class="stage-label">Step 1 · Grayscale frame</span><h4>Start with brightness only</h4><p>The detector only cares how bright each pixel is, 0 (black) to 255 (white). Our cameras are black-and-white already, so there's no color to throw away (this camera was a color one, so we converted it).</p><p>Two tags sit on the 2024 Speaker. Everything else, the logos, the scoreboard, the lights and the diamond plate, is stuff the detector has to ignore.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 2 · Adaptive threshold <span class="gpu">GPU</span></span><h4>Every pixel becomes black or white</h4><p>First the frame is shrunk to half size, which is plenty for finding outlines and 4 times less work. One fixed cut-off ("brighter than 128 is white") fails when the lighting is uneven, so the image is cut into 4 × 4 pixel tiles. Each tile finds its darkest and brightest pixel (also looking at its neighbors), and its pixels are called white if they're above the halfway point.</p><p>Tiles where dark and bright are too close together, like a plain wall, can't hold a tag edge. They're marked <span style="color:#8b5cf6;font-weight:700">"skip"</span> (purple). Our detector sets this "too close" limit to 20 brightness levels, which makes it about 30–40% faster.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 3 · Connected blobs <span class="gpu">GPU</span></span><h4>Group touching pixels into blobs</h4><p>Neighboring pixels of the same color are joined into one blob, using a method called union-find. Each color here is a separate blob. A tag's black border becomes one big ring-shaped blob, with the white area around it as another.</p><p>On the GPU, thousands of threads each look at a few pixels at once and merge their groups.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 4 · Edges and quads <span class="gpu">GPU</span></span><h4>Find black–white boundaries, fit four lines</h4><p>Wherever a black blob touches a white blob, the boundary pixels are collected (green). The detector then fits straight lines through each boundary and keeps shapes made of exactly four good lines: <strong><span class="term">quad</span>s</strong>. Most boundaries (the clutter) don't make a clean quad and are thrown out.</p><p class="small muted">We didn't rebuild the line fitting here: the amber quads are the ones the real AprilTag library found in this frame.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 5 · Sample the grid <span class="gpu cpu">CPU</span></span><h4>Read the squares through the tilt</h4><p>Now the detector goes back to the <strong>full-size</strong> image. A tilted tag looks like a squashed four-sided shape. Using its four corners, the detector works out where each of the 8 × 8 squares should be (a <span class="term">homography</span>) and samples the brightness at each square's center. Green dots read white, red dots read black.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 6 · Decode <span class="gpu cpu">CPU</span></span><h4>Match against the code list</h4><p>The 36 samples become 36 bits, compared against every code in all 4 rotations. An exact match gives the <strong>ID</strong>, which way up the tag is, and the four corners in order (numbered from the tag's own top-left). The labels show what this page's decoder read from the pixels: tags 4 and 3, 0 wrong squares, and the decision margin (explained below).</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 7 · Pose</span><h4>Four corners become a 3D position</h4><p>Four corners, a known tag size, and the camera's calibration are enough to solve for the tag's position and angle in 3D (chapter 12). The axes show each tag's pose (approximate here, since we don't have this camera's calibration): <span style="color:#ef4444;font-weight:700">x</span>, <span style="color:#16a34a;font-weight:700">y</span>, and <span style="color:#3b82f6;font-weight:700">z</span> pointing out of the tag.</p></div></div>
+    </div>
+  </div>
+
+  <div class="callout idea"><h5>Why a GPU?</h5><p>Steps 2–4 do the same small job for every one of a million pixels, and each pixel barely depends on the others. That's perfect work for a <span class="term">GPU</span>, which has 1,024 small cores that all work at once. Our detector, written by Austin Schuh of FRC 971, runs those steps on the Jetson's GPU in <span class="term">CUDA</span>, then the <span class="term">CPU</span> decodes the few quads that survive. All of it takes about 2 ms per frame. Chapter 08 shows how.</p></div>
+
+  <details class="deep"><summary>The detector's real settings</summary><div>
+    <ul>
+      <li><strong>Half-size quad search.</strong> The GPU detector finds tag outlines on a half-size (640 × 400) copy of the image, then refines the corners and reads the bits at full size. The half size is hard-wired in the code (<code>CHECK_EQ(quad_decimate, 2)</code>), which is why our range test above found more range when the image was searched at full size.</li>
+      <li><strong><code>min_white_black_diff</code> = 20.</strong> The "skip" limit from step 2. AprilTag's default is 5; Austin's current code moved to 20 for speed. In our A/B test it made the detector 30–40% faster (1.7 ms instead of 2.4–3.0 ms per frame) with identical detections.</li>
+      <li><strong><code>max_line_fit_mse</code> = 10</strong> (AprilTag's default): how wobbly an edge can be and still count as a straight side. Upstream PhotonVision lowered its CPU detector to 2.5 so tags cut off at the image edge are rejected; we plan to test that before changing it.</li>
+      <li><strong>Threads.</strong> The CPU part (edge refinement and decoding) uses a pool of 6 worker threads per camera.</li>
+    </ul>
+  </div></details>
+
+  <h3>Decision margin: how sure is the reading?</h3>
+    <div class="prose">
+      <p>Reading a square isn't a yes-or-no thing to the camera. It measures a brightness, and the detector decides which side of a threshold it's on. A square that reads 240 when the threshold is 128 is clearly white. One that reads 131 is barely white.</p>
+      <p>The <span class="term" data-def="How clearly a tag's squares read: the smaller of how far its white squares average above the threshold and how far its black squares average below it, in brightness levels. Higher is more trustworthy.">decision margin</span> puts a number on that. For one tag, the detector works out:</p>
+      <ul>
+        <li>how far, on average, the white squares are <em>above</em> the threshold,</li>
+        <li>how far, on average, the black squares are <em>below</em> it,</li>
+      </ul>
+      <p>and reports the <strong>smaller</strong> of the two. A big margin means strong contrast between the tag's black and white. A small margin means a dim, washed-out or blurry tag, or a random pattern that only looks like one.</p>
+      <p>PhotonVision throws away tags below a cutoff (35 by default). Try the lab: dim the light and watch the margin fall.</p>
+    </div>
+    <div class="lab">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Decision margin</h4></div>
+      <div class="mrow">
+        <canvas class="mt" id="a-mtag" width="180" height="180"></canvas>
+        <canvas id="a-mplot" style="height:190px" aria-label="Each square's brightness against the threshold"></canvas>
+      </div>
+      <div class="mctl"><div class="ctl"><label>Exposure (light collected) <output></output></label><input type="range" id="a-mexp" min="1" max="10" step="0.1" value="5"></div>
+      <div class="ctl"><label>Noise <output></output></label><input type="range" id="a-mnoise" min="0" max="40" step="1" value="6"></div></div>
+      <div class="readout">
+        <div><small>Decision margin</small><b id="a-mm"></b></div>
+        <div><small>Wrong squares</small><b id="a-mbad"></b></div>
+        <div><small>Cutoff 15 (ours)</small><b id="a-m15"></b></div>
+        <div><small>Cutoff 35 (default)</small><b id="a-m35"></b></div>
+      </div>
+      <p class="hint">Simplified model, scaled to our bench numbers: about 44 at 3 ms and about 118 at 8.3 ms. Each dot is one of the 36 data squares. Noise spreads the dots; a dot that crosses the threshold is a wrong square, and the tag is rejected.</p>
+    </div>
+
+  <figure class="fig reveal" style="margin:30px 0">
+    <canvas id="a-far" width="1280" height="720" aria-label="A 2024 field frame with tags 9 and 10 far away and tag 15 at the edge of the image, each labeled with its decision margin"></canvas>
+    <figcaption>Real decision margins from one frame. Tags 9 and 10 are far away but face the camera: 57.5 and 72.6. Tag 15 is close but cut off at the image edge, turned away and darker: only <strong>28.7</strong>. PhotonVision's default cutoff of 35 would drop it; our cutoff of 15 keeps it. (PhotonVision test image, GPL-3.0; margins from the AprilTag library.)</figcaption>
+  </figure>
+
+  <div class="callout spectrum"><h5>What we found</h5><p>On the bench, decision margin tracked exposure: about <strong>44 at 3 ms</strong> and about <strong>118 at 8.3 ms</strong>. With PhotonVision's default cutoff of 35, short exposures sat right at the edge, and tags flickered in and out of detection even though the raw detector found the tag in 100% of frames. We run a short 5 ms exposure (less motion blur, chapter 04) with the cutoff lowered to <strong>15</strong>. That's safe because a false tag would also need a perfect 36h11 match.</p></div>
+
+  <details class="deep"><summary>The exact decision-margin formula</summary><div>
+    <p>In the AprilTag library (<code>quad_decode</code> in <code>apriltag.c</code>), the detector first fits two brightness models across the tag, one from its black border and one from the white ring around it: <code>intensity(x, y) = C0·x + C1·y + C2</code>. That handles a tag that's brighter on one side. Each square's threshold is halfway between the two models at that spot, and each sample becomes <code>v = sample − threshold</code>.</p>
+    <p>Positive <code>v</code> adds to <code>white_score</code>, negative adds <code>−v</code> to <code>black_score</code>, and the margin is <code>min(white_score / white_count, black_score / black_count)</code>, in brightness levels (0–255). The lab uses the same formula with one flat threshold.</p>
+  </div></details>
+
+  <details class="deep"><summary>Tag families, and why FRC uses 36h11</summary><div>
+    <p>AprilTag families trade size against safety. <strong>tag16h5</strong> has 16 bits and distance 5: bigger squares, but only 30 codes, and random patterns match it much more easily. FRC used it in 2023, and teams saw false detections, so FRC switched to <strong>tag36h11</strong> in 2024. Its 11-bit distance makes false matches extremely rare, and 587 codes is plenty. The cost is smaller squares (8 across instead of 6), so slightly less range for the same printed size.</p>
+    <p>AprilTag 3 also added "recursive" families like tagStandard41h12 and tagCircle21h7, which use space inside and outside the border differently. FRC doesn't use them.</p>
+  </div></details>
+
+  <div class="deeper">
+    <a href="https://april.eecs.umich.edu/software/apriltag">APRIL Robotics Lab: AprilTag</a>
+    <a href="https://github.com/AprilRobotics/apriltag">The AprilTag library source</a>
+  </div>
+
+  <div class="recap reveal">
+    <h5>Chapter 2 recap</h5>
+    <ul>
+      <li>FRC tags are tag36h11: a 6.5 in black square, 6 × 6 data squares, at known spots from the field layout file.</li>
+      <li>Few, big squares make a tag readable far away (about 2 pixels per square is the limit), and 4 corners plus a known size give a 3D pose.</li>
+      <li>Every code differs from every other (in every rotation) by at least 11 squares, so misreads don't become the wrong ID.</li>
+      <li>Detection: threshold → blobs → quads (on the GPU) → sample the grid → decode → pose.</li>
+      <li>Decision margin = how clearly the black and white squares separate. We run 5 ms exposure with a cutoff of 15.</li>
+    </ul>
+  </div>
+</div>

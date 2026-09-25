@@ -1,0 +1,305 @@
+<style>
+  #pose .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  #pose .cap { font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--lab-muted); margin: 0 0 6px; font-weight: 700; }
+  #pose .duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 700px) { #pose .duo { grid-template-columns: 1fr; } }
+  #pose .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--lab-muted); margin-top: 8px; }
+  #pose .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  #pose canvas.touch { touch-action: none; }
+  #pose .three-wrap { position: relative; border-radius: 12px; overflow: hidden; background: #0e0518; aspect-ratio: 16 / 10; touch-action: none; }
+  #pose .three-wrap canvas { width: 100% !important; height: 100% !important; border-radius: 0; background: transparent; display: block; }
+  #pose .three-wrap .inset { position: absolute; z-index: 2; right: 10px; top: 10px; width: 36%; border: 1px solid var(--lab-line); border-radius: 8px; box-shadow: 0 8px 20px rgba(0,0,0,.5); }
+  #pose .three-wrap .inset canvas { height: auto !important; }
+  #pose .three-wrap .inset b { position: absolute; left: 8px; top: 5px; font: 700 .62rem var(--font); letter-spacing: .1em; text-transform: uppercase; color: var(--lab-muted); }
+  #pose .three-wrap .tip { position: absolute; z-index: 2; left: 10px; bottom: 8px; font-size: .75rem; color: var(--lab-muted); background: rgba(14,5,24,.75); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+  @media (max-width: 600px) { #pose .three-wrap { aspect-ratio: 4 / 5; } #pose .three-wrap .inset { width: 52%; } }
+  #pose .chain svg { width: 100%; height: auto; }
+  #pose .verdict { font: 700 .95rem var(--font-heading); padding: 8px 12px; border-radius: 10px; margin-top: 12px; }
+  #pose .verdict.ok { background: rgba(163,230,53,.12); color: #a3e635; border: 1px solid rgba(163,230,53,.35); }
+  #pose .verdict.bad { background: rgba(245,158,11,.12); color: #f59e0b; border: 1px solid rgba(245,158,11,.4); }
+  #pose .tagbtns button.off { opacity: .45; text-decoration: line-through; }
+  #pose .chk { display: flex; gap: 8px; align-items: center; font-size: .86rem; color: var(--lab-ink); margin: 8px 0; cursor: pointer; }
+  #pose .chk input { accent-color: var(--accent); width: 16px; height: 16px; }
+  #pose .code { font-family: var(--mono); font-size: .78rem; background: #1f1b23; border-radius: 10px; padding: 12px 14px; color: #f4efff; white-space: pre; overflow-x: auto; margin: 12px 0; }
+  #pose .code .c { color: #9d8fb8; }
+  #pose .code .k { color: #c4b5fd; }
+  #pose .realfig { background: #0e0518; }
+  #pose .realfig canvas { border-radius: 0; }
+  #pose .lab-grid > *, #pose .split > * { min-width: 0; }
+  #pose table.data code { overflow-wrap: anywhere; }
+  @media (max-width: 600px) { #pose table.data { font-size: .85rem; } #pose table.data code { font-size: .78em; } }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">12</span> · The math of seeing</span>
+    <h2>From corners to <em>pose.</em></h2>
+    <p class="lede">The detector hands over four corner pixels per tag. From just those, plus the calibration from the last chapter, the robot works out where it's standing on the field. Here's how, why it sometimes gets it badly wrong, and why more tags fix it.</p>
+  </div>
+
+  <h3 style="margin-top:0">If you know how big it is, you know how far</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>Hold your thumb out at arm's length and it covers a car across the street. Things look smaller the farther away they are, in exact proportion: twice as far, half as big. That's <strong>similar triangles</strong>, and it's the heart of the pinhole model from chapter 11.</p>
+      <p>Every AprilTag on an FRC field is printed the same size: the black square is <strong>165.1 mm</strong> (6.5 in) across. So if the camera measures how many pixels tall a tag looks, it can solve for the distance:</p>
+      <p style="font-family:var(--mono);color:var(--p700)">distance = fx × real size / size in pixels</p>
+      <p>There's a catch. Far away, a tag is only a couple of dozen pixels tall, and a one-pixel mistake in the corners is a bigger fraction of that. Slide the tag back and watch the error bar grow: it grows with the <em>square</em> of the distance.</p>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Similar triangles</h4></div>
+      <canvas id="po-tri" aria-label="Side view: a tag, the pinhole and the sensor, with the tag's image size"></canvas>
+      <div class="ctl" style="margin-top:12px"><label>Distance to the tag <output></output></label><input type="range" id="po-tri-d" min="0.5" max="8" step="0.05" value="2"></div>
+      <div class="readout"><div><small>Tag in the image</small><b id="po-tri-px">–</b></div><div><small>If corners are 1 px off</small><b id="po-tri-err">–</b></div></div>
+      <p class="hint">fx = 737 px, our cameras. The drawing isn't to scale: the real sensor sits only 2.2 mm behind the pinhole.</p>
+    </div>
+  </div>
+
+  <div class="prose">
+    <h3>Three clues in four corners</h3>
+    <p>Size gives distance. Two more clues come free with it:</p>
+    <ul>
+      <li><strong>Where</strong> the tag is in the picture gives its direction. A tag right of center is to the camera's right, by an angle you can compute from the calibration: <code>angle = atan((u − cx) / fx)</code>.</li>
+      <li><strong>How squashed</strong> it looks gives its angle. A square seen from the side becomes a narrow trapezoid: the near edge looks taller than the far edge.</li>
+    </ul>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Size, position, shape</h4></div>
+    <div class="duo">
+      <div><p class="cap">From above</p><canvas id="po-clue-top" aria-label="Top-down view of the camera and the tag"></canvas></div>
+      <div><p class="cap">What the camera sees</p><canvas id="po-clue-img" aria-label="Camera image of the tag"></canvas></div>
+    </div>
+    <div class="duo" style="margin-top:14px">
+      <div>
+        <div class="ctl"><label>Distance <output></output></label><input type="range" id="po-c-d" min="0.6" max="4" step="0.05" value="1.2"></div>
+        <div class="ctl"><label>Tag off to the side <output></output></label><input type="range" id="po-c-b" min="-35" max="35" step="1" value="12"></div>
+        <div class="ctl"><label>Tag turned <output></output></label><input type="range" id="po-c-y" min="-70" max="70" step="1" value="35"></div>
+      </div>
+      <div class="readout" style="margin-top:0;align-content:start">
+        <div><small>Size → distance</small><b id="po-c-r1">–</b></div>
+        <div><small>Position → direction</small><b id="po-c-r2">–</b></div>
+        <div><small>Shape → angle</small><b id="po-c-r3">–</b></div>
+      </div>
+    </div>
+    <p class="hint">Watch the left and right edges of the tag in the image when you turn it: the nearer edge is taller. Near straight-on, that difference is tiny. Remember that; it's the root of the ambiguity problem below.</p>
+  </div>
+
+  <h3>What it looks like in a real frame</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>These are real robot-camera frames from FRC fields, with the corners an AprilTag detector found. Notice how few pixels a far tag gets. The tags on the speaker are 71 px wide in the close frame and 40 px in the far one. The small tags on the 2026 outpost are about 22 px: at that size, one pixel is almost 5% of the tag.</p>
+      <p>Corner order matters: the detector reports them in a fixed order around the tag, so the solver knows which image corner is which real corner, even when the tag is rotated.</p>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Real frames</span><h4>Detected corners</h4></div>
+      <div class="seg" id="po-real-seg" style="margin-bottom:10px"><button data-v="2024-speaker-63in" class="on">Close</button><button data-v="2024-speaker-143in">Far</button><button data-v="2024-stage-51in">One tag</button><button data-v="2026-blue-outpost-fuel">2026 outpost</button><button data-v="2024-speaker-amp-far">Edge of frame</button></div>
+      <canvas id="po-real" aria-label="A real field camera frame with detected tag corners"></canvas>
+      <p class="hint" id="po-real-info"></p>
+      <p class="hint" style="margin-top:4px">Camera frames: PhotonVision test images (GPL-3.0). Corners from the AprilTag library. These cameras' calibrations aren't known, so we don't solve distances from them.</p>
+    </div>
+  </div>
+
+  <h3>PnP: all the clues at once</h3>
+  <div class="prose">
+    <p>Doing the clues one at a time is shaky. The real method uses all four corners together. It's called <span class="term">PnP</span>, Perspective-n-Point, and its question is:</p>
+    <p style="font-size:1.1rem;color:var(--p700)"><em>Where must the camera be, and which way must it face, so that the tag's four real corners land exactly on these four pixels?</em></p>
+    <p>It knows three things: the corners' real 3D positions on the tag (a 165.1 mm square), where they appeared in the image, and the camera's intrinsics. The answer is the camera's <span class="term">pose</span> relative to the tag: 3 numbers for position and 3 for rotation.</p>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Solve the camera's pose</h4></div>
+    <div class="three-wrap" id="po-3d">
+      <div class="inset"><b>What the camera sees</b><canvas id="po-3d-img"></canvas></div>
+      <div class="tip">Drag the robot to move it · drag elsewhere to orbit · scroll to zoom</div>
+    </div>
+    <div class="lab-grid" style="margin-top:16px">
+      <div>
+        <div class="ctl"><label>Robot heading <output></output></label><input type="range" id="po-3d-yaw" min="-70" max="70" step="1" value="-20"></div>
+        <div class="ctl"><label>Corner noise <output></output></label><input type="range" id="po-3d-noise" min="0" max="2" step="0.05" value="0.5"></div>
+        <label class="chk"><input type="checkbox" id="po-3d-chain" checked> Show the chain of transforms</label>
+        <div class="legend"><span><i style="background:#fff"></i>real robot</span><span><i style="background:#a3e635"></i>solved from the corners</span><span><i style="background:#f59e0b"></i>solved, but flipped</span></div>
+      </div>
+      <div class="readout" style="margin-top:0;align-content:start">
+        <div><small>Tag distance</small><b id="po-3d-dist">–</b></div>
+        <div><small>Tag width</small><b id="po-3d-px">–</b></div>
+        <div><small>Robot x, y (real)</small><b id="po-3d-true">–</b></div>
+        <div><small>Robot x, y (solved)</small><b id="po-3d-sol">–</b></div>
+        <div><small>Position error</small><b id="po-3d-err">–</b></div>
+        <div><small>Ambiguity</small><b id="po-3d-amb">–</b></div>
+      </div>
+    </div>
+    <p class="hint">The camera uses our calibration (fx 737, 1280×800). Each change adds fresh random noise to the four corners and solves again, the way the real system does 120 times a second. Drag the robot far away and near straight-on to the tag, and watch for flips.</p>
+  </div>
+
+  <h3>From the tag to the field to the robot</h3>
+  <div class="prose">
+    <p>PnP tells you where the camera is <em>relative to the tag</em>. The robot wants its pose <em>on the field</em>. Two more facts finish the job, chained together like links:</p>
+  </div>
+  <figure class="fig chain reveal" style="padding:10px;margin:26px 0"><svg id="po-chain" viewBox="0 0 1100 250" role="img" aria-label="Chain of transforms: field to tag from the layout, tag to camera from PnP, camera to robot from robotToCamera"></svg>
+    <figcaption>Each arrow is a transform: a move plus a turn. Multiply them in order and you get the robot's pose on the field.</figcaption></figure>
+  <details class="deep">
+    <summary>The chain in code</summary>
+    <div>
+      <p>In WPILib terms, with PhotonLib's names:</p>
+      <div class="code"><span class="c">// 1. where the tag is on the field (from the layout JSON)</span>
+Pose3d tagPose = layout.getTagPose(target.getFiducialId()).get();
+<span class="c">// 2. PnP's answer: the tag as seen from the camera</span>
+Transform3d camToTag = target.getBestCameraToTarget();
+<span class="c">// 3. walk the chain backwards: tag → camera → robot</span>
+Pose3d camPose   = tagPose.transformBy(camToTag.inverse());
+Pose3d robotPose = camPose.transformBy(robotToCamera.inverse());</div>
+      <p>PhotonLib's <code>PhotonUtils.estimateFieldToRobotAprilTag</code> does the same thing. The <span class="term">extrinsics</span> from chapter 11 are the last link, so a camera mount that's off by 1° shows up directly in the robot's pose.</p>
+    </div>
+  </details>
+
+  <h3>Tag ambiguity: two answers that both fit</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>Here's the catch hinted at earlier. A small or distant tag seen nearly straight on has almost no perspective: its near edge is only a hair taller than its far edge. Turn it 20° left or 20° right and the two pictures are nearly identical.</p>
+      <p>The corners are only known to about a pixel, so PnP often finds <strong>two poses that both explain the corners</strong>: one with the tag turned one way, one with it turned the other. For a flat square this is a known property of the math, called the planar pose <span class="term">ambiguity</span>. The two answers put the camera at the same distance but on <em>opposite sides</em> of the tag's center line, which can put the robot meters from where it really is.</p>
+      <p>PhotonVision measures how sure it is with a number called <strong>pose ambiguity</strong>: the reprojection error of the best solution divided by the error of the alternate one.</p>
+      <ul>
+        <li>Near <strong>0</strong>: the alternate fits much worse, so the best one is trustworthy.</li>
+        <li>Near <strong>1</strong>: both fit equally well; it's a coin flip.</li>
+        <li>PhotonVision's docs suggest <strong>rejecting single-tag poses with ambiguity above 0.2</strong>.</li>
+      </ul>
+    </div>
+    <figure class="fig reveal" style="margin:0"><svg id="po-amb-fig" viewBox="0 0 520 330" role="img" aria-label="The two poses a tag can be in: tilted left and tilted right, looking almost the same to a far camera"></svg><figcaption>Seen from far away, "turned left" and "turned right" produce almost the same four corners. Simplified illustration.</figcaption></figure>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>The flip</h4></div>
+    <div class="duo">
+      <div><p class="cap">From above: the two solutions</p><canvas id="po-amb-top" aria-label="Top-down view with the real camera and the two solved poses"></canvas></div>
+      <div><p class="cap">Image: detected corners and both reprojections</p><canvas id="po-amb-img" aria-label="Camera image with the detected corners and the two solutions' reprojected corners"></canvas></div>
+    </div>
+    <div class="lab-grid" style="margin-top:14px">
+      <div>
+        <div class="ctl"><label>Distance to the tag <output></output></label><input type="range" id="po-a-d" min="1" max="8" step="0.1" value="4.5"></div>
+        <div class="ctl"><label>Viewing angle (0 = straight on) <output></output></label><input type="range" id="po-a-ang" min="0" max="50" step="1" value="12"></div>
+        <div class="ctl"><label>Corner noise <output></output></label><input type="range" id="po-a-n" min="0" max="2" step="0.05" value="0.6"></div>
+        <div class="row"><button class="btn-sm primary" id="po-a-new">New noisy frame</button><button class="btn-sm" id="po-a-run">Run 200 frames</button></div>
+        <div class="legend"><span><i style="background:#fff"></i>real camera</span><span><i style="background:#a3e635"></i>solution A</span><span><i style="background:#f59e0b"></i>solution B</span><span><i style="background:#f43f5e"></i>detected corner</span></div>
+      </div>
+      <div>
+        <div class="readout" style="margin-top:0">
+          <div><small>Error A</small><b id="po-a-ea">–</b></div>
+          <div><small>Error B</small><b id="po-a-eb">–</b></div>
+          <div><small>Ambiguity</small><b id="po-a-amb">–</b></div>
+          <div><small>A and B apart</small><b id="po-a-apart">–</b></div>
+        </div>
+        <div class="verdict ok" id="po-a-verdict">–</div>
+        <p class="hint" id="po-a-stats"></p>
+      </div>
+    </div>
+    <p class="hint">The page finds both solutions by refining a guess from each side; PhotonVision's single-tag solve uses OpenCV's <code>SOLVEPNP_IPPE_SQUARE</code>, which computes both directly. The zoomed circle shows one corner 12× larger.</p>
+  </div>
+
+  <div class="callout pitfall">
+    <h5>A flip is worse than noise</h5>
+    <p>Noise nudges the pose a few centimeters. A flip teleports it. If robot code feeds a flipped pose to its <span class="term">pose estimator</span>, the robot suddenly believes it's somewhere else on the field, and auto paths or aiming follow that belief. That's why single-tag poses need an ambiguity check, and why the next idea matters so much.</p>
+  </div>
+
+  <h3>Multi-tag: more corners, one answer</h3>
+  <div class="prose">
+    <p>With two or more tags in view, there are 8 or more corners spread across the image, and the field layout says exactly where every one of them sits relative to the others. Now the two-answer problem goes away: turning the camera to fit one tag's flip would throw the other tag's corners far off.</p>
+    <p>PhotonVision's <strong>multi-tag</strong> mode solves one PnP for all the corners at once, directly in field coordinates, on the Jetson. It needs 3D mode, a calibration, and the same field layout as the robot code. Our build turns 3D and multi-tag on automatically as soon as a camera has a calibration.</p>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Add tags, watch the uncertainty shrink</h4></div>
+    <div class="lab-grid">
+      <div>
+        <canvas id="po-mt" aria-label="Top-down view: a cloud of solved robot poses from noisy frames"></canvas>
+        <div class="legend"><span><i style="background:#a3e635"></i>solved pose (one noisy frame each)</span><span><i style="background:#f59e0b"></i>flipped</span><span><i style="background:#fff"></i>real pose</span></div>
+      </div>
+      <div>
+        <div class="cap">Tags in view (tap to toggle)</div>
+        <div class="seg tagbtns" id="po-mt-tags"></div>
+        <div class="ctl" style="margin-top:14px"><label>Distance to the wall <output></output></label><input type="range" id="po-mt-d" min="1.5" max="7" step="0.1" value="4.5"></div>
+        <div class="ctl"><label>Corner noise <output></output></label><input type="range" id="po-mt-n" min="0.1" max="2" step="0.05" value="0.5"></div>
+        <label class="chk"><input type="checkbox" id="po-mt-bad"> Tag 2 was mounted 15 cm off</label>
+        <label class="chk"><input type="checkbox" id="po-mt-ex"> Exclude tag 2 from multi-tag</label>
+        <div class="readout">
+          <div><small>Position spread</small><b id="po-mt-sp">–</b></div>
+          <div><small>Heading spread</small><b id="po-mt-hs">–</b></div>
+          <div><small>Flipped frames</small><b id="po-mt-fl">–</b></div>
+          <div><small>Average error</small><b id="po-mt-bias">–</b></div>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Each dot is one simulated frame with fresh corner noise, solved exactly as described: one tag → best of the two single-tag solutions; two or more → one PnP over all corners. Spread is the radius holding 95% of the dots. Tag positions are illustrative.</p>
+  </div>
+
+  <div class="callout spectrum">
+    <h5>What we did: multi-tag on by default, bad tags left out</h5>
+    <p><b>On by default</b> (<code>photonvision-06</code>): a new camera starts with multi-tag on, and 3D turns itself on as soon as a calibration is saved for its resolution. We added this after finding that both bench cameras had multi-tag off. <b>Leaving bad tags out</b> (<code>photonvision-22</code>): if a tag is mounted wrong at an event, type its number on the Settings page (or robot code publishes it on <code>/photonvision/excludedTags</code>) and every camera's multi-tag solve ignores it. The tag is still reported with its own single-tag pose. Try the "mounted 15 cm off" box above to see why this matters: one bad tag drags every multi-tag answer.</p>
+  </div>
+
+  <h3>On the robot: PhotonLib's estimators</h3>
+  <div class="prose">
+    <p>The Jetson sends its results to the robot, where <span class="term">PhotonLib</span>'s <code>PhotonPoseEstimator</code> turns them into robot poses. In the 2027 alpha version our robot uses, each strategy is its own method:</p>
+  </div>
+  <div class="table-wrap reveal">
+    <table class="data">
+      <tr><th>Method</th><th>What it does</th><th>Limelight name</th></tr>
+      <tr><td><code>estimateCoprocMultiTagPose</code></td><td>Uses the multi-tag answer the Jetson already solved.</td><td rowspan="2">MegaTag1</td></tr>
+      <tr><td><code>estimateLowestAmbiguityPose</code></td><td>The fallback for one tag: the target with the lowest ambiguity, and its best solution.</td></tr>
+      <tr><td><code>estimateConstrainedSolvepnpPose</code></td><td>Re-solves on the robot with the heading held to the gyro, over all tags.</td><td rowspan="2">MegaTag2 (chapter 13)</td></tr>
+      <tr><td><code>estimatePnpDistanceTrigSolvePose</code></td><td>Distance and angle to the best single tag, plus the gyro heading.</td></tr>
+    </table>
+  </div>
+
+  <div class="split top">
+    <div class="prose">
+      <h3 style="margin-top:0">Trust depends on distance</h3>
+      <p>A vision pose isn't simply right or wrong. It's a best guess with some spread, and the spread grows fast with distance (you saw why: fewer pixels per tag) and shrinks with more tags. Robot code tells the pose estimator how much to trust each measurement with <strong><span class="term" data-term="standard deviation">standard deviations</span></strong>: a small number means "trust this a lot".</p>
+      <p>The robot's drivetrain pose estimator blends vision with <span class="term">odometry</span> using the idea behind a <span class="term">Kalman filter</span>. Each source is a guess with a spread. The blend leans toward whichever is more certain, and the combined guess is more certain than either alone.</p>
+      <p>A common rule of thumb, from team 6328 and listed in our research notes: standard deviation ≈ <code>0.01 × distance² / tags²</code> meters. PhotonVision itself doesn't publish standard deviations, so this lives in robot code.</p>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Blending two guesses</h4></div>
+      <canvas id="po-kf" aria-label="Bell curves for odometry, vision and the blended estimate"></canvas>
+      <div class="ctl" style="margin-top:12px"><label>Tag distance <output></output></label><input type="range" id="po-kf-d" min="1" max="7" step="0.1" value="3"></div>
+      <div class="ctl"><label>Tags in view <output></output></label><input type="range" id="po-kf-n" min="1" max="4" step="1" value="1"></div>
+      <div class="ctl"><label>Time since the last good fix <output></output></label><input type="range" id="po-kf-t" min="0.2" max="10" step="0.1" value="3"></div>
+      <div class="readout"><div><small>Vision std dev</small><b id="po-kf-sv">–</b></div><div><small>Weight on vision</small><b id="po-kf-k">–</b></div></div>
+      <p class="hint">One dimension only, with illustrative odometry drift. The real estimator does this for x, y and heading at once.</p>
+    </div>
+  </div>
+
+  <details class="deep">
+    <summary>Feeding the pose estimator</summary>
+    <div>
+      <p>A typical loop, per camera, per new result:</p>
+      <div class="code"><span class="k">for</span> (var result : camera.getAllUnreadResults()) {
+  var est = estimator.estimateCoprocMultiTagPose(result);
+  <span class="k">if</span> (est.isEmpty()) est = estimator.estimateLowestAmbiguityPose(result);
+  est.ifPresent(e -> {
+    <span class="c">// reject flips: single-tag ambiguity, off-field poses...</span>
+    <span class="k">double</span> xy = 0.01 * d * d / (n * n);   <span class="c">// d = average tag distance, n = tags</span>
+    drivetrain.addVisionMeasurement(e.estimatedPose.toPose2d(),
+        e.timestampSeconds, VecBuilder.fill(xy, xy, theta));
+  });
+}</div>
+      <p>Three details matter. <b>Every frame:</b> <code>getAllUnreadResults()</code> returns about 2 frames per camera per 20 ms loop at 90 fps, so none are dropped. <b>The timestamp</b> is when the frame was captured, not when it arrived, so the estimator can apply it to the right moment in the past (chapter 14). <b>Gates:</b> our off-season robot code already rejects bad poses and uses std-dev tiers; those move over, retuned, because PhotonVision computes ambiguity differently from Limelight.</p>
+    </div>
+  </details>
+  <div class="deeper">
+    <a href="https://docs.photonvision.org/en/latest/docs/apriltag-pipelines/3D-tracking.html">PhotonVision: 3D tracking and ambiguity</a>
+    <a href="https://docs.photonvision.org/en/latest/docs/apriltag-pipelines/multitag.html">PhotonVision: MultiTag</a>
+    <a href="https://docs.photonvision.org/en/latest/docs/programming/photonlib/robot-pose-estimator.html">PhotonLib pose estimator</a>
+    <a href="https://docs.wpilib.org/en/stable/docs/software/advanced-controls/state-space/state-space-pose-estimators.html">WPILib pose estimators</a>
+  </div>
+
+  <div class="recap reveal">
+    <h5>Chapter 12 recap</h5>
+    <ul>
+      <li>A tag's size gives distance, its position gives direction, its shape gives angle. Error grows with distance squared.</li>
+      <li>PnP uses all four corners, the tag's real size and the intrinsics to find the camera's pose relative to the tag.</li>
+      <li>Chain it: field → tag (layout) → camera (PnP) → robot (<code>robotToCamera</code>).</li>
+      <li>One small or far tag can have two answers that fit (ambiguity). PhotonVision's ambiguity = best error / alternate error; reject above 0.2.</li>
+      <li>Multi-tag solves all corners at once: one clear answer, much tighter. Leave badly mounted tags out.</li>
+      <li>On the robot, PhotonLib turns results into poses, and the pose estimator blends them with odometry, trusting them less when far.</li>
+    </ul>
+  </div>
+</div>

@@ -1,0 +1,2 @@
+Real FRC field camera frames from PhotonVision's test images (GPL-3.0, https://github.com/PhotonVision/photonvision/tree/main/test-resources/testimages). 2024 CRESCENDO field and 2026 REBUILT blue outpost.
+detections.json: tag36h11 detections from pupil-apriltags (the AprilRobotics C library), quad_decimate=1. corners are in pixel coordinates, order as returned by the AprilTag library (counter-clockwise starting bottom-left in the tag frame).

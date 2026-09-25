@@ -1,0 +1,231 @@
+<style>
+  #camera .cam3d { position: relative; aspect-ratio: 4 / 3; border-radius: 12px; overflow: hidden; background: radial-gradient(ellipse at 50% 40%, #2a1542, #0e0518 75%); touch-action: none; }
+  #camera .cam3d canvas { width: 100% !important; height: 100% !important; display: block; background: transparent; border-radius: 0; }
+  #camera .cam3d .lbl { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); font: 600 .72rem var(--font); color: #fff; background: rgba(14,5,24,.78); border: 1px solid rgba(196,181,253,.45); padding: 3px 8px; border-radius: 999px; white-space: nowrap; pointer-events: none; transition: opacity .2s; }
+  #camera .cam3d .lbl.sim { border-style: dashed; }
+  #camera .cam3d .msg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--lab-muted); font-size: .9rem; }
+  @media (max-width: 600px) { #camera .cam3d .lbl { font-size: .62rem; padding: 2px 6px; } }
+  #camera .specs td:first-child { color: var(--muted); white-space: nowrap; }
+  #camera .specs td { vertical-align: top; }
+  #camera #c-journey { aspect-ratio: 1.47; }
+  @media (max-width: 600px) { #camera #c-journey { aspect-ratio: 1.08; } }
+  #camera .scrolly .vis canvas { width: 100%; border-radius: 14px; background: #0e0518; box-shadow: var(--shadow-lg); }
+  #camera .scrolly { grid-template-columns: minmax(0, 1.3fr) minmax(0, .9fr); }
+  @media (max-width: 900px) { #camera .scrolly { grid-template-columns: 1fr; } }
+  #camera .stage-label { font: 700 .72rem var(--font); letter-spacing: .14em; text-transform: uppercase; color: var(--p600); }
+  #camera .tri { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  #camera .tri figure { margin: 0; }
+  #camera .tri canvas { width: 100%; aspect-ratio: 1; }
+  #camera .tri figcaption { font-size: .8rem; color: var(--lab-muted); margin-top: 6px; text-align: center; }
+  @media (max-width: 600px) { #camera .tri { gap: 6px; } #camera .tri figcaption { font-size: .7rem; } }
+  #camera .jpeg-views { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 700px) { #camera .jpeg-views { grid-template-columns: 1fr; } }
+  #camera .jpeg-views canvas { width: 100%; image-rendering: pixelated; }
+  #camera .jpeg-views figure { margin: 0; }
+  #camera .jpeg-views figcaption { font-size: .8rem; color: var(--lab-muted); margin-top: 6px; }
+  #camera .sizebar { height: 16px; border-radius: 8px; background: rgba(255,255,255,.08); overflow: hidden; margin-top: 6px; }
+  #camera .sizebar i { display: block; height: 100%; background: linear-gradient(90deg, #8b5cf6, #c4b5fd); width: 0; transition: width .2s; }
+  #camera .focus-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 10px; }
+  #camera .focus-grid div { background: rgba(255,255,255,.05); border: 1px solid var(--lab-line); border-radius: 8px; padding: 6px; text-align: center; font: 600 .9rem var(--mono); }
+  #camera .fovview canvas { width: 100%; }
+  #camera canvas.px { image-rendering: pixelated; }
+  #camera .yt { max-width: 760px; margin: 28px auto; }
+  #camera .yt-play { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; padding: 0; border: 0; background: #0e0518; cursor: pointer; }
+  #camera .yt-play img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #camera .yt-play::after { content: "▶"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 72px; height: 50px; border-radius: 14px; background: var(--accent); color: #fff; font-size: 22px; display: grid; place-items: center; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+  #camera .yt-play:hover::after, #camera .yt-play:focus-visible::after { background: var(--p800); }
+  #camera .yt .video-embed { display: block; border-radius: 0; box-shadow: none; }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">03</span> · Capturing light</span>
+    <h2>Inside the camera: from light to <em>data.</em></h2>
+    <p class="lede">A camera is a machine that counts light. In about 8 milliseconds, ours turns the light bouncing off a tag into a million numbers, squeezes them into about 50 kilobytes, and sends them down a USB cable.</p>
+  </div>
+
+  <div class="split top">
+    <div class="prose">
+      <h3 style="margin-top:0">Meet the Thriftiest Cam</h3>
+      <p>Our AprilTag cameras are <strong>Thrifty Bot Thriftiest Cams</strong>, $50 each. They're built for exactly this job: finding tags on a moving robot. Inside the molded case are a lens, a filter, a sensor chip on a small circuit board, and a chip that compresses and sends the pictures over USB.</p>
+      <p>Drag the model to turn it, and pull the slider to take it apart. The case, lens holder and screws are The Thrifty Bot's real CAD. The CAD doesn't include the insides, so the lens elements, filter, sensor and board are simplified stand-ins, shown with dashed labels.</p>
+      <div class="table-wrap"><table class="data specs">
+        <tr><th colspan="2">Thriftiest Cam</th></tr>
+        <tr><td>Sensor</td><td>OmniVision <span class="term">OV9281</span>: 1 megapixel (1280 × 800), <span class="term">monochrome</span>, <span class="term">global shutter</span></td></tr>
+        <tr><td>Speed</td><td>Up to 120 frames per second at full resolution</td></tr>
+        <tr><td>Lens</td><td>M12 × 0.5 mount, 2.1 mm focal length, f/2.2, 2 glass + 1 plastic elements</td></tr>
+        <tr><td>Field of view</td><td>93° diagonal, 82° horizontal, 56° vertical</td></tr>
+        <tr><td>IR-cut filter</td><td>Passes ≥ 88% of 430–620 nm (visible), blocks to &lt; 5% at 700–1100 nm (infrared)</td></tr>
+        <tr><td>Connection</td><td>USB 2.0, locking USB-C cable</td></tr>
+        <tr><td>Mounting</td><td>4 × 10-32 clearance holes, 1.75 in × 1.00 in pattern</td></tr>
+      </table></div>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Take the camera apart</h4></div>
+      <div class="cam3d" id="c-3d"><div class="msg">Loading the 3D model…</div></div>
+      <div class="ctl" style="margin-top:14px"><label>Explode <output></output></label><input type="range" id="c-explode" min="0" max="1" step="0.01" value="0.65"></div>
+      <p class="hint">Drag to turn, scroll or pinch to zoom. Solid labels: real CAD parts. Dashed labels: simplified stand-ins.</p>
+    </div>
+  </div>
+
+  <h3>The journey of light</h3>
+  <p class="prose">Follow the light from a tag, through the camera, to the USB cable. Scroll through each step.</p>
+  <div class="scrolly" id="c-scrolly">
+    <div class="vis"><canvas id="c-journey" aria-label="Animated cross-section of the camera showing each step from light to USB data"></canvas></div>
+    <div class="steps">
+      <div class="step"><div class="box"><span class="stage-label">1 · Light</span><h4>Light bounces off the tag</h4><p>The field lights shine on the tag. The white squares bounce most of that light back; the black squares soak most of it up. Every point on the tag sends light out in all directions, and a tiny bit of it heads toward our camera.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">2 · Lens</span><h4>The lens brings it to a focus</h4><p>Light from one point on the tag spreads out, so without a lens it would land everywhere and make a blur. The lens bends it back together, so all the light from one point on the tag lands on one point of the sensor. The image comes out upside down (the software doesn't care).</p><p>Our lens has a short 2.1 mm focal length, which gives a wide 82° view. It's made of 3 elements, 2 glass and 1 plastic, that work together to keep the image sharp.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">3 · IR-cut filter</span><h4>Infrared is filtered out</h4><p>Silicon sensors can see near-infrared light, which your eyes can't. The filter lets through at least 88% of visible light (430–620 nm) and less than 5% of infrared (700–1100 nm).</p><p>Why block it? The lens is designed to focus visible light, and infrared comes to a focus at a slightly different distance, which would soften the image. Many materials also reflect infrared very differently from how they look. Blocking it keeps tag edges crisp and the picture predictable.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">4 · Photodiodes</span><h4>Photons become electrons</h4><p>The sensor is a grid of 1,024,000 tiny light-sensitive <span class="term">photodiode</span>s, each only 3 micrometers wide. When a photon hits one, it knocks loose an electron, which is stored in the pixel.</p><p>Think of each pixel as a bucket in the rain. While the <span class="term">exposure</span> lasts, photons are the rain. Pixels looking at a white square fill up; pixels looking at a black square stay nearly empty.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">5 · Readout</span><h4>Measure every bucket</h4><p>When the exposure ends, every pixel stops collecting at the same instant (that's what global shutter means). Then the sensor reads the buckets out, row by row. An <span class="term">ADC</span> (analog-to-digital converter) measures each bucket's charge and turns it into a number.</p><p>The OV9281 measures each pixel with 10 bits (0–1023). The pictures we get over USB use 8 bits: 0 is black, 255 is white.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">6 · A grid of numbers</span><h4>An image is just numbers</h4><p>That's all a digital image is: a grid of brightness numbers. These are real pixel values from a camera frame, around the corner of a tag. You can see the black border (low numbers), the white edge (high numbers), and the soft, in-between values right at the edge.</p><p>Our full frame is 1280 × 800 of these: <strong>1,024,000 bytes</strong>, about 1 MB.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">7 · JPEG</span><h4>Squeeze it 20 times smaller</h4><p>1 MB × 120 frames a second is 123 MB/s, about 980 megabits a second. USB 2.0 only carries 480 in total, shared by every camera. So a chip in the camera compresses each frame into a <span class="term">JPEG</span> before sending it.</p><p>JPEG cuts the image into 8 × 8 blocks and describes each block as a mix of simple patterns, keeping the strong ones and dropping fine detail you'd barely notice. Our frames come out around <strong>40–60 KB</strong>.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">8 · USB</span><h4>Down the cable, 125 µs at a time</h4><p>USB 2.0 splits time into 125-microsecond slices called <span class="term">microframe</span>s, 8,000 a second. Our camera <span class="term">driver</span> gives each camera a fixed number of bytes in every slice (chapter 10). At our setting, a 50 KB frame takes about <strong>4.9 ms</strong> to cross, then the Jetson decodes it and looks for tags.</p><p>The camera sends this stream as <span class="term">MJPEG</span>: a series of separate JPEG pictures, one per frame.</p></div></div>
+    </div>
+  </div>
+
+  <h3>Global shutter vs rolling shutter</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>Most phone and webcam sensors use a <span class="term">rolling shutter</span>: they start and stop collecting light one row at a time, top to bottom. The whole scan takes a few milliseconds. If something moves during that scan, the top of the picture sees it in one place and the bottom sees it somewhere else.</p>
+      <p>Our OV9281 has a <strong>global shutter</strong>: every pixel starts and stops at exactly the same moment. A moving object may still blur if the exposure is long (chapter 04), but it won't be bent or skewed.</p>
+      <p>For AprilTags this matters a lot. A robot that's spinning or driving past a tag moves the tag across the image. With a rolling shutter, the square tag comes out as a slanted shape. Its corners are in the wrong places, so the pose calculated from them is wrong, and it's worse the faster the robot moves.</p>
+    </div>
+    <div class="callout idea" style="margin-top:0"><h5>Try it</h5><p>The lab below runs in slow motion. Watch the rolling shutter's scan line crawl down the frame while the scene keeps moving. With the propeller, the blades bend into strange shapes. With the tag, the square leans over.</p></div>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Two ways to take a picture</h4></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <div class="seg" id="c-rsmode"><button data-v="prop" class="on">Propeller</button><button data-v="tag">Tag on a spinning robot</button></div>
+    </div>
+    <div class="tri">
+      <figure><canvas id="c-rs0" width="200" height="200"></canvas><figcaption>What's really there</figcaption></figure>
+      <figure><canvas id="c-rs1" width="200" height="200"></canvas><figcaption>Global shutter photo</figcaption></figure>
+      <figure><canvas id="c-rs2" width="200" height="200"></canvas><figcaption>Rolling shutter photo</figcaption></figure>
+    </div>
+    <div class="ctl" style="margin-top:14px"><label>Speed <output></output></label><input type="range" id="c-rsspeed" min="0" max="2" step="0.05" value="1"></div>
+    <p class="hint">Slow-motion illustration: the rolling shutter's scan (the amber line) is slowed down along with the motion. Only the ratio between them matters.</p>
+  </div>
+
+  <figure class="fig yt reveal">
+    <button class="yt-play" type="button" data-yt="dNVtMmLlnoE" aria-label="Play video: Rolling shutter explained, SmarterEveryDay"><img src="https://i.ytimg.com/vi/dNVtMmLlnoE/hqdefault.jpg" alt="" loading="lazy"></button>
+    <figcaption><strong>Watch: Rolling shutter explained</strong> (SmarterEveryDay, 6:54). Destin films a spinning propeller with a phone and shows, line by line, why the blades bend. It's the lab above with a real camera, and exactly the distortion our global-shutter OV9281 avoids.</figcaption>
+  </figure>
+
+
+  <h3>Why black-and-white?</h3>
+  <div class="split">
+    <div class="prose">
+      <p>A photodiode only counts photons; it can't tell what color they are. A color sensor puts a tiny color filter over every pixel, in a pattern called a <span class="term">Bayer filter</span>: half the pixels green, a quarter red, a quarter blue. Each pixel only sees its one color, and the camera guesses the other two from the neighbors ("demosaicing").</p>
+      <p>That costs a color camera twice:</p>
+      <ul>
+        <li><strong>Less light.</strong> Each filter throws away roughly two-thirds of the light, so each pixel collects about a third as much. To get the same brightness you need a longer exposure (more blur) or more <span class="term">gain</span> (more noise).</li>
+        <li><strong>Softer edges.</strong> Guessing the missing colors smears detail across neighboring pixels, and sharp edges pick up false color fringes.</li>
+      </ul>
+      <p>AprilTags are black and white. Color adds nothing, so a <strong>mono</strong> sensor gets all the light and all the sharpness.</p>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Mono vs color sensor</h4></div>
+      <div class="tri">
+        <figure><canvas class="px" id="c-by0" width="32" height="32"></canvas><figcaption>Mono sensor</figcaption></figure>
+        <figure><canvas class="px" id="c-by1" width="32" height="32"></canvas><figcaption>Color sensor, raw (each pixel sees 1 color)</figcaption></figure>
+        <figure><canvas class="px" id="c-by2" width="32" height="32"></canvas><figcaption>Color, after demosaicing</figcaption></figure>
+      </div>
+      <div class="ctl" style="margin-top:14px"><label>Light level <output></output></label><input type="range" id="c-bylight" min="0.15" max="1" step="0.01" value="0.6"></div>
+      <p class="hint">A real tag corner, 32 × 32 sensor pixels. Same exposure for both sensors; the color sensor's image is brightened 3× to match, which also triples its noise. Look for the false colors along the edges.</p>
+    </div>
+  </div>
+
+  <h3>JPEG: small files, small costs</h3>
+  <p class="prose">JPEG doesn't store pixels. It cuts the frame into 8 × 8 blocks and stores each block as a recipe: "this much average brightness, plus this much of a gentle left-to-right fade, plus a little of this stripe pattern..." Fine patterns get rounded off first. The <strong>quality</strong> setting decides how hard it rounds. Try it on a real frame.</p>
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>JPEG quality vs size</h4></div>
+    <div class="jpeg-views">
+      <figure><canvas id="c-jpg" aria-label="A frame compressed with the chosen JPEG quality"></canvas><figcaption>The whole frame, compressed by this page</figcaption></figure>
+      <figure><canvas id="c-jpgz" width="96" height="96" aria-label="Zoom on a tag with the 8 by 8 block grid"></canvas><figcaption>Zoom on a tag, with the 8 × 8 blocks outlined</figcaption></figure>
+    </div>
+    <div class="ctl" style="margin-top:14px"><label>JPEG quality <output></output></label><input type="range" id="c-q" min="5" max="95" step="1" value="75"></div>
+    <div class="readout">
+      <div><small>Uncompressed</small><b>1,000 KB</b></div>
+      <div><small>JPEG (estimated)</small><b id="c-jkb"></b></div>
+      <div><small>Numbers kept</small><b id="c-jnz"></b></div>
+    </div>
+    <div class="sizebar"><i id="c-jbar"></i></div>
+    <p class="hint">A simplified JPEG: a real 8 × 8 DCT with the standard quantization tables, but the size is estimated, not a real file. Busy or noisy scenes need more bytes, and this frame (a PhotonVision test image, GPL-3.0, from another camera) is noisier than ours; the size is scaled to our 1280 × 800.</p>
+  </div>
+  <div class="callout spectrum"><h5>What we measured</h5><p>Our cameras choose their own JPEG quality. At 120 fps, one of our Thriftiest Cams averaged <strong>47.5 KB</strong> per frame at its normal USB allocation (1280 bytes per microframe). When we halved that allocation, it kept 120 fps and compressed harder instead: <strong>40.8 KB</strong> per frame. That may cost some tag range and precision, which we still have to measure. Blocky JPEG edges are also part of why our calibrations can't get below about 0.8 px of error (chapter 11).</p></div>
+
+  <h3>Wide lens or narrow lens?</h3>
+  <div class="split">
+    <div class="prose">
+      <p>The lens decides the trade-off between <strong>seeing a lot</strong> and <strong>seeing far</strong>. The sensor always has 1280 pixels across. A wide lens spreads them over a wide view, so each tag gets fewer pixels. A narrow (longer focal length) lens packs them into a small view: tags look bigger and can be read from farther away, but you see fewer of them and lose them when the robot turns.</p>
+      <p>The focal length in pixels is the lens's focal length divided by the pixel size. For ours: 2.1 mm ÷ 0.003 mm ≈ 700 px. Our calibration measured <strong>737 px</strong>, which is how our lens really behaves: about 2.2 mm (the catalog's 2.1 mm is a nominal value).</p>
+      <div class="callout pitfall"><h5>Change the lens, redo the calibration</h5><p>The lens is part of the camera's calibration (chapter 11). Swap it, or even bump its focus, and the old calibration is wrong.</p></div>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Field of view vs range</h4></div>
+      <div class="fovview"><canvas id="c-fov" aria-label="Top view of the camera's field of view, with the distance where tags stop being readable"></canvas></div>
+      <div class="ctl" style="margin-top:12px"><label>Lens focal length <output></output></label><input type="range" id="c-f" min="1.4" max="8" step="0.01" value="2.21"></div>
+      <div class="readout">
+        <div><small>Horizontal view</small><b id="c-hfov"></b></div>
+        <div><small>Focal length</small><b id="c-fpx"></b></div>
+        <div><small>Tag readable to</small><b id="c-range"></b></div>
+      </div>
+      <p class="hint">"Readable" uses the 2-pixels-per-square rule of thumb from chapter 02, for a face-on tag. OV9281 pixels are 3 µm. 2.21 mm matches our measured 737 px.</p>
+    </div>
+  </div>
+
+  <h3>Why USB, and why UVC?</h3>
+  <p class="prose">Our cameras speak <span class="term">UVC</span>, the USB Video Class: a standard that says how any USB camera describes itself and sends video. <span class="term">Linux</span> has one driver for all of them, <code>uvcvideo</code>, so a UVC camera works the moment it's plugged in, with no special software. The same standard defines the camera's settings, like exposure and brightness (chapter 04). Chapter 06 looks at the driver, and the <span class="term">patch</span> we made to it.</p>
+  <div class="flow reveal">
+    <div class="node"><b>Sensor</b>light → 10-bit pixels</div><div class="arrow">→</div>
+    <div class="node"><b>Bridge chip</b>JPEG, one per frame</div><div class="arrow">→</div>
+    <div class="node"><b>USB 2.0</b>UVC packets, 125 µs slices</div><div class="arrow">→</div>
+    <div class="node"><b>uvcvideo</b>Linux's camera driver</div><div class="arrow">→</div>
+    <div class="node"><b>PhotonVision</b>decode, then find tags</div>
+  </div>
+
+  <h3>Focus, then lock it</h3>
+  <div class="split">
+    <div class="prose">
+      <p>An M12 lens screws into its holder. Turning it moves the glass closer to or farther from the sensor, which changes what distance is sharp. A soft image blurs tag edges, lowers the decision margin, and makes corners jitter.</p>
+      <p>Our build adds a <strong>Focus</strong> card to the Camera page (<code>photonvision-34</code>). It scores sharpness using the "variance of the Laplacian": it measures how strongly brightness changes from each pixel to its neighbors. Sharp edges give big changes; blur smooths them away. It scores a 3 × 3 grid, so you can also catch a tilted lens.</p>
+      <ol>
+        <li>Point the camera at something detailed that stays still, at the distance you care about most.</li>
+        <li>Press Reset, turn the lens slowly past the sharpest point, then back until the center reads 100%.</li>
+        <li>Check the corners. Far below 100% means a tilted lens or a soft corner.</li>
+        <li><strong>Lock the lens</strong> with glue or silicone, then recalibrate. Vibration on a robot can turn a loose lens and spoil the calibration.</li>
+      </ol>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Focus the lens</h4></div>
+      <canvas id="c-focus" aria-label="Camera image that gets sharper or blurrier as you turn the lens"></canvas>
+      <div class="ctl" style="margin-top:12px"><label>Turn the lens <output></output></label><input type="range" id="c-lens" min="0" max="100" step="0.5" value="25"></div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn-sm" id="c-freset">Reset</button>
+        <label style="display:flex;gap:6px;align-items:center;font-size:.85rem;cursor:pointer"><input type="checkbox" id="c-tilt"> Tilted lens</label>
+        <span style="margin-left:auto;font:700 1.3rem var(--font-heading);color:#fff" id="c-fscore"></span>
+      </div>
+      <div class="focus-grid" id="c-fgrid"></div>
+      <p class="hint">Each cell: its sharpness against its own best since Reset, like our Focus card. The lab starts as if you'd already swept the lens once; press Reset to start fresh. Simplified blur model on a real frame (PhotonVision test image, GPL-3.0).</p>
+    </div>
+  </div>
+
+  <div class="deeper">
+    <a class="video" href="https://www.youtube.com/watch?v=dNVtMmLlnoE" target="_blank" rel="noopener">SmarterEveryDay: Rolling shutter explained (6:54)</a>
+    <a class="video" href="https://www.youtube.com/watch?v=LWxu4rkZBLw" target="_blank" rel="noopener">Computerphile: The Bayer filter (6:06)</a>
+    <a class="video" href="https://www.youtube.com/watch?v=Q2aEzeMDHMA" target="_blank" rel="noopener">Computerphile: JPEG and the discrete cosine transform (15:11)</a>
+  </div>
+
+  <div class="recap reveal">
+    <h5>Chapter 3 recap</h5>
+    <ul>
+      <li>The Thriftiest Cam: OV9281 sensor, 1280 × 800, mono, global shutter, 120 fps, USB 2.0, $50.</li>
+      <li>Light → lens (focus) → IR-cut filter → photodiodes (photons to electrons) → ADC (numbers) → JPEG → USB.</li>
+      <li>Global shutter: every pixel captures at the same instant, so moving tags aren't skewed.</li>
+      <li>Mono sensors get about 3× the light of color sensors, and sharper edges. Tags don't need color.</li>
+      <li>Wide lens = see more, narrow lens = see farther. Ours: 82° wide, 737 px focal length.</li>
+      <li>JPEG makes a 1 MB frame about 50 KB so it fits on USB 2.0. Focus the lens, lock it, then calibrate.</li>
+    </ul>
+  </div>
+</div>
