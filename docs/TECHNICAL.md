@@ -105,17 +105,19 @@ Settings shared by the scripts live in [config.env](../config.env).
 (WPILib 2027.0.0-alpha-6 on a **SystemCore**, vendordep `photonlib v2027.0.0-alpha-2`).
 The field is the **2026 Rebuilt AndyMark** layout, on the Jetson and in robot code.
 
-**Current compatibility limit.** Keep the robot on WPILib 2027.0.0-alpha-6 and
-PhotonLib v2027.0.0-alpha-2 while the CUDA fork and robot-network test remain on
-the 2026-era native bridge. WPILib 2027.0.0-alpha-7 is the next target, but no
-matching stable PhotonLib alpha-7 release was found. The release notes also say
-alpha-6 and earlier vendordeps do not work with alpha-7. The full order is in
+**Current compatibility limit.** The deployed robot project uses WPILib
+2027.0.0-alpha-6 and PhotonLib v2027.0.0-alpha-2. Keep those pins while the CUDA
+fork and robot-network test remain on the 2026-era native bridge. WPILib
+2027.0.0-alpha-7 is the migration target, but as of 2026-09-24 no PhotonLib
+alpha-7 tag was found. The release notes also say alpha-6 and earlier vendordeps
+do not work with alpha-7. The full order is in
 [WPILIB-2027-ALPHA-7.md](WPILIB-2027-ALPHA-7.md).
 
 The current Jetson build runs the `FRC-Team-4143/photonvision` fork
 (`d8c9e8e`, WPILib 2026.2.1) with 971's CUDA detector. The robot uses stock
-PhotonLib alpha-2. The source comparison in this section is the evidence for
-the current setup, not a claim that the old bridge works with alpha-7:
+PhotonLib alpha-2. The source comparisons below apply only to this current
+2026-era fork, WPILib alpha-6 robot project, and PhotonLib alpha-2 client. They
+do not clear the alpha-7 migration:
 
 - **Serde hashes match** (`PhotonPipelineResult` = `4b2ff16a964b5e2bf04be0c1454d91c4`,
   and all sub-messages). PhotonLib only throws on a hash mismatch; a different
@@ -124,9 +126,11 @@ the current setup, not a claim that the old bridge works with alpha-7:
   try `10.TE.AM.2` first, so SystemCore is `10.85.15.2`.
 - **Time sync:** the same UDP 5810 packet layout and microsecond timebase.
 
-> **Do not upgrade the robot's photonlib past the alpha-6 era.** PhotonVision `main`
-> after alpha-7 (`a6167b0`, 2026-09-17) renamed the timestamp fields, which changed the
-> hashes, and the robot would throw against this Jetson.
+> **Do not move the robot's PhotonLib to an alpha-7-era client while this Jetson
+> still emits the pre-alpha-7 result format.** PhotonVision PR [#2566](https://github.com/PhotonVision/photonvision/pull/2566),
+> merged as `a6167b049d7950b0d06d3e7a3ad0b14ad2d396db`, renamed the timestamp
+> fields and changed the serde hashes. That commit is later source evidence, not
+> a tagged PhotonLib alpha-7 release.
 
 Porting CUDA to PhotonVision source that uses WPILib 2027.0.0-alpha-7 is a
 separate PR. It needs a rebase of the PhotonVision patches, updated JNI headers,

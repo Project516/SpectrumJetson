@@ -61,13 +61,15 @@ flowchart LR
 | Game pieces | YOLO models on the GPU through TensorRT 10.3 (our backend), FUEL model by Team 2826 |
 | Robot side | Stock PhotonLib v2027.0.0-alpha-2 in `2026-FM-SystemCore`, team 8515 |
 
-**Why a 2026 PhotonVision works with 2027 robot code:** the CUDA version of PhotonVision only exists for 2026. We checked the source to confirm the two versions speak the same language:
+**Why the current 2026 PhotonVision fork works with the current 2027 robot code:** the CUDA version of PhotonVision only exists for 2026. We checked the source to confirm the current pair speaks the same language:
 
 - the messages have the same format (PhotonLib compares a hash of the message layout, and it matches exactly),
 - the NetworkTables protocol is the same,
 - time sync is the same.
 
-**Current compatibility limit.** Keep the robot on WPILib 2027.0.0-alpha-6 and PhotonLib v2027.0.0-alpha-2 until the CUDA port and robot-network test pass. WPILib 2027.0.0-alpha-7 is the target, but no matching tagged PhotonLib alpha-7 release was found. See [docs/WPILIB-2027-ALPHA-7.md](docs/WPILIB-2027-ALPHA-7.md).
+These checks apply to the current WPILib alpha-6 and PhotonLib alpha-2 pair. They do not clear the alpha-7 migration.
+
+**Current compatibility limit.** Keep the robot on WPILib 2027.0.0-alpha-6 and PhotonLib v2027.0.0-alpha-2 until the separate CUDA port and robot-network test pass. WPILib 2027.0.0-alpha-7 is the migration target. As of 2026-09-24, no PhotonLib alpha-7 tag was found, and the current alpha-2 client is built against WPILib alpha-6. See [docs/WPILIB-2027-ALPHA-7.md](docs/WPILIB-2027-ALPHA-7.md).
 
 ## Step 1: Flash JetPack onto the SSD
 
