@@ -34,8 +34,9 @@ Then open http://localhost:8347/.
 The AprilTags are real tag36h11 codes (from AprilRobotics/apriltag), checked pixel for pixel
 against the official tag images, so a phone app or PhotonVision can detect them off the screen.
 
-## Publishing on GitHub Pages (not done yet)
+## Publishing on GitHub Pages
 
-The simplest route: a GitHub Actions workflow that uploads `training/` with
-`actions/upload-pages-artifact` and deploys it with `actions/deploy-pages`, with Pages set to
-"GitHub Actions" in the repo settings.
+The site is published automatically to GitHub Pages at:
+https://spectrum3847.github.io/SpectrumJetson/
+
+A GitHub Actions workflow in `.github/workflows/deploy-pages.yml` uploads `training/` with `actions/upload-pages-artifact` and deploys it with `actions/deploy-pages` on every push to `main`.
