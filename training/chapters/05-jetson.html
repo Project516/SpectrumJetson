@@ -15,7 +15,7 @@
   #jetson .j-hot i { font-style: normal; font: 700 .66rem var(--mono); width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; }
   #jetson .j-hot.on { background: var(--accent); border-color: #fff; }
   #jetson .j-hot.on i { background: #fff; color: var(--p700); }
-  #jetson .j-hot.hide { opacity: 0; pointer-events: none; }
+  #jetson .j-hot.hide { opacity: 0; visibility: hidden; pointer-events: none; }
   #jetson .j-stage.narrow .j-hot:not(.on) span, #jetson .j-stage.free .j-hot:not(.on):not(:hover) span { display: none; }
   #jetson .j-stage.free .j-hot:not(.on):not(:hover) { padding: 3px; }
   #jetson .j-stage.narrow .j-hot:not(.on) { padding: 3px; }
@@ -106,6 +106,7 @@
     <p class="lede">The Jetson Orin Nano Super fits in your hand and runs on about 10 watts, yet it can do 67 trillion AI math operations a second. Let's take one apart and see what's inside.</p>
   </div>
 
+  <div class="full">
   <div class="split">
     <div class="prose">
       <h3 style="margin-top:0">What is a single-board computer?</h3>
@@ -124,8 +125,14 @@
     <div class="stat"><b>67<small>TOPS</small></b><span>AI performance in <span class="term">TOPS</span> (trillions of 8-bit operations a second, sparse)</span></div>
   </div>
 
+  </div>
+
+  <div class="short prose">
+    <p>A single-board computer squeezes a whole computer onto one small board. NVIDIA's Jetson adds a big <span class="term">GPU</span> with 1,024 cores, which is brilliant at looking at pictures. Ours is a small computer <em>module</em> on a <em>carrier board</em> full of ports, with a fan on top. It costs $249 and uses under 10 W.</p>
+  </div>
+
   <h3>Take it apart</h3>
-  <p class="prose">This is NVIDIA's own 3D CAD model of the developer kit. Scroll, and it comes apart one layer at a time, from the fan on top to the cards hidden underneath. When you get to the end, you can spin it around yourself.</p>
+  <p class="prose full">This is NVIDIA's own 3D CAD model of the developer kit. Scroll, and it comes apart one layer at a time, from the fan on top to the cards hidden underneath. When you get to the end, you can spin it around yourself.</p>
 
   <div class="scrolly" id="j-scrolly">
     <div class="vis">
@@ -144,38 +151,39 @@
     </div>
     <div class="steps">
       <div class="step"><div class="box">
-        <span class="kicker">Step 1 · The whole kit</span>
-        <h4>About 10 × 8 cm</h4>
-        <p>From the top you see the black fan and heatsink. Along the front edge are the ports: power, DisplayPort, four USB, Ethernet and USB-C. Everything sits on a plastic stand.</p>
-        <p>It's a <em>developer kit</em>: a board for trying things out. Many robots use it as is, and so do we.</p>
+        <span class="kicker full">Step 1 · The whole kit</span>
+        <h4>About 10 × 8 cm</h4><p class="short">Fan on top, ports along the front.</p>
+        <p class="full">From the top you see the black fan and heatsink. Along the front edge are the ports: power, DisplayPort, four USB, Ethernet and USB-C. Everything sits on a plastic stand.</p>
+        <p class="full">It's a <em>developer kit</em>: a board for trying things out. Many robots use it as is, and so do we.</p>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 2 · Cooling</span>
-        <h4>Heatsink and fan</h4>
-        <p>Every computer turns its electricity into heat. The metal <strong>heatsink</strong> soaks up the chip's heat and spreads it into thin fins, and the <strong>fan</strong> blows air through them. A leaf spring presses the heatsink onto the chip.</p>
-        <p>The chip slows itself down at 99 °C to protect itself (<em>throttling</em>). We run the fan at full speed all the time: it took our bench Jetson from 56 °C to <strong>43 °C</strong>.</p>
+        <span class="kicker full">Step 2 · Cooling</span>
+        <h4>Heatsink and fan</h4><p class="short">They carry the chip's heat away. Our fan runs at full speed.</p>
+        <p class="full">Every computer turns its electricity into heat. The metal <strong>heatsink</strong> soaks up the chip's heat and spreads it into thin fins, and the <strong>fan</strong> blows air through them. A leaf spring presses the heatsink onto the chip.</p>
+        <p class="full">The chip slows itself down at 99 °C to protect itself (<em>throttling</em>). We run the fan at full speed all the time: it took our bench Jetson from 56 °C to <strong>43 °C</strong>.</p>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 3 · The brain</span>
-        <h4>The Orin Nano module</h4>
-        <p>This small board, 69.6 × 45 mm, is the actual computer. It holds the <span class="term">SoC</span> (one chip with the CPU, GPU and more) and 8 GB of memory. Everything else in the kit just feeds it power and connects it to the world.</p>
-        <p>NVIDIA's CAD shows it as a simple block, so you don't see the chips. We'll look inside the SoC after the tour.</p>
+        <span class="kicker full">Step 3 · The brain</span>
+        <h4>The Orin Nano module</h4><p class="short">The actual computer: the SoC chip and 8 GB of memory.</p>
+        <p class="full">This small board, 69.6 × 45 mm, is the actual computer. It holds the <span class="term">SoC</span> (one chip with the CPU, GPU and more) and 8 GB of memory. Everything else in the kit just feeds it power and connects it to the world.</p>
+        <p class="full">NVIDIA's CAD shows it as a simple block, so you don't see the chips. We'll look inside the SoC after the tour.</p>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 4 · The socket</span>
-        <h4>Plugs in like laptop RAM</h4>
-        <p>The module's gold edge has 260 contacts, and it slides into a 260-pin <span class="term">SO-DIMM</span> socket, the same shape laptops use for memory sticks. Two screws hold it down.</p>
-        <p>That makes the module swappable: the same carrier could take a faster Orin NX module. Power, PCIe lanes, USB, Ethernet and camera signals all pass through those contacts.</p>
+        <span class="kicker full">Step 4 · The socket</span>
+        <h4>Plugs in like laptop RAM</h4><p class="short">It plugs in like a laptop's memory stick.</p>
+        <p class="full">The module's gold edge has 260 contacts, and it slides into a 260-pin <span class="term">SO-DIMM</span> socket, the same shape laptops use for memory sticks. Two screws hold it down.</p>
+        <p class="full">That makes the module swappable: the same carrier could take a faster Orin NX module. Power, PCIe lanes, USB, Ethernet and camera signals all pass through those contacts.</p>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 5 · The carrier board</span>
-        <h4>Power and ports (P3768)</h4>
-        <p>The big board underneath is the <span class="term">carrier board</span>. It turns the power from the barrel jack into the voltages the module needs, and wires the module's signals out to real connectors. The tiny parts scattered across it are power regulators, the USB hub chip, LEDs and support chips.</p>
+        <span class="kicker full">Step 5 · The carrier board</span>
+        <h4>Power and ports (P3768)</h4><p class="short">It feeds the module power and wires it to real ports.</p>
+        <p class="full">The big board underneath is the <span class="term">carrier board</span>. It turns the power from the barrel jack into the voltages the module needs, and wires the module's signals out to real connectors. The tiny parts scattered across it are power regulators, the USB hub chip, LEDs and support chips.</p>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 6 · Ports</span>
+        <span class="kicker full">Step 6 · Ports</span>
         <h4>What plugs in where</h4>
-        <ul>
+        <p class="short">USB-A for cameras, Ethernet to the robot, USB-C, DisplayPort, power.</p>
+        <ul class="full">
           <li><b>4× USB 3.2 Type-A</b> (10 Gbps): our cameras. All four hang off one hub.</li>
           <li><b>Gigabit Ethernet</b>: the cable to the robot, static IP <code>10.85.15.15</code>.</li>
           <li><b>USB-C</b> (data only): flashing and backups from a laptop.</li>
@@ -184,32 +192,33 @@
         </ul>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 7 · For tinkering</span>
-        <h4>Camera connectors and GPIO pins</h4>
-        <p>On the left edge are two <strong>MIPI CSI-2</strong> connectors for ribbon-cable cameras. We use USB cameras instead, so they're empty.</p>
-        <p>On the right is the <strong>40-pin header</strong>: general-purpose pins, laid out like a Raspberry Pi's, for LEDs, sensors and buttons. A smaller 12-pin <strong>button header</strong> hides under the module; jumping two of its pins puts the Jetson in recovery mode for flashing (chapter 06).</p>
+        <span class="kicker full">Step 7 · For tinkering</span>
+        <h4>Camera connectors and GPIO pins</h4><p class="short">Ribbon-camera connectors and a 40-pin header for sensors.</p>
+        <p class="full">On the left edge are two <strong>MIPI CSI-2</strong> connectors for ribbon-cable cameras. We use USB cameras instead, so they're empty.</p>
+        <p class="full">On the right is the <strong>40-pin header</strong>: general-purpose pins, laid out like a Raspberry Pi's, for LEDs, sensors and buttons. A smaller 12-pin <strong>button header</strong> hides under the module; jumping two of its pins puts the Jetson in recovery mode for flashing (chapter 06).</p>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 8 · Underneath</span>
-        <h4>The SSD: where Linux lives</h4>
-        <p>Flip the board over. The small card is an <span class="term">NVMe</span> <span class="term">SSD</span>, plugged into an <span class="term">M.2</span> Key M slot. Ours holds 256 GB, and the Jetson boots Linux from it. We don't use an SD card at all: the SSD is much faster and tougher.</p>
-        <p>There are two Key M slots: a long one (2280) with 4 <span class="term">PCIe</span> lanes, where our SSD goes, and a short one (2230) with 2 lanes, which is empty. (The CAD draws a short 2230 drive.)</p>
+        <span class="kicker full">Step 8 · Underneath</span>
+        <h4>The SSD: where Linux lives</h4><p class="short">Underneath, a 256 GB SSD holds Linux.</p>
+        <p class="full">Flip the board over. The small card is an <span class="term">NVMe</span> <span class="term">SSD</span>, plugged into an <span class="term">M.2</span> Key M slot. Ours holds 256 GB, and the Jetson boots Linux from it. We don't use an SD card at all: the SSD is much faster and tougher.</p>
+        <p class="full">There are two Key M slots: a long one (2280) with 4 <span class="term">PCIe</span> lanes, where our SSD goes, and a short one (2230) with 2 lanes, which is empty. (The CAD draws a short 2230 drive.)</p>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 9 · Underneath</span>
-        <h4>Wi-Fi and Bluetooth</h4>
-        <p>The second card is Wi-Fi and Bluetooth, in the <strong>M.2 Key E</strong> slot, with two flat antennas. We use Wi-Fi in the shop and switch it off for events.</p>
-        <p>A surprise we measured: the card's Bluetooth talks over <strong>USB 2.0</strong>, on the same USB 2.0 bus as all our cameras. More on that in the bus diagram below.</p>
+        <span class="kicker full">Step 9 · Underneath</span>
+        <h4>Wi-Fi and Bluetooth</h4><p class="short">Wi-Fi and Bluetooth, off at events.</p>
+        <p class="full">The second card is Wi-Fi and Bluetooth, in the <strong>M.2 Key E</strong> slot, with two flat antennas. We use Wi-Fi in the shop and switch it off for events.</p>
+        <p class="full">A surprise we measured: the card's Bluetooth talks over <strong>USB 2.0</strong>, on the same USB 2.0 bus as all our cameras (<a href="#speed">chapter 10</a> explains why that matters).</p>
       </div></div>
       <div class="step"><div class="box">
-        <span class="kicker">Step 10 · Your turn</span>
-        <h4>Back together</h4>
-        <p>That's the whole kit: a module that thinks, a carrier board that connects, a heatsink that cools, and storage underneath.</p>
-        <p>Press <b>🖐 Explore</b> to drag it around, zoom in, and click any label.</p>
+        <span class="kicker full">Step 10 · Your turn</span>
+        <h4>Back together</h4><p class="short">Press 🖐 Explore to spin it yourself.</p>
+        <p class="full">That's the whole kit: a module that thinks, a carrier board that connects, a heatsink that cools, and storage underneath.</p>
+        <p class="full">Press <b>🖐 Explore</b> to drag it around, zoom in, and click any label.</p>
       </div></div>
     </div>
   </div>
 
+  <div class="full">
   <h3>Inside the SoC: one chip, many workers</h3>
   <div class="split top">
     <div class="prose">
@@ -224,6 +233,7 @@
     </div>
   </div>
 
+  <div class="full">
   <div class="lab reveal" id="j-bus">
     <div class="lab-head"><span class="tag">Lab</span><h4>Who talks to whom</h4></div>
     <p style="margin-top:-6px">Every part of the Jetson connects through a few shared roads. Pick a road to light it up, or click any box.</p>
@@ -242,8 +252,11 @@
     <p class="hint">Simplified: real chips have more blocks and links. The USB wiring (one controller, one USB 2.0 bus with three branches) is what we measured on our Jetson.</p>
   </div>
 
-  <div class="callout spectrum"><h5>What we found: there is only one USB 2.0 bus</h5><p>We assumed the USB-C port would give our cameras a second road. It doesn't. On 2026-09-24 we tested it by asking cameras to reserve bandwidth on different ports: the four USB-A ports, the USB-C port and the Wi-Fi card's Bluetooth all share <strong>one USB 2.0 budget</strong> of about 6700 bytes every 125 µs. USB 3 is a separate bus with its own budget, but our $50 cameras are USB 2.0. Chapter 06 shows the driver patch that fits more cameras into it, and chapter 10 the whole bandwidth story.</p></div>
+  </div>
 
+  <div class="callout spectrum"><h5>What we found: there is only one USB 2.0 bus</h5><p>The four USB-A ports, the USB-C port and the Wi-Fi card's Bluetooth all share <strong>one USB 2.0 bus</strong>, so every camera shares one bandwidth budget. That decides how many cameras fit: <a href="#speed">chapter 10</a> tells that story.</p></div>
+
+  <div class="full">
   <div class="usbtree reveal">
     <figure class="tout"><pre class="tb"><span class="pr">$</span> lsusb -t   <span class="cm"># the USB tree (each camera's 2nd line, "If 1", hidden)</span>
 /:  Bus 02.Port 1: Dev 1, Class=root_hub, Driver=tegra-xusb/4p, 10000M <span class="n">1</span>
@@ -265,6 +278,8 @@
         <li>Port 3 is the Wi-Fi card's Bluetooth (<code>rtk_btusb</code>), on the very same bus. The USB-C port (port 1) has nothing plugged in.</li>
       </ol>
     </div>
+  </div>
+
   </div>
 
   <details class="deep"><summary>The full spec sheet, checked against NVIDIA</summary><div>
@@ -292,6 +307,7 @@
     </div>
   </div></details>
 
+  <div class="full">
   <h3>Power modes: what "Super" means</h3>
   <div class="split">
     <div class="prose">
@@ -385,12 +401,24 @@ NV Power Mode: MAXN_SUPER
     <a class="video" href="https://www.youtube.com/watch?v=S9L2WGf1KrM" target="_blank" rel="noopener">NVIDIA: Introducing Jetson Orin Nano Super (2:04)</a>
   </div>
 
-  <div class="recap reveal">
+  </div>
+
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Recap</h5>
+    <ul>
+      <li>A small <b>module</b> (the computer) plugs into a <b>carrier board</b> (power and ports).</li>
+      <li>Its <b>SoC</b> puts 6 CPU cores, a 1,024-core GPU and JPEG engines on one chip, sharing 8 GB of RAM.</li>
+      <li>It boots Linux from an SSD and uses under 10 W with four cameras.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
     <h5>Chapter 5 recap</h5>
     <ul>
       <li>The devkit is a small <b>module</b> (the computer) plugged into a <b>carrier board</b> (power and ports), with a heatsink and fan on top and an NVMe SSD and Wi-Fi card underneath.</li>
       <li>The <b>SoC</b> puts 6 CPU cores, a 1,024-core GPU, JPEG decoders and the memory controller on one chip. CPU and GPU share 8 GB of RAM at 102 GB/s.</li>
-      <li>We run <b>MAXN SUPER</b> with clocks locked and the fan at full speed. About 9 W with two cameras.</li>
+      <li>We run <b>MAXN SUPER</b> with clocks locked and the fan at full speed: under 10 W with four cameras.</li>
       <li>All USB 2.0 ports share <b>one bus</b>: four USB-A, USB-C and the Bluetooth. That shapes how many cameras fit.</li>
     </ul>
   </div>

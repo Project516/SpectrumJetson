@@ -57,6 +57,7 @@
   #apriltags .hgrid span.w { background: #fff; }
   #apriltags .hgrid span.flip { box-shadow: inset 0 0 0 3px #f59e0b; }
   #apriltags .hgrid span.bad { box-shadow: inset 0 0 0 3px #f43f5e; }
+  body.mode-short #apriltags .split-dist { grid-template-columns: 1fr; }
   #apriltags .ours { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 10px; padding: 14px 14px 0; }
   #apriltags .ours canvas { width: 100%; height: auto; border-radius: 8px; }
   @media (max-width: 600px) { #apriltags .ours { grid-template-columns: 1fr; } }
@@ -87,7 +88,14 @@
     <p class="lede">An AprilTag looks like a chunky QR code. It's really a carefully designed landmark: easy to spot from across the field, hard to mistake for anything else, and shaped so a computer can tell exactly where it is in 3D.</p>
   </div>
 
-  <figure class="fig reveal" style="margin:0 0 40px">
+  <div class="prose short">
+    <p>An <span class="term">AprilTag</span> is a printed black-and-white square that a computer can find in a camera picture fast, identify by its ID, and pinpoint by its four corners. FRC uses the <strong>tag36h11</strong> family: a 6.5 inch black square with a 6 × 6 grid of squares inside that spells the ID. The tags are bolted to the field at <strong>published positions</strong> (the <span class="term">field layout</span> file), so when the robot sees tag 26 it knows exactly where tag 26 is, and can work backwards to where <em>it</em> is.</p>
+    <p>Unlike a QR code, a tag has only 36 big squares, so it stays readable from about 6 m away with our camera (you need roughly 2 pixels per square). Any two codes differ in at least 11 squares, so a few misread squares never turn one tag into another. The detector finds dark four-sided shapes, reads the grid, and turns the 4 corners into a 3D position.</p>
+  </div>
+
+  <div class="full">
+
+  <figure class="fig reveal full" style="margin:0 0 40px">
     <canvas id="a-open" width="1600" height="747" aria-label="The 2026 blue outpost and tower with FUEL balls; four AprilTags outlined and labeled 29, 30, 31 and 32"></canvas>
     <figcaption>The 2026 field (REBUILT) through a camera: the blue outpost holds tags 29 and 30, the tower beside it tags 31 and 32. The green outlines are real detections: the AprilTag library found all four in this frame. (PhotonVision test image, GPL-3.0.)</figcaption>
   </figure>
@@ -101,16 +109,19 @@
 
     </div>
     <div><div class="callout idea"><h5>The big idea</h5><p>If you know where a landmark is, and you can measure where it appears in your camera, you can work backwards to where <em>you</em> are. That's the whole trick of this course, done 120 times a second.</p></div>
-      <div class="callout spectrum"><h5>Our layout</h5><p>Events use either a welded field or an AndyMark field, and the tags sit a few centimeters differently on each. Our robot uses the <strong>2026 Rebuilt AndyMark</strong> layout, and the robot code must use the same file as PhotonVision.</p></div>
+      <div class="callout spectrum full"><h5>Our layout</h5><p>Events use either a welded field or an AndyMark field, and the tags sit a few centimeters differently on each. Our robot uses the <strong>2026 Rebuilt AndyMark</strong> layout, and the robot code must use the same file as PhotonVision.</p></div>
     </div>
   </div>
-    <figure class="fig fieldmap reveal" style="margin:0 0 30px">
+  </div>
+    <figure class="fig fieldmap reveal" style="margin:30px 0">
       <svg id="a-field" viewBox="0 0 2059 980" role="img" aria-label="Top-down view of the 2026 FRC field, REBUILT, with its hubs, bumps, trenches, towers, depots and outposts, and the 32 AprilTag positions; tap a tag to see its layout entry"></svg>
       <div class="fm-foot"><pre class="json" id="a-json"></pre><figcaption>The 2026 FRC field, REBUILT, seen from above: a render of <em>FIRST</em>'s official field CAD (the welded field; the AndyMark field our robot uses differs by a few cm). The 32 tags are drawn at their AndyMark layout positions, in meters from the blue corner; the amber arrow shows which way each tag faces. Tap one.</figcaption></div>
     </figure>
 
+  <div class="full">
+
   <h3>Why not just use a QR code?</h3>
-  <div class="split top">
+  <div class="split top full">
     <div class="prose">
       <p>A QR code is built to hold a lot of data (a whole web address) and to be read by a phone held a few inches away. A robot has the opposite problem. It needs to read a tiny, tilted, blurry tag from across the field, dozens of times a second, and it only needs one small number. So an AprilTag makes different trade-offs:</p>
       <ul>
@@ -126,7 +137,7 @@
     </div>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Anatomy of a tag</h4></div>
     <div class="anat">
       <div>
@@ -173,17 +184,17 @@
     <p class="hint">Simplified: the tag is face-on and centered, and every pixel averages the light that falls on it. Real images also have lens blur, JPEG blocks and motion blur, which make things worse.</p>
   </div>
 
-  <div class="split top">
+  <div class="split top split-dist full">
     <div class="prose">
       <h4 style="margin-top:0">The rule of thumb: about 2 pixels per square</h4>
       <p>To tell whether a square is black or white, the detector samples the middle of it. If a square is only 1 pixel wide, that pixel usually straddles two squares and comes out gray, and the code turns to mush. With about <strong>2 or more pixels per square</strong>, most squares have a "clean" pixel in the middle.</p>
       <p>An AprilTag has 8 squares across its black part (6 data + 2 border), so each is 20.6 mm. A same-size QR code with 25 modules has squares of only 6.6 mm. That's why the tag stays readable about <strong>3 times farther away</strong>.</p>
     </div>
-    <div class="callout spectrum" style="margin-top:0"><h5>What we measured</h5><p>We took 40 real frames of tag 3, shrank them to smaller and smaller sizes, re-compressed them with the camera's own JPEG settings, and ran our real detector on them. The tag was found in <strong>85% of frames at 20 pixels wide</strong> (about 6 m face-on), 52% at 18 px, and only 2% at 14 px.</p><p>20 px is 2.5 pixels per square, so the rule of thumb holds. Our GPU detector looks for tag outlines on a half-size image to save time, which costs some range: searching at full size found 98% at 12 px (about 10 m). Real far-away tags are blurrier than shrunk ones, so real ranges are a bit shorter.</p></div>
+    <div class="callout spectrum full" style="margin-top:0"><h5>What we measured</h5><p>We took 40 real frames of tag 3, shrank them to smaller and smaller sizes, re-compressed them with the camera's own JPEG settings, and ran our real detector on them. The tag was found in <strong>85% of frames at 20 pixels wide</strong> (about 6 m face-on), 52% at 18 px, and only 2% at 14 px.</p><p>20 px is 2.5 pixels per square, so the rule of thumb holds. Our GPU detector looks for tag outlines on a half-size image to save time, which costs some range: searching at full size found 98% at 12 px (about 10 m). Real far-away tags are blurrier than shrunk ones, so real ranges are a bit shorter.</p></div>
   </div>
 
   <h3>36h11: codes that can't be confused</h3>
-  <div class="split top">
+  <div class="split top full">
     <div class="prose">
       <p>The name <strong>tag36h11</strong> is a spec sheet: <strong>36</strong> data bits, and a minimum <span class="term">Hamming distance</span> of <strong>11</strong>. Hamming distance just means "how many squares are different". Any two tags in the family differ in at least 11 of their 36 squares.</p>
       <p>Why does that matter? A bit can be misread: glare on one square, a shadow on another. If two tags differed in only one square, a single mistake would turn tag 7 into tag 8, and the robot would think it's somewhere else entirely. With 11 squares between every pair of codes, a few mistakes leave the pattern much closer to the right tag than to any other one, or close to no tag at all.</p>
@@ -192,7 +203,7 @@
     <div class="callout analogy" style="margin-top:0"><h5>Analogy</h5><p>Imagine phone numbers chosen so any two differ in at least 5 of their 10 digits. Misdial one digit and you won't reach a stranger; the number you dialed doesn't belong to anybody, and you can tell which number you meant. The full tag36h11 family has only <strong>587</strong> codes out of 68 billion possible 36-bit patterns, which is what buys that safety.</p></div>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Flip the bits: how wrong can a tag be?</h4></div>
     <div class="ham">
       <div>
@@ -219,13 +230,11 @@
     </div>
   </div>
 
-  <div class="callout spectrum"><h5>What we run</h5><p>Our detector library is set up to repair at most <strong>1</strong> wrong square (<code>apriltag_detector_add_family_bits(td, family, 1)</code> in <code>detector/GpuDetectorJNI.cc</code>). PhotonVision keeps only tags read with <strong>0</strong> wrong squares by default (its hamming setting). Because every code is 11 squares from every other, a random pattern of shadows almost never lines up perfectly with a real tag. That's why we can also run a low <strong>decision margin cutoff of 15</strong> (explained below) without seeing fake tags.</p></div>
-
-  <div class="split top">
+  <div class="split top full">
     <div class="prose">
       <h4 style="margin-top:0">A real misread</h4>
       <p>This happens on real fields. In this frame from the 2024 field, the AprilTag library read tag 7 perfectly, but read tag 6 with <strong>2 wrong squares</strong> (and a low decision margin of 32.5). The library was allowed to fix up to 2, so it still reported tag 6.</p>
-      <p>Our system is stricter. Our detector would only repair 1 square, and PhotonVision's hamming 0 setting would drop even that. We'd simply skip tag 6 in this frame and use the next one, 8 ms later. Missing one frame is cheap; trusting a bad reading is not.</p>
+      <p>Our system is stricter. Our detector library repairs at most 1 square (<code>apriltag_detector_add_family_bits(td, family, 1)</code> in <code>detector/GpuDetectorJNI.cc</code>), and PhotonVision keeps only tags read with 0 wrong squares (its hamming setting). We'd simply skip tag 6 in this frame and use the next one, 8 ms later. Missing one frame is cheap; trusting a bad reading is not.</p>
     </div>
     <div class="fig" style="padding:14px">
       <div class="twin"><canvas id="a-ham7" aria-label="Tag 7, read with 0 wrong squares"></canvas><canvas id="a-ham6" aria-label="Tag 6, read with 2 wrong squares"></canvas></div>
@@ -234,14 +243,14 @@
   </div>
 
   <h3>How the detector finds a tag, step by step</h3>
-  <p class="prose">Here's the real process, run live in your browser on a real frame from a robot camera on the 2024 field. Every image is actually computed by the step it describes, except the line fitting in step 4, where we use the corners the real AprilTag library found. Scroll through it.</p>
+  <p class="prose">Here's the real process, run live in your browser on a real frame from a robot camera on the 2024 field. Scroll through it.<span class="full"> Every image is computed by the step it describes, except the line fitting in step 4, where we use the corners the real AprilTag library found.</span></p>
 
   <div class="scrolly" id="a-scrolly">
     <div class="vis"><figure><canvas id="a-det" width="1280" height="720" aria-label="Detection pipeline stages on a real robot camera frame with two AprilTags"></canvas><figcaption id="a-detcap">A real frame from a robot camera on the 2024 field.</figcaption></figure></div>
     <div class="steps">
-      <div class="step"><div class="box"><span class="stage-label">Step 1 · Grayscale frame</span><h4>Start with brightness only</h4><p>The detector only cares how bright each pixel is, 0 (black) to 255 (white). Our cameras are black-and-white already, so there's no color to throw away (this camera was a color one, so we converted it).</p><p>Two tags sit on the 2024 Speaker. Everything else, the logos, the scoreboard, the lights and the diamond plate, is stuff the detector has to ignore.</p></div></div>
-      <div class="step"><div class="box"><span class="stage-label">Step 2 · Adaptive threshold <span class="gpu">GPU</span></span><h4>Every pixel becomes black or white</h4><p>First the frame is shrunk to half size, which is plenty for finding outlines and 4 times less work. One fixed cut-off ("brighter than 128 is white") fails when the lighting is uneven, so the image is cut into 4 × 4 pixel tiles. Each tile finds its darkest and brightest pixel (also looking at its neighbors), and its pixels are called white if they're above the halfway point.</p><p>Tiles where dark and bright are too close together, like a plain wall, can't hold a tag edge. They're marked <span style="color:#8b5cf6;font-weight:700">"skip"</span> (purple). Our detector sets this "too close" limit to 20 brightness levels, which makes it about 30–40% faster.</p></div></div>
-      <div class="step"><div class="box"><span class="stage-label">Step 3 · Connected blobs <span class="gpu">GPU</span></span><h4>Group touching pixels into blobs</h4><p>Neighboring pixels of the same color are joined into one blob, using a method called union-find. Each color here is a separate blob. A tag's black border becomes one big ring-shaped blob, with the white area around it as another.</p><p>On the GPU, thousands of threads each look at a few pixels at once and merge their groups.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 1 · Grayscale frame</span><h4>Start with brightness only</h4><p>The detector only cares how bright each pixel is, 0 (black) to 255 (white). Our cameras are black-and-white already, so there's no color to throw away (this camera was a color one, so we converted it).</p><p class="full">Two tags sit on the 2024 Speaker. Everything else, the logos, the scoreboard, the lights and the diamond plate, is stuff the detector has to ignore.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 2 · Adaptive threshold <span class="gpu">GPU</span></span><h4>Every pixel becomes black or white</h4><p>First the frame is shrunk to half size, which is plenty for finding outlines and 4 times less work. One fixed cut-off ("brighter than 128 is white") fails when the lighting is uneven, so the image is cut into 4 × 4 pixel tiles. Each tile finds its darkest and brightest pixel (also looking at its neighbors), and its pixels are called white if they're above the halfway point.</p><p class="full">Tiles where dark and bright are too close together, like a plain wall, can't hold a tag edge. They're marked <span style="color:#8b5cf6;font-weight:700">"skip"</span> (purple). Our detector sets this "too close" limit to 20 brightness levels, which makes it about 30–40% faster.</p></div></div>
+      <div class="step"><div class="box"><span class="stage-label">Step 3 · Connected blobs <span class="gpu">GPU</span></span><h4>Group touching pixels into blobs</h4><p>Neighboring pixels of the same color are joined into one blob, using a method called union-find. Each color here is a separate blob. A tag's black border becomes one big ring-shaped blob, with the white area around it as another.</p><p class="full">On the GPU, thousands of threads each look at a few pixels at once and merge their groups.</p></div></div>
       <div class="step"><div class="box"><span class="stage-label">Step 4 · Edges and quads <span class="gpu">GPU</span></span><h4>Find black–white boundaries, fit four lines</h4><p>Wherever a black blob touches a white blob, the boundary pixels are collected (green). The detector then fits straight lines through each boundary and keeps shapes made of exactly four good lines: <strong><span class="term">quad</span>s</strong>. Most boundaries (the clutter) don't make a clean quad and are thrown out.</p><p class="small muted">We didn't rebuild the line fitting here: the amber quads are the ones the real AprilTag library found in this frame.</p></div></div>
       <div class="step"><div class="box"><span class="stage-label">Step 5 · Sample the grid <span class="gpu cpu">CPU</span></span><h4>Read the squares through the tilt</h4><p>Now the detector goes back to the <strong>full-size</strong> image. A tilted tag looks like a squashed four-sided shape. Using its four corners, the detector works out where each of the 8 × 8 squares should be (a <span class="term">homography</span>) and samples the brightness at each square's center. Green dots read white, red dots read black.</p></div></div>
       <div class="step"><div class="box"><span class="stage-label">Step 6 · Decode <span class="gpu cpu">CPU</span></span><h4>Match against the code list</h4><p>The 36 samples become 36 bits, compared against every code in all 4 rotations. An exact match gives the <strong>ID</strong>, which way up the tag is, and the four corners in order (numbered from the tag's own top-left). The labels show what this page's decoder read from the pixels: tags 4 and 3, 0 wrong squares, and the decision margin (explained below).</p></div></div>
@@ -249,12 +258,12 @@
     </div>
   </div>
 
-  <figure class="fig reveal" style="margin:30px 0">
+  <figure class="fig reveal full" style="margin:30px 0">
     <div class="ours"><canvas id="a-ours" aria-label="A real frame from our TopLeft Thriftiest Cam: tag 3 leaning against a wall, outlined by our detector"></canvas><canvas id="a-ours-zoom" aria-label="Zoom on tag 3 with its four detected corners"></canvas></div>
     <figcaption>What our camera actually sees: a real frame from our TopLeft Thriftiest Cam (Sept 24, 2026), exactly as the detector gets it, 1280 × 800 in black and white. Tag 3 is about 0.8 m away and 151 px wide. Our CUDA detector found it with 0 wrong squares and a decision margin of <strong>90</strong>; the red dots are its four corners.</figcaption>
   </figure>
 
-  <div class="callout idea"><h5>Why a GPU?</h5><p>Steps 2–4 do the same small job for every one of a million pixels, and each pixel barely depends on the others. That's perfect work for a <span class="term">GPU</span>, which has 1,024 small cores that all work at once. Our detector, written by Austin Schuh of FRC 971, runs those steps on the Jetson's GPU in <span class="term">CUDA</span>, then the <span class="term">CPU</span> decodes the few quads that survive. All of it takes about 2 ms per frame. Chapter 08 shows how.</p></div>
+  <p class="prose">Steps 2–4 do the same small job for every pixel, so our detector (by Austin Schuh of FRC 971) runs them on the Jetson's <span class="term">GPU</span>, thousands at once; the whole detection takes about 2 ms a frame. <a href="#cuda">Chapter 08</a> shows how.</p>
 
   <details class="deep"><summary>The detector's real settings</summary><div>
     <ul>
@@ -267,16 +276,16 @@
 
   <h3>Decision margin: how sure is the reading?</h3>
     <div class="prose">
-      <p>Reading a square isn't a yes-or-no thing to the camera. It measures a brightness, and the detector decides which side of a threshold it's on. A square that reads 240 when the threshold is 128 is clearly white. One that reads 131 is barely white.</p>
-      <p>The <span class="term" data-def="How clearly a tag's squares read: the smaller of how far its white squares average above the threshold and how far its black squares average below it, in brightness levels. Higher is more trustworthy.">decision margin</span> puts a number on that. For one tag, the detector works out:</p>
-      <ul>
+      <p class="full">Reading a square isn't a yes-or-no thing to the camera. It measures a brightness, and the detector decides which side of a threshold it's on. A square that reads 240 when the threshold is 128 is clearly white. One that reads 131 is barely white.</p>
+      <p class="full">The <span class="term" data-def="How clearly a tag's squares read: the smaller of how far its white squares average above the threshold and how far its black squares average below it, in brightness levels. Higher is more trustworthy.">decision margin</span> puts a number on that. For one tag, the detector works out:</p>
+      <ul class="full">
         <li>how far, on average, the white squares are <em>above</em> the threshold,</li>
         <li>how far, on average, the black squares are <em>below</em> it,</li>
       </ul>
-      <p>and reports the <strong>smaller</strong> of the two. A big margin means strong contrast between the tag's black and white. A small margin means a dim, washed-out or blurry tag, or a random pattern that only looks like one.</p>
-      <p>PhotonVision throws away tags below a cutoff (35 by default). Try the lab: dim the light and watch the margin fall.</p>
+      <p class="full">and reports the <strong>smaller</strong> of the two. A big margin means strong contrast between the tag's black and white. A small margin means a dim, washed-out or blurry tag, or a random pattern that only looks like one.</p>
+      <p class="full">PhotonVision throws away tags below a cutoff (35 by default).<span> Try the lab: dim the light and watch the margin fall.</span></p>
     </div>
-    <div class="lab">
+    <div class="lab full">
       <div class="lab-head"><span class="tag">Lab</span><h4>Decision margin</h4></div>
       <div class="mrow">
         <canvas class="mt" id="a-mtag" width="180" height="180"></canvas>
@@ -293,12 +302,12 @@
       <p class="hint">Simplified model, scaled to our bench numbers: about 44 at 3 ms and about 118 at 8.3 ms. Each dot is one of the 36 data squares. Noise spreads the dots; a dot that crosses the threshold is a wrong square, and the tag is rejected.</p>
     </div>
 
-  <figure class="fig reveal" style="margin:30px 0">
+  <figure class="fig reveal full" style="margin:30px 0">
     <canvas id="a-far" width="1280" height="720" aria-label="A 2024 field frame with tags 9 and 10 far away and tag 15 at the edge of the image, each labeled with its decision margin"></canvas>
     <figcaption>Real decision margins from one frame. Tags 9 and 10 are far away but face the camera: 57.5 and 72.6. Tag 15 is close but cut off at the image edge, turned away and darker: only <strong>28.7</strong>. With PhotonVision's default cutoff of 35, the CPU pipeline would drop it. (PhotonVision test image, GPL-3.0; margins from the CPU AprilTag library. Our GPU detector reports margins on its own scale, so compare numbers from one detector only.)</figcaption>
   </figure>
 
-  <div class="callout spectrum"><h5>What we found</h5><p>On the bench, decision margin tracked exposure: about <strong>44 at 3 ms</strong> and about <strong>118 at 8.3 ms</strong>. With PhotonVision's default cutoff of 35, short exposures sat right at the edge, and tags flickered in and out of detection even though the raw detector found the tag in 100% of frames. We run a short 5 ms exposure (less motion blur, chapter 04) with the cutoff lowered to <strong>15</strong>. That's safe because a false tag would also need a perfect 36h11 match.</p></div>
+  <div class="callout spectrum"><h5>What we found</h5><p>On our bench the margin tracked exposure: about <strong>44 at 3 ms</strong>, about <strong>118 at 8.3 ms</strong>. With the default cutoff of 35, short exposures sat right at the edge and tags flickered in and out, even though the detector found them in every frame. So we tune exposure and cutoff together: 5 ms with a cutoff of <strong>15</strong> (<a href="#settings">chapter 04</a>). A false tag would still need a perfect 36h11 match.</p></div>
 
   <details class="deep"><summary>The exact decision-margin formula</summary><div>
     <p>In the AprilTag library (<code>quad_decode</code> in <code>apriltag.c</code>), the detector first fits two brightness models across the tag, one from its black border and one from the white ring around it: <code>intensity(x, y) = C0·x + C1·y + C2</code>. That handles a tag that's brighter on one side. Each square's threshold is halfway between the two models at that spot, and each sample becomes <code>v = sample − threshold</code>.</p>
@@ -310,12 +319,22 @@
     <p>AprilTag 3 also added "recursive" families like tagStandard41h12 and tagCircle21h7, which use space inside and outside the border differently. FRC doesn't use them.</p>
   </div></details>
 
-  <div class="deeper">
+  <div class="deeper full">
     <a href="https://april.eecs.umich.edu/software/apriltag">APRIL Robotics Lab: AprilTag</a>
     <a href="https://github.com/AprilRobotics/apriltag">The AprilTag library source</a>
   </div>
 
-  <div class="recap reveal">
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Chapter 2 recap</h5>
+    <ul>
+      <li>AprilTags are landmarks at known spots on the field; seeing one tells the robot where it is.</li>
+      <li>Few, big squares (tag36h11) read from far away, and 4 corners give a 3D pose.</li>
+      <li>Codes differ in at least 11 squares, so misreads don't become the wrong ID.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
     <h5>Chapter 2 recap</h5>
     <ul>
       <li>FRC tags are tag36h11: a 6.5 in black square, 6 × 6 data squares, at known spots from the field layout file.</li>

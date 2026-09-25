@@ -117,3 +117,73 @@ screenshots. Iterate until it looks polished. `node --check` your JS.
 
 Reply with: what each chapter covers and its visuals/labs (2–4 lines each), any facts you weren't
 sure of, any shared-file change you need, and the screenshot paths of your final versions.
+
+---
+
+# Round 2: Short / Full modes and removing repetition (owner feedback)
+
+The owner loved v1 (saved as git tag `training-site-v1`) and asked for:
+1. **A short version and a long version.** "Some of the things covered are very much really fine details."
+2. An interactive intro at the top (done by the coordinator: `chapters/00-preview.html`).
+3. **Less repetition.** "It feels repetitive some of the time."
+
+## The mode system (already built into site.js / site.css)
+
+- A Short / Full switch is in the top bar and the hero. `body.mode-short` or `body.mode-full`.
+- Add class **`full`** to anything that should appear only in the full course. It's hidden in short mode (`display:none`).
+- Add class **`short`** to a bridging element that appears only in the short tour (e.g. a 1–2 sentence summary that replaces a hidden section, so the short version still reads smoothly).
+- `details.deep` blocks are automatically hidden in short mode. Don't wrap them further.
+- Hidden labs don't need JS changes: `Site.chapter` init still runs, canvases resize via ResizeObserver when shown. If a lab's JS measures size only once at init, make sure it redraws when it becomes visible (listen for `addEventListener('site:mode', ...)`, or rely on `Site.canvas`'s ResizeObserver).
+- Reading time per chapter is computed automatically from the visible words (~180 wpm) + 1.5 min per visible `.lab`, shown in the TOC and on the switch.
+- Test short mode with `?mode=short` and full with `?mode=full` in the URL (the screenshot scripts load `http://localhost:8347/`; the mode persists in localStorage per browser profile, and headless runs start fresh = short). To screenshot full mode, edit the URL in a copy of the script to `http://localhost:8347/?mode=full`.
+
+## What the short tour should be
+
+A student who only has an hour should finish the short tour understanding the whole system. **Target: each chapter 3–5 minutes in short mode** (the whole short tour ≈ 60–80 min), full mode unchanged in substance.
+
+Keep in short mode, per chapter:
+- the chapter head and lede;
+- the first plain-language explanation of the core idea (with its analogy);
+- **the one or two best visuals or labs** that teach the core idea (the "wow" ones);
+- at most one or two key "What we did/found" callouts: the most important real-engineering story for that chapter;
+- the recap (edit it if it mentions things only the full version covers, or add a `.short` recap variant).
+
+Mark `.full`: secondary labs, deep-dive sections, spec tables, patch galleries and bug lists (keep a short teaser in short mode if useful), terminal outputs beyond one example, extra callouts, "Go deeper" material, long lists, secondary photos/screenshots, and anything that's a fine detail. If hiding a section leaves a gap in the story, add a one- or two-sentence `.short` bridge.
+
+## Removing repetition (applies in BOTH modes)
+
+Each repeated story now has one **home chapter** where it's told in full. Everywhere else, cut it down to one sentence plus a link to the home chapter (e.g. `<a href="#speed">chapter 10</a>`), or remove it if it adds nothing there. Don't remove the home version. Keep each chapter's own flow intact.
+
+| Story | Home | Cut down elsewhere |
+|---|---|---|
+| USB 2.0 budget (6700 B, caps, "fits N×") | 10 speed | 05 callout → 1–2 sentences + link; 06 keeps its compact driver figure (it's the driver's story); 09 story card → one line + link |
+| Hidden color decode (8.9 → 2.6 ms) | 10 speed | 07 journey step → one sentence; 09 story card → one line (bug table row may stay, short); 14 callout → one line |
+| Exposure units trap (295 = 29.5 ms) | 04 settings | 09 story (drop its slider) → one line + link; 10 step 2 → one line + link |
+| Boot 57 → 16.5 s | 06 linux | 16 → one line + link (drop its boot chart or mark it .full) |
+| GPU error: 62 s → 8 s restart | 16 failsafes | 08: one short callout, drop the timeline figure; 06 hint and 09 bug-table row may stay short |
+| Focus score | 03 camera | 09 story (drop its interactive) → one line + link |
+| CPU vs GPU parallelism | 08 cuda | 02 "Why a GPU?" → 1–2 sentences + link; 05 core comparison stays brief |
+| MegaTag / PhotonLib method mapping | 13 gyro | 12 table → one sentence + link |
+| 2026 ↔ 2027 message hash | 09 photonvision | 15 → one line + link |
+| Low Latency Mode | 10 speed | 14 → one line + link |
+| What a patch is | 06 linux | 09 → one or two sentences + link |
+| NVJPG frozen frames / 250 KB leak | 10 speed | 09 bug-table rows stay short; 16 lessons → brief mention |
+| Truncated jar / safe deploys | 09 photonvision | 16 card → brief + link |
+
+Also look within your own chapters for places that repeat themselves (the same number or point made three times, several callouts saying the same lesson) and tighten them.
+
+## Checks (required)
+
+`node --check` your JS; screenshot your chapters in **both** modes at 1280 (and 390 for any layout change); make sure short mode reads smoothly on its own (no dangling "as the lab above shows" references to hidden content, no empty `.split` columns, no orphaned headings); run `full.js 1280` at the end (must print "no errors"). Report per chapter: what's short-only/full-only, what repetition you cut, and the short-mode reading time the TOC shows for your chapters (open the page, the TOC drawer lists minutes per chapter).
+
+## Round 2b: what the SHORT version is about (owner feedback)
+
+"The short version should talk mostly about the system, not about how we got there. Making it fast is a detail, not something every student needs to know. Same with anything specifically about things we added that weren't in other code: just talk about what is in ours; we don't have to talk about why ours is special over others."
+
+So in **short mode**:
+- Describe **how the system works as it is today**. Features are simply part of the system: "a watchdog restarts PhotonVision if it freezes", "the camera driver reserves a slice of USB bandwidth for each camera so four cameras fit", "the Jetson decodes each JPEG straight to gray on its JPEG hardware".
+- **No history or engineering story:** no "we found / we fixed / we added / our patch / before → after / it used to be", no measurements of improvements (33 → 122 fps, 62 → 8 s, 8.9 → 2.6 ms), no bug stories. Hide every `.callout.spectrum` in short mode (mark `.full`).
+- **No comparisons** with other code or systems (stock PhotonVision, the 4143 fork, Limelight, other teams, "unlike…"). Plain comparisons that teach a concept (CPU vs GPU, mono vs color sensor, global vs rolling shutter) are fine.
+- Rewrite short-only prose (`.short`) to match; if a kept lab's caption or hint tells a history/comparison story, mark that caption `.full` and add a neutral `.short` caption if needed.
+- Chapter 10 (Making it fast) is now a full-course-only chapter (`section.chapter.full`); in short mode it disappears. Don't link to it from short-only text (a link from full-only text is fine).
+- Full mode keeps everything (the engineering stories are great there).

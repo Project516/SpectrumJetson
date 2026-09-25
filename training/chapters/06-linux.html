@@ -101,8 +101,8 @@
 <div class="shell">
   <div class="ch-head">
     <span class="eyebrow"><span class="num">06</span> · The computer</span>
-    <h2>Linux, drivers, and why we <em>patched one.</em></h2>
-    <p class="lede">A computer is useless without the software that runs its hardware. On the Jetson that's Linux. Because Linux is open source, when its camera driver got in our way, we could read it, change it and build our own.</p>
+    <h2><span class="full">Linux, drivers, and why we <em>patched one.</em></span><span class="short">Linux and <em>drivers.</em></span></h2>
+    <p class="lede">A computer is useless without the software that runs its hardware. On the Jetson that's Linux. <span class="full">Because Linux is open source, when its camera driver got in our way, we could read it, change it and build our own.</span><span class="short">Drivers are the parts of Linux that talk to hardware, like our cameras.</span></p>
   </div>
 
   <div class="split top">
@@ -110,7 +110,8 @@
       <h3 style="margin-top:0">What an operating system does</h3>
       <p>Picture a busy restaurant kitchen. Lots of cooks (programs) want the stoves, the fridge and the one sink (the hardware) at the same time. Without a manager, they'd crash into each other. The <span class="term">operating system</span> is that manager.</p>
       <p>It decides which program runs on which CPU core and for how long. It hands out memory so programs can't scribble on each other's data. It talks to every device through <span class="term">driver</span>s, so a program can say "give me the next camera frame" without knowing anything about USB.</p>
-      <p>Your phone, laptop, the robot's SystemCore and the Jetson all have one. Click a layer to see what lives there, or send a message through the stack.</p>
+      <p class="short">The Jetson runs <span class="term">Linux</span>, a free, open-source operating system. Click a layer to explore it.</p>
+      <p class="full">Your phone, laptop, the robot's SystemCore and the Jetson all have one. Click a layer to see what lives there, or send a message through the stack.</p>
     </div>
     <div class="lab" style="margin:0" id="l-os">
       <div class="lab-head"><span class="tag">Lab</span><h4>The layers of a computer</h4></div>
@@ -128,7 +129,11 @@
     </div>
   </div>
 
+  <p class="short prose">Each USB camera is run by a <span class="term">driver</span>, <code>uvcvideo</code>. It reserves a slice of the USB bus's bandwidth for each camera; ours is set so four cameras fit on the Jetson's one USB 2.0 bus.</p>
+
+  <div class="full">
   <h3>Linux: free, and everywhere</h3>
+  <div class="full">
   <div class="split">
     <div class="prose">
       <p><span class="term">Linux</span> is an operating system anyone can download, read, change and share for free: it's <span class="term">open source</span>. Linus Torvalds started it in 1991 as a hobby. Today thousands of companies and volunteers improve it together.</p>
@@ -142,6 +147,8 @@
     </div>
   </div>
 
+  </div>
+
   <p class="prose">NVIDIA bundles everything a Jetson needs into <span class="term">JetPack</span>. Here's exactly what ours runs:</p>
   <div class="ver reveal">
     <span><b>JetPack 6.2.3</b>NVIDIA's bundle</span>
@@ -151,7 +158,7 @@
     <span><b>CUDA 12.6</b>GPU programming</span>
     <span><b>TensorRT 10.3</b>neural networks</span>
   </div>
-  <div class="callout idea"><h5>Why JetPack 6 and not 7?</h5><p>JetPack 7 now supports the Orin Nano, but it moves to Ubuntu 24.04 and CUDA 13. Our CUDA AprilTag detector and the CUDA version of PhotonVision were built for JetPack 6. The newest version isn't automatically the best one: pick the one your software was built and tested on. 6.2.3 was the newest 6.x release, with bug fixes over the 6.2 in our original plan.</p></div>
+  <div class="full"><div class="callout idea"><h5>Why JetPack 6 and not 7?</h5><p>JetPack 7 now supports the Orin Nano, but it moves to Ubuntu 24.04 and CUDA 13. Our CUDA AprilTag detector and the CUDA version of PhotonVision were built for JetPack 6. The newest version isn't automatically the best one: pick the one your software was built and tested on. 6.2.3 was the newest 6.x release, with bug fixes over the 6.2 in our original plan.</p></div></div>
 
   <h3>Kernel space and user space</h3>
   <div class="split top">
@@ -185,8 +192,9 @@
     <figcaption>Stock: two Thriftiest Cams book 6120 bytes, and a third is refused with "No space left on device". Capped: four cameras on the USB-A ports plus a fifth on a USB-C hub fit in 6720. Chapter 10's lab lets you plug in cameras and pick each one's booking yourself.</figcaption>
   </figure>
 
-  <div class="callout spectrum"><h5>What we did: a one-knob patch</h5><p>Our patch (<code>kernel/uvcvideo-payload-cap.patch</code>) adds one setting to the driver, <code>payload_cap</code>. For the Thriftiest Cam it caps the booking at <strong>1280 bytes</strong> (82 Mbps), still about 1.4× the largest frame we've measured at 120 fps. Now <strong>4 cameras fit on the USB-A ports, plus a 5th</strong> at 1600 bytes on a USB-C hub. Tested with 2 cameras: 122 fps each, every frame complete. The price is that a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so results reach the robot ~2 ms later. Timestamps don't get worse: the driver stamps a frame when its <em>first</em> packet arrives. The patch also counts each camera's bytes and largest frames, which feeds the USB bandwidth card in PhotonVision (chapter 10 goes deep on that).</p></div>
+  <div class="callout spectrum"><h5>What we did: a one-knob patch</h5><p>Our patch (<code>kernel/uvcvideo-payload-cap.patch</code>) adds one setting to the driver, <code>payload_cap</code>. For the Thriftiest Cam it caps the booking at <strong>1280 bytes</strong>, still about 1.4× the largest frame we've measured at 120 fps. Tested with 2 cameras: 122 fps each, every frame complete. The price: results reach the robot ~2 ms later. Timestamps don't get worse, because the driver stamps a frame when its <em>first</em> packet arrives. The patch also counts each camera's bytes and largest frames for PhotonVision's USB bandwidth card (<a href="#speed">chapter 10</a>).</p></div>
 
+  <div class="full">
   <div class="termsplit reveal">
     <figure class="tout"><pre class="tb"><span class="pr">$</span> scripts/jetson/usb-bandwidth.py
 <span class="dm">USB camera bandwidth (all the Jetson's USB 2.0 ports share about 6720 bytes per 125 us microframe)</span>
@@ -201,6 +209,8 @@ Every camera fits, and nothing failed to connect.</pre><figcaption>From our Jets
       <p style="margin-top:0"><strong>The patch at work.</strong> Our script reads the driver's bookings. Four cameras on the USB-A hub book <strong>3840</strong> of the bus's ~6720 bytes.</p>
       <p>Each Thriftiest Cam could book anything from 192 to 3060 bytes, and the stock driver would take 3060. Ours caps it at <strong>1280</strong>. The two global-shutter cameras run at 60 fps and have per-port caps of 640, set from PhotonVision's Camera Matching page (chapter 10).</p>
     </div>
+  </div>
+
   </div>
 
   <h3>What a patch file is</h3>
@@ -250,6 +260,7 @@ Every camera fits, and nothing failed to connect.</pre><figcaption>From our Jets
   </div>
   <div class="callout idea"><h5>Open source means you can fix it</h5><p>With a closed driver, we'd have been stuck at two cameras, or had to buy different ones. Because Linux is open source, we read the driver, found the one number that mattered, and changed it: about 30 lines. Our whole project works like that: small patches to other people's code, kept as separate files so anyone can see exactly what we changed and why (chapter 09).</p></div>
 
+  <div class="full">
   <h3>Building a kernel module</h3>
   <div class="prose">
     <p>Most drivers aren't baked into the kernel. They're <span class="term">kernel module</span>s: separate files (<code>.ko</code>) the kernel loads when a device shows up, like snapping a cartridge into a console. That's great for us: we can swap in our own <code>uvcvideo</code> without rebuilding all of Linux. <code>scripts/jetson/11-uvcvideo-payload-cap.sh</code> does it in six steps:</p>
@@ -277,6 +288,10 @@ cat /sys/module/uvcvideo/parameters/payload_cap</pre>
     <p><strong>The license.</strong> Linux is licensed under the <span class="term">GPL</span> version 2. You may change it and share your changes, but anything you distribute that's built from GPL code must also be GPL, with its source available. So our patch is GPL-2.0, like the driver it changes, and it's published in our repo. That's the deal that keeps Linux open: everyone who improves it gives the improvement back.</p>
   </div></details>
 
+  </div>
+
+
+  <div class="full">
   <h3>systemd: the Jetson's stage manager</h3>
   <div class="split top">
     <div class="prose">
@@ -298,6 +313,9 @@ cat /sys/module/uvcvideo/parameters/payload_cap</pre>
     </div>
   </div>
 
+  </div>
+
+
   <h3>From 57 seconds to 16.5</h3>
   <p class="prose">A robot is switched on moments before a match, so the Jetson has to boot fast. <code>systemd-analyze</code> told us where the time went: <strong>45 seconds</strong> of every boot was <code>snapd.seeded</code>, a service preparing "snap" packages. We don't use any snaps. So we switched snapd off (masked it) and booted without the desktop.</p>
   <div class="lab reveal" id="l-boot">
@@ -308,9 +326,10 @@ cat /sys/module/uvcvideo/parameters/payload_cap</pre>
       <div class="track"><h5>After our tuning <span>16.5 s</span></h5><div class="lane" data-t="after"></div></div>
     </div>
     <div class="axis"><span>0</span><span>10</span><span>20</span><span>30</span><span>40</span><span>50</span><span>60 s</span></div>
-    <p class="hint">Measured with <code>systemd-analyze</code> (before: Sept 24, 2026; after: the output below). Before, PhotonVision already started at ~12 s, but the system was still busy for another 45 s; first detection wasn't measured. After, PhotonVision starts at 14.7 s (it now waits for the clocks to be locked) and both cameras detect tags at 19.9 and 20.1 s.</p>
+    <p class="hint">Measured with <code>systemd-analyze</code> (before: Sept 24, 2026; after: Sept 25, 2026). Before, PhotonVision already started at ~12 s, but the system was still busy for another 45 s; first detection wasn't measured. After, PhotonVision starts at 14.7 s (it now waits for the clocks to be locked) and both cameras detect tags at 19.9 and 20.1 s.</p>
   </div>
 
+  <div class="full">
   <div class="termsplit reveal">
     <figure class="tout"><pre class="tb"><span class="pr">$</span> systemd-analyze
 Startup finished in <span class="hi">8.782s (kernel)</span> + <span class="hi">7.734s (userspace)</span> = <span class="hi">16.517s</span>
@@ -328,6 +347,9 @@ multi-user.target reached after 6.183s in userspace
     </div>
   </div>
 
+  </div>
+
+  <div class="full">
   <h3>Everything else we tuned</h3>
   <p class="prose">A laptop and a robot want different things from Linux. <code>scripts/jetson/09-robot-tuning.sh</code> makes ten changes (and <code>--undo</code> reverses them):</p>
   <div class="cards reveal">
@@ -356,7 +378,19 @@ multi-user.target reached after 6.183s in userspace
     <a class="video" href="https://www.youtube.com/watch?v=rrB13utjYV4" target="_blank" rel="noopener">Fireship: Linux in 100 seconds (2:41)</a>
   </div>
 
-  <div class="recap reveal">
+  </div>
+
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Recap</h5>
+    <ul>
+      <li>The operating system shares the hardware between programs; the <b>kernel</b> runs the hardware through <b>drivers</b>.</li>
+      <li>The Jetson runs Linux (Ubuntu 22.04, from NVIDIA's JetPack), which is open source.</li>
+      <li>The camera driver reserves USB bandwidth for each camera, set so four cameras fit.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
     <h5>Chapter 6 recap</h5>
     <ul>
       <li>The operating system shares the hardware between programs. Linux is free, open source and everywhere; ours is Ubuntu 22.04 from JetPack 6.2.3 (kernel 5.15, CUDA 12.6).</li>

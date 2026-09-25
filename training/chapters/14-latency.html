@@ -33,13 +33,19 @@
     <p class="lede">Every vision answer describes the past. By the time the robot hears "you're here," it has already moved on. The trick isn't to make the delay zero. It's to know exactly how old each answer is.</p>
   </div>
 
-  <div class="split">
+  <div class="prose short">
+    <p><span class="term">Latency</span> is the delay between something happening and finding out about it, like thunder arriving after the lightning. A camera frame shows where the tag was when its light hit the sensor. Then the exposure, USB, decoding, the GPU and the network add up to about <strong>15 ms</strong> before the answer is ready for the robot.</p>
+    <p>A fast robot moves a lot in 15 ms: at 4 m/s that's <strong>6 cm</strong>, and spinning is worse. So every frame carries a <span class="term">timestamp</span>, the middle of its exposure, converted to the robot's clock by <span class="term">time sync</span>. Robot code passes it to <code>addVisionMeasurement(pose, timestamp)</code>, which applies the correction at that moment in the past and replays the wheels' movement since. Try both ways:</p>
+  </div>
+
+
+  <div class="split full">
     <div class="prose">
       <h3 style="margin-top:0">News is always a little old</h3>
       <p><span class="term">Latency</span> is the delay between something happening and you finding out about it. You've felt it:</p>
       <ul>
         <li><strong>Lightning and thunder.</strong> The flash reaches you almost instantly. The sound crawls along at about 343 m/s, so it takes about 3 seconds per kilometer. The thunder tells you about something that already happened.</li>
-        <li><strong>A laggy video call.</strong> Your friend's face is a few hundred milliseconds behind reality, so you keep talking over each other.</li>
+        <li class="full"><strong>A laggy video call.</strong> Your friend's face is a few hundred milliseconds behind reality, so you keep talking over each other.</li>
       </ul>
       <p>A camera works the same way. A frame is a photo of where the tag was <em>when the light hit the sensor</em>. Everything after that (sending, decoding, finding the tag, doing the math, sending the answer) adds delay. When the answer reaches the robot, it's news about the past.</p>
     </div>
@@ -49,10 +55,10 @@
     </figure>
   </div>
 
-  <h3>One frame, in slow motion</h3>
-  <p class="prose">Here is where the time goes for one frame on our system. Press play to watch it about 300 times slower than real life. Solid bars are measured on our bench; bars marked ≈ are estimates, and the striped one hasn't been measured yet.</p>
+  <h3 class="full">One frame, in slow motion</h3>
+  <p class="prose full">Here is where the time goes for one frame on our system. Press play to watch it about 300 times slower than real life. Solid bars are measured on our bench; bars marked ≈ are estimates, and the striped one hasn't been measured yet.</p>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>A frame's timeline</h4></div>
     <div class="tl-wrap"><canvas id="l-tl" aria-label="Timeline bar chart of one frame's latency: exposure, camera delay, USB, decode, GPU detect, pose solve, NetworkTables, robot loop"></canvas></div>
     <div class="row">
@@ -69,15 +75,15 @@
     </div>
   </div>
 
-  <div class="callout spectrum"><h5>What we measured</h5><p>PhotonVision showed <strong>13–14 ms of latency</strong> after our fixes (it was 44 ms when we started, with a 29.5 ms exposure). The biggest single cut was decoding the JPEG straight to gray: <strong>8.9 ms → 2.6 ms</strong> per frame. Our USB bandwidth cap costs about 2 ms (a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms) but lets four cameras share the bus.</p></div>
-  <figure style="margin:0 0 30px;max-width:var(--prose)">
+  <div class="callout spectrum full"><h5>What we measured</h5><p>PhotonVision showed <strong>13–14 ms of latency</strong> after our fixes, down from 44 ms. How we got there (exposure, decode, USB caps) is the story of <a href="#speed">chapter 10</a>.</p></div>
+  <figure class="full" style="margin:0 0 30px;max-width:var(--prose)">
 <pre class="code" aria-label="Real PhotonVision log lines">971 stats h1 1280x800: 122.405 calls/s, detect avg 0.905398 ms max 1.48748 ms, jni 0.0038643 ms, tags/frame 0 [bos]
 971 jpeg 10 s: nvjpg 362.13 frames/s (2.58713 ms), libjpeg-turbo 0 frames/s; checks since start 19925 ok, 0 differ</pre>
     <figcaption class="caption" style="padding:6px 2px 0">From our Jetson, Sept 25, 2026: two real lines from <code>journalctl -u photonvision</code>, with 4 cameras running and no tags in view. One Thriftiest Cam at 122 frames per second, 0.9 ms average GPU detect; the hardware JPEG decoder at 2.59 ms a frame, shared by all four cameras.</figcaption>
   </figure>
 
-  <h3>Where was the robot when the picture was taken?</h3>
-  <div class="split top">
+  <h3 class="full">Where was the robot when the picture was taken?</h3>
+  <div class="split top full">
     <div class="prose">
       <p>A robot that's driving fast moves a lot in 15 ms. If the robot code pretends a vision answer describes <em>right now</em>, it pulls its position estimate back toward where it <em>used to be</em>.</p>
       <p><strong>Driving:</strong> 4 m/s × 0.015 s = <strong>6 cm</strong> of error.<br>
@@ -115,8 +121,8 @@
     </div>
   </div>
 
-  <h3>How the pose estimator rewinds time</h3>
-  <div class="split flip">
+  <h3 class="full">How the pose estimator rewinds time</h3>
+  <div class="split flip full">
     <div class="prose">
       <p>WPILib's pose estimator keeps a short history of odometry poses (about the last 1.5 seconds). When a vision measurement arrives with a timestamp in the past:</p>
       <ol>
@@ -132,13 +138,13 @@
     </figure>
   </div>
 
-  <h3>Which instant is "the moment of capture"?</h3>
-  <div class="prose">
+  <h3 class="full">Which instant is "the moment of capture"?</h3>
+  <div class="prose full">
     <p>This sounds easy until you look closely. A frame isn't taken in an instant. The sensor collects light for the whole <span class="term">exposure</span> (5 ms on our cameras), and a moving tag smears across that window. The blur's middle is where the tag was at the <em>middle</em> of the exposure. So that's the honest timestamp.</p>
     <p>But the Jetson can't see the exposure happen. The first thing it notices is the frame's <strong>first USB packet</strong> arriving. Linux's camera <span class="term">driver</span> stamps the frame right then. By that moment the whole exposure is over, and the camera has also spent some time reading out the sensor and starting the JPEG.</p>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Moving the timestamp to mid-exposure</h4></div>
     <div class="lab-grid">
       <canvas id="l-mid" aria-label="A tag smearing across the exposure window, then a timeline of exposure, camera delay, and USB packets, with the driver's timestamp moved back to mid-exposure"></canvas>
@@ -153,7 +159,7 @@
     </div>
   </div>
 
-  <div class="callout spectrum"><h5>What we did</h5><p>Stock PhotonVision uses the driver's first-packet time as is. Our patch <code>photonvision-13</code> subtracts half the exposure from every frame's timestamp, so the timestamp marks the middle of the exposure and robot code shouldn't subtract anything itself. We checked whether the camera sends its own hardware timestamps (UVC has a way to): it doesn't. The camera's internal delay will be measured on the robot by spinning in front of a tag, then set as <code>SPECTRUM_CAMERA_DELAY_US</code>.</p></div>
+  <div class="callout spectrum full"><h5>What we did</h5><p>Our patch <code>photonvision-13</code> subtracts half the exposure from every frame's timestamp, so it marks the middle of the exposure; robot code shouldn't subtract anything itself. <span class="full">We checked whether the camera sends its own hardware timestamps (UVC has a way to): it doesn't. </span>The camera's internal delay (readout and JPEG) is still to be measured on the robot, by spinning in front of a tag.</p></div>
 
   <details class="deep"><summary>The code that moves the timestamp</summary><div>
     <p>From <code>photonvision-13-mid-exposure-timestamps.patch</code>, in <code>USBFrameProvider</code>. The exposure comes from the camera setting, which is in 100 µs units (50 → 5,000 µs). With auto exposure on, the exposure time is unknown, so only the camera delay is subtracted.</p>
@@ -168,13 +174,13 @@
     <p>Why the USB bandwidth cap doesn't hurt timestamps: the driver stamps a frame at its <em>first</em> packet, so a frame that takes 4.9 ms to cross USB instead of 2 ms gets the same stamp. The answer arrives ~2 ms later, but it's labeled just as accurately.</p>
   </div></details>
 
-  <h3>Two computers, two clocks</h3>
-  <div class="prose">
+  <h3 class="full">Two computers, two clocks</h3>
+  <div class="prose full">
     <p>There's one more catch. The timestamp above is on the <strong>Jetson's</strong> clock. The robot's pose estimator runs on the <strong>SystemCore's</strong> clock. Each computer counts time from when it booted, so their clocks can be minutes apart. A timestamp is useless until both agree what time it is.</p>
     <p>PhotonVision solves this with <span class="term">time sync</span>. The robot runs a tiny time server, and the Jetson asks it "what time is it?" over and over, on UDP port 5810, in microseconds. Because the question and the answer both take time to travel, the Jetson measures the <span class="term">round trip</span> and assumes the answer spent half of it on the way back. It's the same idea as NTP, the protocol that keeps your phone's clock right.</p>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Ping-pong time sync</h4></div>
     <div class="clock-row">
       <div class="clock jet"><small>Jetson clock (client)</small><b id="l-cj">0.000 ms</b></div>
@@ -200,8 +206,8 @@
     <p>The packet format is in PhotonVision's <a href="https://docs.photonvision.org/en/latest/docs/contributing/design-descriptions/time-sync.html">time sync design doc</a>. Our 2026 PhotonVision and the robot's 2027 PhotonLib use the same packet layout and timebase, which we checked in the source.</p>
   </div></details>
 
-  <h3>Two kinds of clock</h3>
-  <div class="cards clocks-cards">
+  <h3 class="full">Two kinds of clock</h3>
+  <div class="cards clocks-cards full">
     <div class="card">
       <div class="icon">⏱️</div>
       <h4>Monotonic clock: for timing</h4>
@@ -221,17 +227,17 @@
       <span class="chip">photonvision-08</span>
     </div>
   </div>
-  <div class="callout spectrum"><h5>Rewind uses the robot's clock too</h5><p>Every frame Rewind records to the SSD is stamped twice: <code>jetson_us</code> (the Jetson's clock) and <code>robot_us</code> (the robot's clock, from time sync). Because <code>robot_us</code> is the same timebase as the AdvantageKit log, you can line up a video frame with exactly what the robot code was doing at that moment.</p></div>
+  <div class="callout spectrum full"><h5>Rewind uses the robot's clock too</h5><p>Every frame Rewind records to the SSD is stamped twice: <code>jetson_us</code> (the Jetson's clock) and <code>robot_us</code> (the robot's clock, from time sync). Because <code>robot_us</code> is the same timebase as the AdvantageKit log, you can line up a video frame with exactly what the robot code was doing at that moment.</p></div>
 
-  <h3>Why frame rate matters too</h3>
-  <div class="split">
+  <h3 class="full">Why frame rate matters too</h3>
+  <div class="split full">
     <div class="prose">
       <p>Latency is how old an answer is when it arrives. But between frames the robot has nothing new, so the newest answer keeps getting older until the next one lands. On average the robot's freshest vision is <strong>latency + half a frame period</strong> old.</p>
       <ul>
         <li><strong>Fresher data:</strong> at 30 fps the gap between frames is 33 ms. At 120 fps it's 8.3 ms.</li>
         <li><strong>More samples:</strong> a robot loop runs every 20 ms. At 120 fps each loop gets 2–3 new measurements per camera to average, which cuts random noise.</li>
       </ul>
-      <div class="callout pitfall"><h5>The Low Latency trap</h5><p>PhotonVision has a "Low Latency Mode." It sounds like exactly what you want. With it on, the capture loop waited for each frame and missed every other one: <strong>61 fps</strong>. Turning it <em>off</em> gave <strong>~100 fps at the same ~18 ms latency</strong>. We run it off, and new cameras start with it off.</p></div>
+      <p class="small">One trap: PhotonVision's "Low Latency Mode" sounds perfect but halved our frame rate, so we run it off (<a href="#speed">chapter 10</a>).</p>
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>How old is the newest answer?</h4></div>
@@ -246,19 +252,29 @@
     </div>
   </div>
 
-  <div class="deeper">
+  <div class="deeper full">
     <a class="video" href="https://www.youtube.com/watch?v=BAo5C2qbLq8" target="_blank" rel="noopener">Computerphile: Network Time Protocol (10:40)</a>
   </div>
 
-  <div class="recap reveal">
+  <div class="recap reveal short">
     <h5>Chapter 14 recap</h5>
     <ul>
-      <li>Latency is the delay between capture and the answer. Ours is about 15 ms: exposure, USB, decode, GPU, math, network.</li>
+      <li>Every answer describes the past: our latency is about 15 ms, and a fast robot moves centimeters in that time.</li>
+      <li>Frames are timestamped at mid-exposure and synced to the robot's clock.</li>
+      <li><code>addVisionMeasurement(pose, timestamp)</code> corrects the pose at capture time, so the delay stops mattering.</li>
+    </ul>
+  </div>
+
+  <div class="recap reveal full">
+    <h5>Chapter 14 recap</h5>
+    <ul>
+      <li>Latency is the delay between capture and the answer. Ours is about 15 ms.</li>
       <li>On a moving robot, pretending an answer is "now" costs centimeters: 4 m/s × 15 ms = 6 cm, and spinning is worse.</li>
-      <li>The fix is a timestamp plus <code>addVisionMeasurement(pose, timestamp)</code>, which corrects the past and replays odometry forward.</li>
-      <li>Our timestamps mark mid-exposure (<code>photonvision-13</code>). The camera's own delay is still to be measured.</li>
-      <li>Time sync over UDP 5810 puts Jetson timestamps on the robot's clock. The monotonic clock times vision; the wall clock only names files.</li>
-      <li>Higher fps means fresher data and more samples. Low Latency Mode stays off.</li>
+      <li>The fix is a timestamp plus <code>addVisionMeasurement(pose, timestamp)</code>.</li>
+      <li>Our timestamps mark the middle of the exposure (<code>photonvision-13</code>). The camera's own delay is still to be measured.</li>
+      <li>Time sync puts Jetson timestamps on the robot's clock.</li>
+      <li class="full">The monotonic clock times vision; the wall clock only names files.</li>
+      <li class="full">Higher fps means fresher data and more samples.</li>
     </ul>
   </div>
 </div>

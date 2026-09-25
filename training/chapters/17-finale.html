@@ -88,19 +88,21 @@
   </div>
 
   <h3>Quiz: how well does it stick?</h3>
-  <p class="prose">Fifteen questions, one or two from each part of the course. You get the answer and a one-line reason right away, with a link back to the chapter. Your answers are saved in this browser.</p>
+  <p class="prose">One or two questions from each part of the course, all answerable from the version you're reading. You get the answer and a one-line reason right away, with a link back to the chapter. Your answers are saved in this browser.</p>
   <div class="quiz-wrap">
   <div class="quiz" id="fn-quiz"></div>
-  <div class="score" id="fn-score"><span>Score <b id="fn-sc">0 / 15</b></span><div class="bar"><i id="fn-bar"></i></div><span id="fn-msg" class="small">Pick an answer to start.</span><button class="btn-sm" id="fn-reset">Reset</button></div>
+  <div class="score" id="fn-score"><span>Score <b id="fn-sc">0</b></span><div class="bar"><i id="fn-bar"></i></div><span id="fn-msg" class="small">Pick an answer to start.</span><button class="btn-sm" id="fn-reset">Reset</button></div>
   </div>
 
-  <h3>Glossary</h3>
-  <p class="prose">Every dotted word in the course, in one place.</p>
-  <div class="gloss-tools"><input type="search" id="fn-gsearch" placeholder="Filter terms, e.g. USB, pose, GPU…" aria-label="Filter the glossary"><span class="small muted" id="fn-gcount"></span></div>
-  <dl class="gloss" id="fn-gloss"></dl>
+  <p class="prose short">The full course adds more quiz questions, a searchable glossary of every dotted word, links for going further and the credits. Switch to <strong>Full</strong> at the top to see them, and every section this tour skipped.</p>
 
-  <h3>Where to go next</h3>
-  <div class="links">
+  <h3 class="full">Glossary</h3>
+  <p class="prose full">Every dotted word in the course, in one place.</p>
+  <div class="gloss-tools full"><input type="search" id="fn-gsearch" placeholder="Filter terms, e.g. USB, pose, GPU…" aria-label="Filter the glossary"><span class="small muted" id="fn-gcount"></span></div>
+  <dl class="gloss full" id="fn-gloss"></dl>
+
+  <h3 class="full">Where to go next</h3>
+  <div class="links full">
     <h4>Our system</h4>
     <div class="deeper">
       <a href="https://github.com/Spectrum3847/SpectrumJetson/blob/main/README.md">SpectrumJetson README</a>
@@ -131,8 +133,8 @@
     </div>
   </div>
 
-  <h3>Credits</h3>
-  <div class="credits">
+  <h3 class="full">Credits</h3>
+  <div class="credits full">
     <div class="credit"><b>Austin Schuh and FRC 971</b><span>The CUDA AprilTag detector at the heart of the system, now developed in RealtimeRoboticsGroup/aos. We built from frc971/bos.</span></div>
     <div class="credit"><b>FRC 4143</b><span>The CUDA version of PhotonVision our build starts from.</span></div>
     <div class="credit"><b>The PhotonVision team</b><span>The open-source vision software and PhotonLib.</span></div>
@@ -149,7 +151,16 @@
     <p class="muted prose" style="margin:0 auto">Light, pixels, JPEG, USB, memory, 1,024 GPU cores, geometry, time and a lot of careful testing, every 8 milliseconds, on every camera. Now go make it better.</p>
   </div>
 
-  <div class="recap reveal">
+  <div class="recap reveal short">
+    <h5>Course recap</h5>
+    <ul>
+      <li>A global-shutter camera captures AprilTags; the Jetson decodes each JPEG and its GPU finds the tags in about 2 ms.</li>
+      <li>Calibration and geometry turn four corners into a robot pose, stamped with when the light was captured.</li>
+      <li>NetworkTables carries it to the robot, and watchdogs keep it all running on match day.</li>
+    </ul>
+  </div>
+
+  <div class="recap reveal full">
     <h5>Course recap</h5>
     <ul>
       <li>AprilTags give the robot known landmarks; a global-shutter camera with a short exposure captures them sharply.</li>

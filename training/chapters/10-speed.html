@@ -98,7 +98,7 @@
     </div>
     <div class="steps">
       <div class="step"><div class="box"><h4>1 · 33 fps, 44 ms</h4><p>The first test: one Thriftiest Cam, 1280×800, detecting a tag at <b>33 fps</b> with 44 ms latency. Other teams on Chief Delphi reported the same ~32–36 fps "with an idle GPU". Suspicious.</p></div></div>
-      <div class="step"><div class="box"><h4>2 · The exposure trap</h4><p>The exposure slider said 295. That's in the UVC standard's units of 100 µs, so it meant <b>29.5 ms</b> of light per frame. A camera can't start the next frame until this one's exposure ends: 1000 ÷ 29.5 = <b>34 fps at most</b>. Exposure 83 (8.3 ms): <b>61 fps</b>, 20 ms. Chapter 04 has the lab.</p></div></div>
+      <div class="step"><div class="box"><h4>2 · The exposure trap</h4><p>The slider's "295" meant <b>29.5 ms</b> of exposure (the units are 100 µs), which caps a camera at 34 fps. At 8.3 ms: <b>61 fps</b>, 20 ms. <a href="#settings">Chapter 04</a> tells the whole trap.</p></div></div>
       <div class="step"><div class="box"><h4>3 · Ask for gray</h4><p>AprilTags only need brightness, so we asked cscore for grayscale frames instead of converting color in Java (patch 02). Still <b>62 fps</b>, but Java's CPU fell from 155% to 111% of a core. Only half the fix, as it turned out.</p></div></div>
       <div class="step"><div class="box"><h4>4 · Stop waiting</h4><p>PhotonVision's <b>Low Latency Mode</b> made the loop wait for each new frame. Each frame took a bit longer to process than the camera's 8.3 ms gap, so after every frame it waited for the <em>next</em> one and skipped the one already waiting. Turning it off: <b>~100 fps</b>, same latency. (Lab 3 below shows why.)</p></div></div>
       <div class="step"><div class="box"><h4>5 · Two cameras</h4><p>Add the second camera: <b>92 and 104 fps</b>, about 23 ms latency, and PhotonVision used <b>3.3 of the 6 CPU cores</b>. Profiling showed each camera's thread busy 98% of the time, mostly inside one cscore call.</p></div></div>
@@ -270,6 +270,7 @@
   <div class="deeper">
     <a class="video" href="https://www.youtube.com/watch?v=wdgULBpRoXk" target="_blank" rel="noopener">Ben Eater: How does a USB keyboard work? The USB protocol, bit by bit (34:15)</a>
   </div>
+
 
   <div class="recap reveal">
     <h5>Chapter 10 recap</h5>

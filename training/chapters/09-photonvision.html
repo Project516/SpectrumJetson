@@ -98,25 +98,28 @@
   @media (max-width: 600px) { #photonvision .hashbox { grid-template-columns: 1fr; } }
   #photonvision .treewrap { overflow-x: auto; }
   @media (max-width: 600px) { #photonvision .treewrap svg { min-width: 520px; } }
+  body.mode-short #photonvision .split.oneup-s { grid-template-columns: 1fr; }
+  #photonvision .elsewhere { list-style: none; padding: 14px 18px; margin: 20px 0; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 12px; font-size: .92rem; max-width: var(--prose); }
+  #photonvision .elsewhere li { margin: 3px 0; }
   #photonvision .buildfig .btns { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 16px 14px; }
 </style>
 <div class="shell">
   <div class="ch-head">
-    <span class="eyebrow"><span class="num">09</span> · PhotonVision and our patches</span>
-    <h2>PhotonVision, and how we <em>made it better.</em></h2>
-    <p class="lede">The Jetson runs PhotonVision, the same free vision software many FRC teams use. Ours is a special version: someone else's GPU version, merged with the newest official fixes, plus 34 small changes of our own. This chapter shows what PhotonVision does inside, where our copy came from, and every change we made.</p>
+    <span class="eyebrow"><span class="num">09</span> · PhotonVision<span class="full"> and our patches</span></span>
+    <h2 class="full">PhotonVision, and how we <em>made it better.</em></h2><h2 class="short">PhotonVision: <em>the vision software.</em></h2>
+    <p class="lede">The Jetson runs PhotonVision, the same free vision software many FRC teams use.<span class="short"> This chapter shows what it does and how one camera frame flows through it.</span><span class="full"> Ours is a special version: someone else's GPU version, merged with the newest official fixes, plus 34 small changes of our own. This chapter shows what PhotonVision does inside, where our copy came from, and every change we made.</span></p>
   </div>
 
-  <div class="split">
+  <div class="split oneup-s">
     <div class="prose">
       <h3 style="margin-top:0">What PhotonVision is</h3>
       <p><span class="term">PhotonVision</span> is <span class="term">open source</span> vision software made for FRC. It runs on the <span class="term">coprocessor</span>, reads the cameras, finds targets, and sends the answers to the robot. Robot code reads them with a library called <span class="term">PhotonLib</span>, which looks the same whether the coprocessor is an Orange Pi or our Jetson.</p>
       <p>You set it up from a web dashboard in your browser: pick a camera, choose a <strong>pipeline</strong> (a recipe for what to look for), tune the settings while you watch the live video, and calibrate the lens.</p>
-      <p>Each camera can switch between pipelines, and each pipeline type is a different kind of vision:</p>
+      <p class="full">Each camera can switch between pipelines, and each pipeline type is a different kind of vision:</p>
     </div>
-    <figure class="shot"><img src="assets/photos/pv-settings.jpg" alt="PhotonVision's Settings page: Device Control buttons, Device Metrics with CPU and GPU usage, and networking with static IP 10.85.15.15 for team 8515" loading="lazy"><figcaption>Our PhotonVision's Settings page: restart buttons, CPU and GPU use, and the robot network address (team 8515, 10.85.15.15).</figcaption></figure>
+    <figure class="shot full"><img src="assets/photos/pv-settings.jpg" alt="PhotonVision's Settings page: Device Control buttons, Device Metrics with CPU and GPU usage, and networking with static IP 10.85.15.15 for team 8515" loading="lazy"><figcaption>Our PhotonVision's Settings page: restart buttons, CPU and GPU use, and the robot network address (team 8515, 10.85.15.15).</figcaption></figure>
   </div>
-  <div class="types reveal">
+  <div class="types reveal full">
     <div class="ours"><b>AprilTagCuda</b>Finds AprilTags on the GPU with the 971 detector. What we run.</div>
     <div><b>AprilTag</b>The same job on the CPU. Fine on a Pi, slower.</div>
     <div><b>ArUco</b>Another family of square markers.</div>
@@ -125,6 +128,7 @@
     <div><b>Driver mode</b>Just shows the video, for the drive team.</div>
   </div>
 
+  <div class="full">
   <h3>A tour of our dashboard</h3>
   <p class="prose">This is our PhotonVision's real web dashboard, captured on the Jetson. Click through the tabs. Several of these screens exist only because of our patches (the gallery below has them all).</p>
   <figure class="fig tour">
@@ -136,6 +140,8 @@
     <figcaption>Our PhotonVision, Sept 25, 2026. The camera view is flat gray because the room was dark, and no tag was in view.</figcaption>
   </figure>
 
+  </div>
+
   <!-- ───────────── Inside PhotonVision ───────────── -->
   <h3>Inside PhotonVision: one frame's path</h3>
   <p class="prose">Every camera gets its own <strong>VisionModule</strong>, and inside it a <strong>VisionRunner</strong>: a <span class="term">thread</span> that loops forever, grabbing the next frame, running the pipeline on it, and handing the result on. Click any box to see what it does. The dots are frames.</p>
@@ -144,8 +150,11 @@
     <div class="flowctl"><span>Dashboard open in a browser?</span><div class="seg light" id="pv-view"><button data-v="no" class="on">No one watching</button><button data-v="yes">Someone watching</button></div><span id="pv-view-note"></span></div>
     <div class="flowinfo" id="pv-info"><b>Click a box.</b> Purple-edged boxes live inside each camera's VisionModule.</div>
   </figure>
-  <p class="prose small muted">Class names are PhotonVision's own (and the 4143 fork's <code>AprilTagCudaPipeline</code>). How results travel to the robot is chapter 15; the pose math is chapter 12.</p>
+  <p class="prose small muted full">Class names are PhotonVision's own (and the 4143 fork's <code>AprilTagCudaPipeline</code>). How results travel to the robot is chapter 15; the pose math is chapter 12.</p>
 
+  <p class="prose short">Our AprilTag cameras use the <strong>AprilTagCuda</strong> pipeline, which hands detection to the GPU (chapter 08). Beside the pipelines, PhotonVision also records the cameras when the robot asks, reports the Jetson's health to the robot, and restarts a camera that stops sending frames.</p>
+
+  <div class="full">
   <!-- ───────────── Family tree ───────────── -->
   <h3>Where our copy came from</h3>
   <div class="split top">
@@ -157,7 +166,7 @@
         <li><strong>We</strong> started from 4143's version, merged in upstream's newest 2026 release (v2026.3.4, our patch 00), and added patches 01–34.</li>
         <li>The detector itself is <strong>Austin Schuh's</strong> current code, built from 971's <code>frc971/bos</code> repo, with two patches and our own wrapper.</li>
       </ol>
-      <p>We don't copy their code into our repo. We keep <em>patches</em>: small files that say exactly what we changed, applied fresh at every build. That keeps the credit clear and makes it easy to take the next upstream fix.</p>
+      <p>We don't copy their code into our repo. We keep <em>patches</em>: small files that say exactly what we changed (<a href="#linux">chapter 06</a> shows one), applied fresh at every build. That keeps the credit clear and makes it easy to take the next upstream fix.</p>
     </div>
     <figure class="fig pad" style="margin:0">
       <div class="treewrap"><svg id="pv-tree" viewBox="0 0 540 470" role="img" aria-label="Family tree: upstream PhotonVision and FRC 4143's CUDA fork merge into our fork; Austin Schuh's detector from aos and frc971/bos becomes our detector library"></svg></div>
@@ -179,17 +188,11 @@
   </div>
   <div class="callout pitfall"><h5>The one rule</h5><p>Don't upgrade the robot's PhotonLib past the alpha-6 era. Upstream's alpha-7 changed timestamps to nanoseconds (<a href="https://github.com/PhotonVision/photonvision/pull/2566">#2566</a>), which changed the message layout and its hash, and robot code would crash reading from this Jetson. NetworkTables and <span class="term">time sync</span> are the same in both versions.</p></div>
 
-  <!-- ───────────── What a patch is ───────────── -->
-  <h3>What a patch is, and how the build uses them</h3>
-  <div class="split top">
-    <div class="prose">
-      <p>A <span class="term">patch</span> is a text file that lists changes to someone else's code: which file, where, which lines to remove (red) and which to add (green). This one is our whole <code>bos-02</code> fix to one file of the detector: two added lines that stop the blank-frame crash from chapter 08.</p>
-      <p>Our build script (<code>scripts/host/03-build-photonvision-fork.sh</code>) runs on a laptop. It downloads 4143's fork at one exact commit, resets it, applies every <code>photonvision-*.patch</code> in order with <code>git apply</code>, and builds a single file, a <span class="term" data-term="jar" data-def="Java ARchive: one zip file holding a whole Java program. PhotonVision ships as one jar, about 76 MB.">jar</span>, in about 30 seconds. If a patch doesn't fit anymore, the build stops instead of guessing.</p>
-    </div>
-    <pre class="diff" aria-label="A unified diff adding two lines"><div class="hdr">--- a/third_party/971apriltag/line_fit_filter.cc</div><div class="hdr">+++ b/third_party/971apriltag/line_fit_filter.cc</div><div class="fn">@@ -605,6 +605,8 @@ void FitLines(</div><div class="ctx">  constexpr size_t kThreads = 128;</div><div class="ctx">  const size_t kBlocks = (points + kPointsPerBlock - 2 * kErrorsBuffer - 1) /</div><div class="ctx">                         (kPointsPerBlock - 2 * kErrorsBuffer);</div><div class="add">  // SpectrumJetson: zero points would launch &lt;&lt;&lt;0, kThreads&gt;&gt;&gt; (invalid configuration).</div><div class="add">  if (kBlocks == 0) return;</div><div class="ctx"></div><div class="ctx">  VLOG(1) &lt;&lt; "Spawning with " &lt;&lt; kThreads &lt;&lt; " threads, and " &lt;&lt; kBlocks</div></pre>
-  </div>
+  <!-- ───────────── Build and deploy ───────────── -->
+  <h3>Building and installing it</h3>
+  <p class="prose">Our build script (<code>scripts/host/03-build-photonvision-fork.sh</code>) runs on a laptop: it downloads 4143's fork at one exact commit, applies every <code>photonvision-*.patch</code> in order (what a patch is: <a href="#linux">chapter 06</a>), and builds a single 76 MB <span class="term" data-term="jar" data-def="Java ARchive: one zip file holding a whole Java program. PhotonVision ships as one jar, about 76 MB.">jar</span> in about 30 seconds. If a patch no longer fits, the build stops instead of guessing.</p>
 
-  <figure class="fig buildfig">
+  <figure class="fig buildfig full">
     <svg id="pv-build" viewBox="0 0 1000 300" role="img" aria-label="Animation: the 4143 fork at a pinned commit, patches stacking on top, the jar being built, and the install script checking it"></svg>
     <div class="btns"><button class="btn-sm light" id="pv-build-go">▶ Build and install</button><button class="btn-sm light" id="pv-build-bad">💥 Try a truncated jar</button></div>
   </figure>
@@ -197,24 +200,17 @@
 
   <!-- ───────────── Gallery ───────────── -->
   <h3>Every change we made</h3>
+  <div class="full">
   <p class="prose">Here are all of our patches: 35 to PhotonVision (00–34), 5 to the detectors, and one to Linux's camera driver. Filter by what they're for. Cards with a <strong>story</strong> link have a closer look below.</p>
   <div class="filters" id="pv-filters"></div>
   <div class="gallery" id="pv-gallery"></div>
+  </div>
 
   <!-- ───────────── Stories ───────────── -->
+  <div class="full">
   <h3>The best stories</h3>
   <p class="prose">Real engineering is mostly noticing that something is quietly wrong, finding out why, and proving the fix. These are our favorite examples.</p>
   <div class="stories">
-    <article class="story" id="pv-s09">
-      <div class="vis">
-        <div class="row2">
-          <figure><img src="assets/photos/before-99fps.jpg" alt="PhotonVision stream before: 99 FPS, 19 ms latency" loading="lazy"><figcaption>Before: 99 fps, 19 ms</figcaption></figure>
-          <figure><img src="assets/photos/after-123fps.jpg" alt="PhotonVision stream after: 123 FPS, 14 ms latency, with 3D pose axes" loading="lazy"><figcaption>After: 123 fps, 14 ms</figcaption></figure>
-        </div>
-        <canvas id="pv-c09" aria-label="Bars: decode time 8.9 ms before, 2.6 ms after"></canvas>
-      </div>
-      <div class="txt"><span class="pn">photonvision-09 · speed</span><h4>The hidden color decode</h4><p>We asked for gray frames, and got them. But inside, cscore still decoded every JPEG to <b>full color first</b>, then threw the color away: 8.9 ms a frame. Our detector library now decodes the camera's JPEG straight to gray: <b>2.6 ms</b>. Both cameras reached 122 fps. The full detective story is <a href="#speed">chapter 10</a>.</p></div>
-    </article>
 
     <article class="story" id="pv-s27">
       <div class="vis"><canvas id="pv-c27" aria-label="A sharp tag at 1280 by 800 next to a blurry tag upscaled from 320 by 240, and 20 restarts with one failing"></canvas></div>
@@ -225,14 +221,6 @@
       <div class="vis"><canvas id="pv-c15" aria-label="Frames flowing to the pipeline always, and to the stream only while a browser watches"></canvas>
         <div class="ctlmini"><span>Browser:</span><div class="seg" id="pv-s15-seg"><button data-v="0" class="on">Closed</button><button data-v="1">Watching</button></div></div></div>
       <div class="txt"><span class="pn">photonvision-15 · speed</span><h4>Stream only when watched</h4><p>For the dashboard video, PhotonVision shrank, color-converted and drew boxes on <b>every frame</b>, 122 a second, even with no browser open. Now the stream thread gets a frame only while someone is watching, and at most 30 a second. Snapshots still work. With no viewer: <b>0.49 → 0.43 cores</b>; with one: 0.52 → 0.47.</p></div>
-    </article>
-
-    <article class="story" id="pv-s10">
-      <div class="vis">
-        <div class="ctlmini" style="margin:0 0 8px"><span>Raw exposure value</span><input type="range" id="pv-exp" min="10" max="300" value="295"></div>
-        <canvas id="pv-c10" aria-label="The raw exposure number, what it really means in milliseconds, and the frame rate it allows"></canvas>
-      </div>
-      <div class="txt"><span class="pn">photonvision-10 · usability</span><h4>Exposure in milliseconds</h4><p>USB cameras count exposure in the UVC standard's units of <b>100 µs</b>. So "295" looked tiny but meant <b>29.5 ms</b>, which caps a camera at 34 fps, and stock PhotonVision didn't say. We only found it by reading the camera's control directly. The slider now reads "Exposure (5.0 ms)", and new cameras start at 5 ms. (Chapter 04 has the exposure lab.)</p></div>
     </article>
 
     <article class="story" id="pv-s13">
@@ -250,17 +238,6 @@
       <div class="txt"><span class="pn">photonvision-30 · calibration &amp; field</span><h4>Calibrating the event's field</h4><p>Real fields aren't built perfectly: a tag can sit a few centimeters off. On our Field Calibration page you push the robot to 10–20 spots and hold it still at each. The Jetson replays the recording through the same GPU detector, then solves every tag's real position and every camera's mount. On synthetic tests: tags to a few mm, camera height to 4 mm. The 3D view uses <em>FIRST</em>'s own field CAD. (Shop test on real tags: still to do.)</p></div>
     </article>
 
-    <article class="story" id="pv-s32">
-      <div class="vis"><img src="assets/photos/camera-matching.jpg" alt="PhotonVision's Camera Matching page with 5 cameras streaming: 2 Thrifty, 2 Global Shutter and a USB color camera" loading="lazy" style="width:100%;border-radius:8px;display:block"><img src="assets/from-jetson/screenshots/camera-matching-usb-bandwidth.webp" alt="The USB bandwidth card: budget bar and four cameras' allocations" loading="lazy" style="width:100%;border-radius:8px;display:block;margin-top:10px"><div style="font-size:.72rem;color:var(--lab-muted);padding-top:6px">Top: 5 cameras streaming (earlier photo). Bottom: the USB bandwidth card, our PhotonVision, Sept 25, 2026.</div></div>
-      <div class="txt"><span class="pn">photonvision-31, -32 · diagnostics</span><h4>Seeing the USB budget</h4><p>All the Jetson's USB 2.0 ports share one budget of about 6,700 bytes every 125 µs, and five cameras fill it. The Camera Matching page (top: all 5 streaming) now has a USB bandwidth card (bottom, with 4 cameras): the budget as a bar, what each camera reserves and really sends, and a menu to change a camera's share. Patch 31 spots "not enough bandwidth" in the kernel log and names the port. Try it yourself in <a href="#speed">chapter 10's USB lab</a>.</p></div>
-    </article>
-
-    <article class="story" id="pv-s34">
-      <div class="vis"><canvas id="pv-c34" aria-label="A tag image that gets sharper or blurrier as you turn the lens, with a 3 by 3 grid of focus scores"></canvas>
-        <div class="ctlmini"><span>Turn the lens</span><input type="range" id="pv-focus" min="0" max="100" value="55"><button class="btn-sm" id="pv-focus-reset">Reset</button></div></div>
-      <div class="txt"><span class="pn">photonvision-34 · calibration &amp; field</span><h4>A focus score</h4><p>A soft lens loses far tags. The Camera page's Focus card measures sharpness (the <em>variance of the Laplacian</em>: how strongly brightness jumps between neighboring pixels) on a 3×3 grid, about 5 times a second, off the vision thread. Turn the lens past the sharpest point and back. Each cell is shown against its own best since Reset. Here the lens is slightly tilted, so the right side peaks at a different spot: that's what the grid is for. <span class="muted">(Computed live on a synthetic image.)</span></p></div>
-    </article>
-
     <article class="story" id="pv-s22">
       <div class="vis"><div class="tagchips" id="pv-tags"></div><div class="ctlmini"><span id="pv-tags-note"></span></div></div>
       <div class="txt"><span class="pn">photonvision-22 · calibration &amp; field</span><h4>Leaving out a bad tag</h4><p>If a tag is mounted wrong at an event, one bad tag can drag every multi-tag pose off. Type its number on the Settings page (say <code>7, 12</code>), or have robot code add it, and every camera's multi-tag solve ignores it. It's still reported as a target, dimmed. You list the bad tags, not the good ones. Click tags above to try it.</p></div>
@@ -271,7 +248,15 @@
       <div class="txt"><span class="pn">photonvision-25 · usability</span><h4>Copy settings between cameras</h4><p>Before, you photographed one camera's settings and typed them into the next. Now the pipeline menu has <b>Copy settings from…</b>: tick the groups you want, copy from any camera into this one, or into the same pipeline on every camera. Names, orientation and each camera's exposure limits are never copied, and resolution only between cameras that have the same video modes.</p></div>
     </article>
   </div>
+  <ul class="elsewhere">
+    <li><b>Told in other chapters:</b></li>
+    <li>The hidden color decode (patch 09: 8.9 → 2.6 ms a frame) and the USB bandwidth card (patches 31–32): <a href="#speed">chapter 10</a>.</li>
+    <li>Exposure in milliseconds (patch 10: "295" meant 29.5 ms): <a href="#settings">chapter 04</a>.</li>
+    <li>The focus score (patch 34): <a href="#camera">chapter 03</a>.</li>
+  </ul>
+  </div>
 
+  <div class="full">
   <!-- ───────────── Bugs ───────────── -->
   <h3>Bugs we found and fixed</h3>
   <p class="prose">None of this code was written for our exact setup, so we found real bugs. Each row is a story: what we saw, why it happened, what we changed, and what it taught us.</p>
@@ -286,13 +271,25 @@
     <a class="video" href="https://www.youtube.com/watch?v=iV2v7F_9GwE" target="_blank" rel="noopener">PhotonVision: Automating with AprilTags and PhotonVision, Champs 2024 talk (49:26)</a>
   </div>
 
-  <div class="recap reveal">
+  </div>
+
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Chapter 9 recap</h5>
+    <ul>
+      <li>PhotonVision runs one thread per camera: grab a frame, find the tags, work out the pose, and send the result to the robot over NetworkTables.</li>
+      <li>The AprilTagCuda pipeline finds tags on the GPU; the pose is solved next, and the dashboard stream is prepared only for a viewer.</li>
+      <li>Robot code reads the results with PhotonLib, the same as from any PhotonVision camera.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
     <h5>Chapter 9 recap</h5>
     <ul>
       <li>PhotonVision runs one VisionRunner thread per camera: grab a frame, run the pipeline (detect, then pose), publish the result to NetworkTables, and feed the dashboard stream.</li>
       <li>Ours is FRC 4143's CUDA fork, merged with upstream v2026.3.4, plus our patches 01–34, running Austin Schuh's detector from frc971/bos.</li>
       <li>It works with 2027 robot code because the message hash matches. Don't upgrade the robot's PhotonLib past alpha-6.</li>
-      <li>A patch is a small file of exact changes; the build applies them all to a pinned commit, and the installer refuses a broken jar.</li>
+      <li>The build applies every patch to a pinned commit, and the installer refuses a broken jar.</li>
       <li>The best fixes came from measuring: a hidden color decode, a silent 320×240 camera, frozen frames, a leak that only showed after minutes.</li>
     </ul>
   </div>

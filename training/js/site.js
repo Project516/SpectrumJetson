@@ -225,11 +225,13 @@
   Site.watchReveals = (root) => root.querySelectorAll('.reveal').forEach((el) => reveal.observe(el));
 
   async function load() {
-    const secs = [...document.querySelectorAll('section.chapter[data-src]')];
+    const secs = [...document.querySelectorAll('section[data-src]')];
     // Fetch every partial in parallel, insert in order.
     const htmls = await Promise.all(secs.map((s) => fetch(s.dataset.src).then((r) => (r.ok ? r.text() : `<div class="shell"><p>Missing ${s.dataset.src}</p></div>`)).catch(() => `<div class="shell"><p>Could not load ${s.dataset.src}. Open this site through a web server (see training/README.md).</p></div>`)));
     secs.forEach((s, i) => { s.innerHTML = htmls[i]; });
+    measureTimes();
     buildToc();
+    showTimes();
     Site.watchReveals(document);
     // Initialise each chapter's interactive parts when it gets near the screen.
     secs.forEach((s) => {
@@ -253,18 +255,75 @@
         if (part) roadHtml += '</div>';
         part = s;
         html += `<h4>Part ${s.dataset.num} · ${s.dataset.title}</h4>`;
-        roadHtml += `<div class="road-part reveal"><h4><span>${s.dataset.num}</span>${s.dataset.title}</h4><p>${s.querySelector('p')?.textContent || ''}</p>`;
+        roadHtml += `<div class="road-part reveal"><h4><span>${s.dataset.num}</span>${s.dataset.title}</h4><p>${s.querySelector('p')?.innerHTML || ''}</p>`;
       } else {
-        const t = s.dataset.title, n = s.dataset.n;
-        html += `<a href="#${s.id}"><b>${n}</b>${t}</a>`;
-        roadHtml += `<a href="#${s.id}"><b>${n}</b>${t}</a>`;
+        const t = s.dataset.title, n = s.dataset.n, cls = s.classList.contains('full') ? ' class="full"' : '';
+        const tm = `<i data-ts="${s.dataset.tshort}" data-tf="${s.dataset.tfull}"></i>`;
+        html += `<a href="#${s.id}"${cls}><b>${n}</b>${t}${tm}</a>`;
+        roadHtml += `<a href="#${s.id}"${cls}><b>${n}</b>${t}${tm}</a>`;
       }
     });
     toc.innerHTML = html;
     if (road) road.innerHTML = roadHtml + '</div>';
   }
 
+  /* ── Short / Full mode ──────────────────────────────────
+     body.mode-short hides .full and details.deep; body.mode-full hides .short.
+     Chosen with ?mode=short|full, the switches, or the last choice (localStorage). */
+  const getSaved = () => { try { return localStorage.getItem('vt-mode'); } catch (e) { return null; } };
+  Site.mode = new URLSearchParams(location.search).get('mode') || getSaved() || 'short';
+  if (Site.mode !== 'full') Site.mode = 'short';
+  const applyClass = (m) => { document.body.classList.toggle('mode-short', m === 'short'); document.body.classList.toggle('mode-full', m === 'full'); };
+  Site.setMode = (m, keepPlace = true) => {
+    if (m !== 'short' && m !== 'full') return;
+    // keep the reader's place: remember what's at the top of the screen, restore it after the switch
+    let anchor = null, top = 0;
+    if (keepPlace && scrollY > innerHeight) {
+      const el = document.elementFromPoint(innerWidth / 2, 90);
+      anchor = el && (el.closest('.full, .short, details.deep') ? el.closest('section') : el);
+      top = anchor ? anchor.getBoundingClientRect().top : 0;
+    }
+    Site.mode = m;
+    applyClass(m);
+    try { localStorage.setItem('vt-mode', m); } catch (e) {}
+    document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
+    showTimes();
+    if (anchor) scrollBy(0, anchor.getBoundingClientRect().top - top);
+    dispatchEvent(new CustomEvent('site:mode', { detail: m }));
+  };
+  // Reading time per chapter and mode: visible words at ~220 wpm plus ~1 min per lab.
+  function measureTimes() {
+    const chapters = [...document.querySelectorAll('section.chapter')];
+    const measure = (m) => {
+      applyClass(m);
+      let total = 0;
+      chapters.forEach((c) => {
+        const hidden = m === 'short' && c.classList.contains('full');
+        const words = hidden ? 0 : (c.innerText.match(/\S+/g) || []).length;
+        const labs = hidden ? 0 : [...c.querySelectorAll('.lab')].filter((l) => l.offsetParent).length;
+        const min = hidden ? 0 : Math.max(1, Math.round(words / 220 + labs));
+        // content a chapter builds with JS after load (e.g. the quiz) isn't in the DOM yet: data-extra-short / data-extra-full add minutes for it
+        const t = min + (hidden ? 0 : +(c.dataset['extra' + m[0].toUpperCase() + m.slice(1)] || 0));
+        c.dataset['t' + m] = t;
+        total += t;
+      });
+      return total;
+    };
+    Site.totals = { short: measure('short'), full: measure('full') };
+    applyClass(Site.mode);
+  }
+  const fmt = (min) => (min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`);
+  function showTimes() {
+    if (!Site.totals) return;
+    document.querySelectorAll('.t-short').forEach((e) => (e.textContent = '~' + fmt(Site.totals.short)));
+    document.querySelectorAll('.t-full').forEach((e) => (e.textContent = '~' + fmt(Site.totals.full)));
+    document.querySelectorAll('.modesw [data-mode] small').forEach((e) => (e.textContent = fmt(Site.totals[e.parentElement.dataset.mode])));
+    document.querySelectorAll('i[data-ts]').forEach((e) => (e.textContent = (Site.mode === 'short' ? e.dataset.ts : e.dataset.tf) + ' min'));
+  }
+
   function chrome() {
+    applyClass(Site.mode);
+    document.querySelectorAll('[data-mode]').forEach((b) => { b.classList.toggle('on', b.dataset.mode === Site.mode); b.addEventListener('click', () => Site.setMode(b.dataset.mode)); });
     const nav = document.querySelector('.topnav');
     const bar = nav.querySelector('.progress');
     const now = nav.querySelector('.now');
@@ -285,7 +344,7 @@
         bar.style.width = (100 * h.scrollTop) / (h.scrollHeight - innerHeight) + '%';
         // which chapter is at the top?
         let cur = null;
-        for (const s of document.querySelectorAll('section.chapter')) { if (s.getBoundingClientRect().top < innerHeight * .3) cur = s; else break; }
+        for (const s of document.querySelectorAll('section.chapter')) { if (!s.offsetParent) continue; /* hidden in this mode */ if (s.getBoundingClientRect().top < innerHeight * .3) cur = s; else break; }
         const label = cur ? `<b>${cur.dataset.n}</b>${cur.dataset.title}` : '';
         if (now.innerHTML !== label) {
           now.innerHTML = label;

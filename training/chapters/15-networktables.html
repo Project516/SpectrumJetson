@@ -32,6 +32,7 @@
   #networktables .info .meta span { font: 600 .72rem var(--font); background: rgba(255,255,255,.08); border-radius: 6px; padding: 2px 8px; color: var(--lab-ink); }
   #networktables .info p { font-size: .9rem; margin-bottom: .6em; }
   #networktables .info .ex { font: .8rem var(--mono); color: #a3e635; background: #0e0518; border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: pre; }
+  body.mode-short #networktables .nt-ps { grid-template-columns: minmax(0, 1fr); max-width: 640px; margin-top: 24px; }
   #networktables .keys { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--lab-muted); margin-top: 10px; }
   #networktables pre.java { background: #1f1b23; color: #eee8f7; border-radius: 14px; padding: 18px 20px; font: .82rem/1.65 var(--mono); overflow-x: auto; box-shadow: var(--shadow-lg); margin: 0; }
   #networktables pre.java .k { color: #c4b5fd; font-weight: 500; }
@@ -48,7 +49,6 @@
   #networktables .port small { font: .75rem var(--mono); color: var(--muted); }
   #networktables .port-note { font-size: .9rem; margin-top: 12px; min-height: 3em; }
   #networktables .dir-cards .card { border-left: 4px solid #f59e0b; }
-  #networktables .hash { font: 600 clamp(.72rem, 2.4vw, 1rem) var(--mono); letter-spacing: .02em; color: var(--p700); background: var(--accent-low); padding: 10px 14px; border-radius: 10px; display: inline-block; word-break: break-all; }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -57,7 +57,13 @@
     <p class="lede">The Jetson has found the tags and worked out where the robot is. None of that matters until the robot code hears about it. Here's how the answer travels down an Ethernet cable, and what the robot code does with it.</p>
   </div>
 
-  <div class="split">
+  <div class="prose short">
+    <p>The Jetson plugs into the robot's network with an <span class="term">Ethernet</span> cable: it's <code>10.85.15.15</code>, the SystemCore <code>10.85.15.2</code>. They share data through <span class="term">NetworkTables</span>, WPILib's shared whiteboard. Every value has a named <span class="term">topic</span>; programs publish or subscribe; the server, in the robot code, pushes each change to every subscriber. Every frame, PhotonVision publishes each camera's result (tags, corners, poses, timestamp) on <code>/photonvision/&lt;camera&gt;/rawBytes</code>.</p>
+    <p>Robot code reads it with <span class="term">PhotonLib</span>: <code>new PhotonCamera("TopLeft")</code>, <code>getAllUnreadResults()</code>, a pose estimator, and <code>addVisionMeasurement(pose, timestamp)</code>. Our cameras are named after the USB port they're in, because every Thriftiest Cam has the same serial number.</p>
+  </div>
+
+
+  <div class="split full">
     <div class="prose">
       <h3 style="margin-top:0">A cable and two addresses</h3>
       <p>The Jetson plugs into the robot's network with an <span class="term">Ethernet</span> cable, the same kind of cable a desktop computer uses. The robot's radio acts as a small network switch, connecting the Jetson, the <span class="term">SystemCore</span> and (over Wi-Fi) the driver station laptop.</p>
@@ -74,7 +80,7 @@
     </figure>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Open up a packet</h4></div>
     <div class="lab-grid">
       <div>
@@ -94,9 +100,9 @@
     </div>
   </div>
 
-  <h3>NetworkTables: a shared whiteboard</h3>
-  <div class="split flip">
-    <div class="prose">
+  <h3 class="full">NetworkTables: a shared whiteboard</h3>
+  <div class="split flip nt-ps">
+    <div class="prose full">
       <p><span class="term">NetworkTables</span> is WPILib's way for programs on the robot network to share values. Think of a whiteboard in the pit that everyone can see:</p>
       <ul>
         <li>Each value has a name, called a <span class="term">topic</span>, written like a file path: <code>/photonvision/TopLeft/hasTarget</code>.</li>
@@ -118,13 +124,13 @@
     </div>
   </div>
 
-  <h3>What PhotonVision publishes</h3>
-  <div class="prose">
+  <h3 class="full">What PhotonVision publishes</h3>
+  <div class="prose full">
     <p>Each camera gets its own folder of topics, named after the camera: <code>/photonvision/TopLeft/…</code>. The important one is <code>rawBytes</code>. Every frame, PhotonVision packs everything it found into one compact binary blob, a <code>PhotonPipelineResult</code>, and publishes it there. PhotonLib, on the robot, unpacks it.</p>
-    <p>Our patches added a lot more: Jetson health, per-camera health, settings snapshots for the robot log, Rewind controls. Browse the whole tree below. Arrows show which way the data flows.</p>
+    <p>Our patches added a lot more: health, settings snapshots, Rewind controls. Browse the tree below.</p>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Our topic tree</h4></div>
     <div class="tree-lab">
       <div>
@@ -135,21 +141,7 @@
     </div>
   </div>
 
-  <div class="split top">
-    <div class="prose">
-      <h3 style="margin-top:0">Why a 2026 Jetson can talk to 2027 robot code</h3>
-      <p>The CUDA version of PhotonVision only exists for 2026. Our robot runs 2027 WPILib on a SystemCore, with 2027 PhotonLib. Normally you'd match versions exactly. We checked the source code instead:</p>
-      <ul>
-        <li><strong>The message layout matches.</strong> PhotonLib computes a fingerprint (a hash) of the exact layout of <code>PhotonPipelineResult</code> and every message inside it. If the Jetson's fingerprint differs, PhotonLib refuses the data. Both versions produce the same one.</li>
-        <li><strong>NetworkTables 4</strong> is the same protocol, port 5810, same encoding.</li>
-        <li><strong>Time sync</strong> uses the same packet layout and microsecond timebase.</li>
-      </ul>
-    </div>
-    <div>
-      <div class="callout spectrum" style="margin-top:0"><h5>The fingerprint</h5><p><code>PhotonPipelineResult</code>'s layout hash, identical on both sides:</p><p><span class="hash">4b2ff16a964b5e2bf04be0c1454d91c4</span></p></div>
-      <div class="callout pitfall"><h5>The one rule</h5><p><strong>Don't upgrade the robot's PhotonLib past alpha-6.</strong> PhotonVision renamed the timestamp fields after alpha-7, which changes the hash. The robot code would throw an error the first time it read from this Jetson. We use <code>photonlib v2027.0.0-alpha-2</code>.</p></div>
-    </div>
-  </div>
+  <div class="callout pitfall full"><h5>Versions: the one rule</h5><p>Our Jetson runs 2026 PhotonVision and the robot runs 2027 PhotonLib. That works because the message layout (its fingerprint hash) is identical in both, as we checked in the source (<a href="#photonvision">chapter 9</a>). So <strong>don't upgrade the robot's PhotonLib past alpha-6</strong>: later versions changed the layout, and the robot code would throw an error reading from this Jetson.</p></div>
 
   <details class="deep"><summary>What's inside a PhotonPipelineResult</summary><div>
     <p>Field names from PhotonVision's message definitions (<code>photon-serde/messages.yaml</code>, v2026.3.4). PhotonLib turns these into Java objects with getters like <code>getYaw()</code> and <code>getBestCameraToTarget()</code>.</p>
@@ -160,8 +152,8 @@
     </ul>
   </div></details>
 
-  <h3>The robot side: PhotonLib</h3>
-  <div class="split top">
+  <h3 class="full">The robot side: PhotonLib</h3>
+  <div class="split top full">
     <div class="prose">
       <p>Robot code uses <span class="term">PhotonLib</span> to read the camera's results. The steps:</p>
       <ol>
@@ -194,10 +186,10 @@
       e.timestampSeconds));   <span class="c">// capture time, robot clock</span>
 }</pre>
   </div>
-  <p class="small muted">Checked against PhotonLib <code>v2027.0.0-alpha-2</code> (the <code>PhotonPoseEstimator(layout, robotToCamera)</code> constructor and the <code>estimate…Pose</code> methods) and WPILib's 2026 field list. The mount numbers are made up. In WPILib's <code>Rotation3d</code>, positive pitch points the camera down, so a camera tilted up has a negative pitch.</p>
+  <p class="small muted full">Checked against PhotonLib <code>v2027.0.0-alpha-2</code> (the <code>PhotonPoseEstimator(layout, robotToCamera)</code> constructor and the <code>estimate…Pose</code> methods) and WPILib's 2026 field list. The mount numbers are made up. In WPILib's <code>Rotation3d</code>, positive pitch points the camera down, so a camera tilted up has a negative pitch.</p>
 
-  <h3>Four ports, four names</h3>
-  <div class="split">
+  <h3 class="full">Four ports, four names</h3>
+  <div class="split full">
     <div class="prose">
       <p>Here's a strange fact: <strong>every Thriftiest Cam reports the same name and the same serial number.</strong> To software, two of them are identical. So PhotonVision tells them apart by the only thing that differs: which USB port each is plugged into. We named the cameras after their ports, and the robot code uses the same names.</p>
       <div class="callout pitfall"><h5>Swap two cables, swap two calibrations</h5><p>A calibration belongs to one physical camera and lens. If TopLeft's camera ends up in TopRight's port, PhotonVision happily uses the wrong calibration and the wrong mount position, with no error. That's why the ports and cables get labels, and why the plugs get hot glue.</p></div>
@@ -214,9 +206,9 @@
     </div>
   </div>
 
-  <h3>The other direction: robot → Jetson</h3>
-  <p class="prose">NetworkTables works both ways. The robot code doesn't just listen; it also tells the Jetson things.</p>
-  <div class="cards dir-cards">
+  <h3 class="full">The other direction: robot → Jetson</h3>
+  <p class="prose full">NetworkTables works both ways. The robot code doesn't just listen; it also tells the Jetson things.</p>
+  <div class="cards dir-cards full">
     <div class="card"><div class="icon">🕐</div><h4>The time</h4><p>The robot is the time sync server (UDP 5810), so Jetson timestamps can be converted to robot time. It also publishes its date on <code>/photonvision/clock/unixMs</code> so the Jetson's logs and recordings get real dates.</p><span class="chip">photonvision-08</span></div>
     <div class="card"><div class="icon">⏺️</div><h4>Record Rewind</h4><p>Set <code>/photonvision/rewind/record</code> true and every camera is saved to the SSD. Our robot code will do it for each FMS match, named by the match (in progress).</p><span class="chip">photonvision-07</span></div>
     <div class="card"><div class="icon">💤</div><h4>Rest while disabled</h4><p><code>camera.setEnabled(false)</code> stops a camera's processing, so the Jetson runs cooler while the robot waits for a match. A robot-set FPS limit does something similar.</p><span class="chip">photonvision-11</span></div>
@@ -225,21 +217,30 @@
     <div class="card"><div class="icon">🚫</div><h4>Leave out a bad tag</h4><p>If a tag is mounted wrong at an event, robot code can list it on <code>/photonvision/excludedTags</code>, and every camera's multi-tag solve ignores it.</p><span class="chip">photonvision-22</span></div>
   </div>
 
-  <div class="deeper">
+  <div class="deeper full">
     <a href="https://docs.photonvision.org/en/latest/docs/programming/photonlib/getting-target-data.html">PhotonLib: getting target data</a>
     <a href="https://docs.photonvision.org/en/latest/docs/programming/photonlib/robot-pose-estimator.html">PhotonLib: pose estimator</a>
     <a href="https://docs.wpilib.org/en/stable/docs/software/networktables/networktables-intro.html">WPILib: what is NetworkTables</a>
   </div>
 
-  <div class="recap reveal">
+  <div class="recap reveal short">
     <h5>Chapter 15 recap</h5>
     <ul>
-      <li>The Jetson (<code>10.85.15.15</code>, static) and SystemCore (<code>10.85.15.2</code>) share the robot's Ethernet network. Data travels in packets, layer inside layer.</li>
+      <li>The Jetson (10.85.15.15) and SystemCore (10.85.15.2) share the robot's Ethernet network.</li>
+      <li>NetworkTables is a publish/subscribe whiteboard; the server lives in the robot code, and each camera's results arrive on <code>rawBytes</code>.</li>
+      <li>Robot code: <code>PhotonCamera</code> → <code>getAllUnreadResults()</code> → pose estimator → <code>addVisionMeasurement</code>.</li>
+    </ul>
+  </div>
+
+  <div class="recap reveal full">
+    <h5>Chapter 15 recap</h5>
+    <ul>
+      <li>The Jetson (<code>10.85.15.15</code>, static) and SystemCore (<code>10.85.15.2</code>) share the robot's Ethernet network. Data travels in packets.</li>
       <li>NetworkTables 4 is a publish/subscribe whiteboard. The server lives in the robot code; PhotonVision and dashboards are clients on port 5810.</li>
       <li>Each camera publishes a <code>PhotonPipelineResult</code> on <code>rawBytes</code>: targets, corners, candidate poses, ambiguity, multi-tag result, timestamps.</li>
-      <li>A matching layout hash lets our 2026 PhotonVision talk to 2027 PhotonLib. Don't upgrade PhotonLib past alpha-6.</li>
+      <li class="full">A matching layout hash lets our 2026 PhotonVision talk to 2027 PhotonLib. Don't upgrade PhotonLib past alpha-6.</li>
       <li>Robot code: <code>PhotonCamera("TopLeft")</code> → <code>getAllUnreadResults()</code> → <code>PhotonPoseEstimator</code> → <code>addVisionMeasurement(pose, timestamp)</code>.</li>
-      <li>The robot talks back: time, Rewind, <code>setEnabled</code>, pipeline profiles, camera mounts, excluded tags.</li>
+      <li class="full">The robot talks back: time, Rewind, <code>setEnabled</code>, pipeline profiles, camera mounts, excluded tags.</li>
     </ul>
   </div>
 </div>

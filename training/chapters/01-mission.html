@@ -47,11 +47,11 @@
     </div>
   </div>
 
-  <h3>The whole system on one page</h3>
-  <p class="prose">This course follows a single camera <span class="term">frame</span> from start to finish. Here's the route. Every box is a chapter, so click one to jump ahead, or just keep scrolling. The whole trip takes about <strong>15 milliseconds</strong>, less time than a single frame of a movie stays on screen.</p>
-  <div class="pipeline fig reveal" style="padding:14px"><svg id="m-pipe" viewBox="0 0 1100 330" role="img" aria-label="Pipeline: light, camera sensor, JPEG over USB, Jetson decode, GPU detection, pose solve, NetworkTables, SystemCore"></svg></div>
+  <h3 class="full">The whole system on one page</h3>
+  <p class="prose full">This course follows a single camera <span class="term">frame</span> from start to finish. Here's the route. Every box is a chapter, so click one to jump ahead, or just keep scrolling. The whole trip takes about <strong>15 milliseconds</strong>, less time than a single frame of a movie stays on screen.</p>
+  <div class="pipeline fig reveal full" style="padding:14px"><svg id="m-pipe" viewBox="0 0 1100 330" role="img" aria-label="Pipeline: light, camera sensor, JPEG over USB, Jetson decode, GPU detection, pose solve, NetworkTables, SystemCore"></svg></div>
 
-  <div class="stats reveal">
+  <div class="stats reveal full">
     <div class="stat"><b>120<small>fps</small></b><span>frames per second, per camera, at full 1280×800 resolution</span></div>
     <div class="stat"><b>~2<small>ms</small></b><span>for the GPU to find every tag in a frame</span></div>
     <div class="stat"><b>~15<small>ms</small></b><span>from light hitting the sensor to an answer ready for the robot</span></div>
@@ -63,9 +63,9 @@
   <div class="split top">
     <div class="prose">
       <p>The robot's main computer is the <span class="term">SystemCore</span>, which runs our robot code. Finding AprilTags 120 times a second on several cameras is too much work to add on top, so we give it to a second computer, a <span class="term">coprocessor</span>: an <strong>NVIDIA Jetson Orin Nano Super</strong>.</p>
-      <p>The Jetson runs <span class="term">PhotonVision</span>, free vision software many FRC teams use. Ours is a special version that sends the hardest work to the Jetson's <span class="term">GPU</span>, using a detector written by Austin Schuh of FRC 971. We fixed bugs, made it faster and added match-day safety features, all covered later.</p>
-      <p>The photo on the right is our first bench test: the Jetson (the black board with the fan), one Thriftiest Cam, and a laptop running PhotonVision's web dashboard. The video shows the system tracking a tag at 121–123 frames per second. The colored lines are its guess of the tag's 3D position and angle, updated every frame.</p>
-      <div class="callout spectrum"><h5>What we built</h5><p>Everything here is scripted in our <a href="https://github.com/Spectrum3847/SpectrumJetson">SpectrumJetson</a> repo, so another Jetson can be set up the same way. The README explains what we did and why, including the mistakes.</p></div>
+      <p class="full">The Jetson runs <span class="term">PhotonVision</span>, free vision software many FRC teams use. Ours is a special version that sends the hardest work to the Jetson's <span class="term">GPU</span>, using a detector written by Austin Schuh of FRC 971. We fixed bugs, made it faster and added match-day safety features, all covered later.</p>
+      <p class="full">The photo on the right is our first bench test: the Jetson (the black board with the fan), one Thriftiest Cam, and a laptop running PhotonVision's web dashboard. The video shows the system tracking a tag at 121–123 frames per second. The colored lines are its guess of the tag's 3D position and angle, updated every frame.</p>
+      <div class="callout spectrum full"><h5>What we built</h5><p>Everything here is scripted in our <a href="https://github.com/Spectrum3847/SpectrumJetson">SpectrumJetson</a> repo, so another Jetson can be set up the same way. The README explains what we did and why, including the mistakes.</p></div>
     </div>
     <div class="photo-row" style="margin:0">
       <figure><img src="assets/photos/bench-setup.jpg" alt="Jetson Orin Nano with a fan, a Thriftiest Cam and a laptop on a classroom desk" loading="lazy"><figcaption class="caption">First bench test, Sept 23, 2026.</figcaption></figure>

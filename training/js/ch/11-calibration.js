@@ -780,7 +780,7 @@ Site.chapter('calibration', (root) => {
       $('#cal-real-mean').textContent = (sum / kept).toFixed(2) + ' px';
       $('#cal-real-f').textContent = `${j.K[0].toFixed(1)}, ${j.K[1].toFixed(1)}`;
       $('#cal-real-c').textContent = `${j.K[2].toFixed(1)}, ${j.K[3].toFixed(1)}`;
-      $('#cal-real-note').textContent = `The corners only reach x ${x0.toFixed(0)}–${x1.toFixed(0)} px and y ${y0.toFixed(0)}–${y1.toFixed(0)} px, and none landed in the image's four corners. Past about 49° off-axis this lens model turns back (the Go deeper above), so tags in the far corners can't be used. A calibration with board views right into the corners would fix it.`;
+      $('#cal-real-note').textContent = `The corners only reach x ${x0.toFixed(0)}–${x1.toFixed(0)} px and y ${y0.toFixed(0)}–${y1.toFixed(0)} px, and none landed in the image's four corners. That's why this lens model can't be trusted in the far corners (see "where it gives up" above). The next calibration should reach them.`;
       drawSnap(); drawAll();
     });
   }

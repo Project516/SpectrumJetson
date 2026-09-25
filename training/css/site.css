@@ -321,3 +321,25 @@ details.deep > div { padding: 0 18px 8px; }
 .photo { margin: 0; }
 .photo img, .photo video { width: 100%; border-radius: var(--radius); box-shadow: var(--shadow-lg); }
 .photo figcaption { font-size: .85rem; color: var(--muted); padding-top: 8px; }
+
+/* ── Short / Full mode ─────────────────────────────────────
+   .full        only in the full course
+   .short       only in the short tour (bridging summaries)
+   details.deep is always full-only. A whole chapter can be section.chapter.full. */
+body.mode-short .full, body.mode-short details.deep { display: none !important; }
+body.mode-full .short { display: none !important; }
+.modesw { display: inline-flex; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.22); border-radius: 9px; padding: 3px; gap: 2px; }
+.modesw button { background: transparent; border: 0; color: rgba(255,255,255,.75); font: 700 .8rem var(--font); padding: 5px 11px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+.modesw button.on { background: #fff; color: var(--p800); }
+.modesw button small { font-weight: 600; opacity: .7; margin-left: 4px; }
+@media (max-width: 640px) { .topnav .modesw button small { display: none; } }
+.mode-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 26px; max-width: 640px; pointer-events: auto; }
+.mode-pick button { text-align: left; background: rgba(255,255,255,.06); border: 1.5px solid rgba(255,255,255,.25); color: #fff; border-radius: 14px; padding: 14px 16px; cursor: pointer; font: inherit; transition: background .15s, border-color .15s, transform .15s; }
+.mode-pick button:hover { background: rgba(255,255,255,.12); transform: translateY(-2px); }
+.mode-pick button.on { border-color: var(--accent-soft); background: rgba(196,181,253,.16); }
+.mode-pick b { display: block; font: 800 1.1rem var(--font-heading); }
+.mode-pick span { font-size: .86rem; color: rgba(255,255,255,.72); line-height: 1.4; display: block; margin-top: 3px; }
+.mode-pick em { font-style: normal; color: var(--accent-soft); font-weight: 700; }
+@media (max-width: 520px) { .mode-pick { grid-template-columns: 1fr; } }
+.toc a i, .road-part a i { font-style: normal; margin-left: auto; font: 500 .72rem var(--mono); opacity: .6; padding-left: 8px; white-space: nowrap; }
+.road-part a { display: flex; }

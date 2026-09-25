@@ -1,0 +1,68 @@
+<style>
+  #preview { padding: 90px 0 70px; background: linear-gradient(180deg, var(--p900) 0, #1d0833 100%); color: var(--lab-ink); }
+  #preview .eyebrow { color: var(--accent-soft); }
+  #preview h2 { color: #fff; }
+  #preview h2 em { color: var(--accent-soft); }
+  #preview .lede { color: rgba(255,255,255,.75); font-size: 1.15rem; max-width: 62ch; }
+  #preview .pv-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+  @media (max-width: 900px) { #preview .pv-grid { grid-template-columns: 1fr; } }
+  #preview .pv-panel { background: #0e0518; border: 1px solid var(--lab-line); border-radius: 14px; overflow: hidden; position: relative; }
+  #preview .pv-panel h5 { margin: 0; padding: 10px 14px; font: 700 .72rem var(--font); letter-spacing: .14em; text-transform: uppercase; color: var(--accent-soft); display: flex; justify-content: space-between; gap: 10px; }
+  #preview .pv-panel h5 span { color: var(--lab-muted); letter-spacing: 0; text-transform: none; font: 500 .78rem var(--mono); }
+  #preview canvas { width: 100%; display: block; touch-action: none; }
+  #preview #pv-field { cursor: grab; }
+  #preview #pv-field.drag { cursor: grabbing; }
+  #preview .pv-ctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--lab-line); font-size: .82rem; color: var(--lab-muted); }
+  #preview .pv-ctl input[type=range] { flex: 1 1 140px; min-width: 120px; }
+  #preview .pv-hint { font-size: .85rem; color: var(--lab-muted); margin: 10px 2px 0; }
+  #preview .pv-hint kbd { background: rgba(255,255,255,.1); color: #fff; }
+  #preview .pv-steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0; margin-top: 18px; }
+  @media (max-width: 900px) { #preview .pv-steps { grid-template-columns: repeat(2, 1fr); gap: 8px; } }
+  #preview .pv-step { position: relative; display: block; text-decoration: none; color: inherit; background: rgba(255,255,255,.04); border: 1px solid var(--lab-line); padding: 12px 14px 12px; border-radius: 0; transition: background .2s, border-color .2s; min-height: 118px; }
+  #preview .pv-step:first-child { border-radius: 12px 0 0 12px; }
+  #preview .pv-step:last-child { border-radius: 0 12px 12px 0; }
+  @media (max-width: 900px) { #preview .pv-step, #preview .pv-step:first-child, #preview .pv-step:last-child { border-radius: 12px; } }
+  #preview .pv-step:hover { background: rgba(139,92,246,.18); border-color: var(--accent); }
+  #preview .pv-step.live { border-color: rgba(163,230,53,.55); }
+  #preview .pv-step small { display: block; font: 600 .66rem var(--mono); color: var(--accent-soft); letter-spacing: .06em; }
+  #preview .pv-step b { display: block; font: 700 .98rem var(--font-heading); color: #fff; margin: 2px 0 4px; }
+  #preview .pv-step span { display: block; font: 500 .78rem/1.35 var(--mono); color: #d9f99d; min-height: 2.7em; }
+  #preview .pv-step i { position: absolute; left: 0; bottom: 0; height: 3px; background: #a3e635; width: 0; transition: width .12s linear; }
+  #preview .pv-foot { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 16px; font-size: .88rem; color: var(--lab-muted); }
+  #preview .pv-foot a { color: var(--accent-soft); font-weight: 700; }
+</style>
+<div class="shell">
+  <span class="eyebrow">Before we start · 60 seconds</span>
+  <h2>Drive the robot. <em>See what it sees.</em></h2>
+  <p class="lede">This is the whole system in one screen. Move the robot around the real 2026 field. Its camera sees AprilTags, the Jetson finds them, and the robot works out where it is. Every step below the pictures is a chapter of this course.</p>
+
+  <div class="pv-grid" style="margin-top:26px">
+    <div class="pv-panel">
+      <h5>The field, from above <span id="pv-pose">x 3.0 m · y 4.0 m</span></h5>
+      <canvas id="pv-field" aria-label="Top-down 2026 FRC field. Drag the robot to move it; its camera's view is the purple wedge."></canvas>
+      <div class="pv-ctl">
+        <span>Turn</span><input type="range" id="pv-turn" min="-180" max="180" value="0" aria-label="Robot heading">
+        <button class="btn-sm" id="pv-auto">▶ Auto-drive</button>
+      </div>
+    </div>
+    <div class="pv-panel">
+      <h5>What the camera sees <span id="pv-hud">122 fps · ~15 ms</span></h5>
+      <canvas id="pv-cam" aria-label="The robot camera's view, with detected AprilTags outlined"></canvas>
+      <div class="pv-ctl" id="pv-status" style="color:#d9f99d;font-family:var(--mono)">Looking…</div>
+    </div>
+  </div>
+  <p class="pv-hint">Drag the robot, use the Turn slider, or click the field and use the <kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> keys. Try getting close to a tag, seeing two at once, or facing an empty wall. The green dots are the robot's vision guesses of where it is: watch them spread out when the tags are far away.</p>
+
+  <div class="pv-steps" id="pv-steps">
+    <a class="pv-step" href="#camera"><small>ch 03 · camera</small><b>Light in</b><span data-k="cam">5 ms exposure<br>1,024,000 pixels</span><i></i></a>
+    <a class="pv-step" href="#dataflow"><small>ch 07 · USB</small><b>Send it</b><span data-k="usb">~52 KB JPEG<br>≈ 5 ms on USB</span><i></i></a>
+    <a class="pv-step" href="#apriltags"><small>ch 02 · 08 · GPU</small><b>Find tags</b><span data-k="det">–</span><i></i></a>
+    <a class="pv-step" href="#pose"><small>ch 12 · math</small><b>Solve pose</b><span data-k="pose">–</span><i></i></a>
+    <a class="pv-step" href="#networktables"><small>ch 15 · network</small><b>Tell robot</b><span data-k="nt">NetworkTables<br>to the SystemCore</span><i></i></a>
+    <a class="pv-step" href="#gyro"><small>ch 13 · 14 · robot</small><b>Know where</b><span data-k="est">–</span><i></i></a>
+  </div>
+  <div class="pv-foot">
+    <span>Simplified: tags are never hidden behind field elements here, and the camera sits at the robot's center. The spread of the dots uses a common FRC rule of thumb (chapter 12).</span>
+    <a href="#mission">Start the course ↓</a>
+  </div>
+</div>

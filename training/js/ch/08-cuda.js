@@ -605,24 +605,6 @@ Site.chapter('cuda', (root) => {
     reset();
   }
 
-  /* ── 11. Outage timeline ──────────────────────────────── */
-  {
-    const svg = $('#c-outage'), VW = narrow ? 440 : 900, X0 = narrow ? 64 : 110, W = VW - X0 - (narrow ? 50 : 30), sc = W / 65, fs = narrow ? 13 : 11;
-    let s = '';
-    const row = (y, label, segs, end, endLabel) => {
-      s += `<text x="8" y="${y + 18}" font-size="14" font-weight="700" fill="#4c0070">${label}</text>`;
-      for (const [a, b, col, txt, tc] of segs) s += `<rect x="${X0 + a * sc}" y="${y}" width="${Math.max(2, (b - a) * sc - 2)}" height="28" rx="6" fill="${col}"/>${txt ? `<text x="${X0 + a * sc + 7}" y="${y + 19}" font-size="${fs}" font-weight="600" fill="${tc || '#fff'}">${txt}</text>` : ''}`;
-      s += `<text x="${X0 + end * sc + 6}" y="${y + 19}" font-size="${fs + 1}" font-weight="700" fill="#16a34a">${endLabel}</text>`;
-    };
-    row(20, 'Before', [[0, 2, '#dc2626', ''], [2, 30, '#f59e0b', narrow ? 'crash report, 28 s' : 'crash reporter writes a 156 MB report (28 s)'], [30, 62, '#c4b5fd', narrow ? 'restart' : 'restart, PhotonVision starts again', '#4c0070']], 62, '62 s');
-    row(78, 'After', [[0, 1.7, '#dc2626', ''], [1.7, 7.9, '#c4b5fd', '', '#4c0070']], 7.9, narrow ? '≈ 8 s' : '≈ 8 s: detecting again');
-    s += `<text x="${X0}" y="130" font-size="${fs}" fill="#635a72">${narrow ? 'Worst case: the GPU context broken.' : 'Worst case: the GPU context itself broken. A single failed frame is now just skipped.'}</text>`;
-    s += `<line x1="${X0}" y1="146" x2="${X0 + W}" y2="146" stroke="#d4c0ee"/>`;
-    for (let v = 0; v <= 60; v += narrow ? 20 : 10) s += `<text x="${X0 + v * sc}" y="164" font-size="${fs}" text-anchor="middle" fill="#635a72">${v} s</text>`;
-    svg.setAttribute('viewBox', `0 0 ${VW} 172`);
-    svgEl(svg, s);
-  }
-
   /* ── 12. GPU checkout line (simplified queue model) ───── */
   {
     const cv = $('#c-q'), st = Site.canvas(cv, 0.74);

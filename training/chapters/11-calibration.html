@@ -46,12 +46,14 @@
     <p class="lede">A camera gives you pixels. The robot needs angles and distances. To turn one into the other you have to know exactly what the lens does, down to a fraction of a pixel. Measuring that is called calibration.</p>
   </div>
 
+  <div class="full">
+
   <div class="split">
     <div class="prose">
       <h3 style="margin-top:0">Why a camera needs calibrating</h3>
-      <p>Say the camera sees a tag's corner at pixel 900 across. Which direction is that? It depends on the lens. A wide lens squeezes a big slice of the world onto the sensor, so pixel 900 might be 25° to the right. A narrower lens might put the same pixel at 15°.</p>
-      <p>Even two cameras of the same model aren't identical. The lens sits a little off-center, the glass bends light slightly differently, and the sensor is glued in at a tiny angle. Those differences are small, but a robot doing geometry with a tag 5 m away feels every one of them.</p>
-      <p><strong>Calibration measures your camera's exact lens</strong>: how strongly it magnifies, where its true center is, and how it bends straight lines. We call these numbers the camera's <span class="term">intrinsics</span>, because they're about the inside of the camera.</p>
+      <p class="full">Say the camera sees a tag's corner at pixel 900 across. Which direction is that? It depends on the lens. A wide lens squeezes a big slice of the world onto the sensor, so pixel 900 might be 25° to the right. A narrower lens might put the same pixel at 15°.</p>
+      <p class="full">Even two cameras of the same model aren't identical. The lens sits a little off-center, the glass bends light slightly differently, and the sensor is glued in at a tiny angle. Those differences are small, but a robot doing geometry with a tag 5 m away feels every one of them.</p>
+      <p class="full"><strong>Calibration measures your camera's exact lens</strong>: how strongly it magnifies, where its true center is, and how it bends straight lines. We call these numbers the camera's <span class="term">intrinsics</span>, because they're about the inside of the camera.</p>
     </div>
     <figure class="fig whyfig reveal" style="margin:0">
       <svg id="cal-why" viewBox="0 0 560 340" role="img" aria-label="Two lenses map the same pixel to different directions"></svg>
@@ -61,8 +63,15 @@
 
   <h3>The pinhole camera</h3>
   <div class="prose">
-    <p>The model every vision system starts from is the <span class="term">pinhole camera</span>: a dark box with a tiny hole. Light from a point in the world travels in a straight line through the hole and lands on the sensor. Each point in the world lands on exactly one spot.</p>
-    <p>Two kinds of numbers describe where it lands. The <span class="term">focal length</span> is how far the sensor sits behind the hole: farther means more zoomed in. The <span class="term">principal point</span> is the pixel directly behind the hole, the image's true center. Computer vision measures both in <em>pixels</em>, so they plug straight into the math.</p>
+    <p class="full">The model every vision system starts from is the <span class="term">pinhole camera</span>: a dark box with a tiny hole. Light from a point in the world travels in a straight line through the hole and lands on the sensor. Each point in the world lands on exactly one spot.</p>
+    <p class="full">Two kinds of numbers describe where it lands. The <span class="term">focal length</span> is how far the sensor sits behind the hole: farther means more zoomed in. The <span class="term">principal point</span> is the pixel directly behind the hole, the image's true center. Computer vision measures both in <em>pixels</em>, so they plug straight into the math.</p>
+  </div>
+
+  </div>
+
+  <div class="prose short">
+    <p>Say the camera sees a tag's corner at pixel 900 across. Which direction is that? It depends on the lens, and every lens is slightly different. <strong>Calibration measures your camera's exact lens.</strong></p>
+    <p>The model is a <span class="term">pinhole camera</span>: light travels in a straight line through a tiny hole onto the sensor. Two numbers, both in pixels, say where each point lands: the <span class="term">focal length</span> (how far the sensor sits behind the hole) and the <span class="term">principal point</span> (the pixel right behind the hole). To measure them, you photograph a <span class="term">ChArUco</span> board from many angles, and a least-squares fit finds the numbers that explain every corner. Ours: fx ≈ 737 px, each lens tens of pixels off-center, fit to within about 0.9 px.</p>
   </div>
 
   <div class="lab">
@@ -89,10 +98,13 @@
         <div class="readout"><div><small>Field of view across</small><b id="cal-hfov">–</b></div><div><small>Focal length</small><b id="cal-fmm">–</b></div></div>
       </div>
     </div>
-    <p class="hint">The image plane is drawn in front of the pinhole, the usual trick in computer vision. On the real sensor, behind the hole, the picture is upside down; the math is the same. The sensor's pixels are 3 µm wide, so a focal length of 737 px is about 2.2 mm.</p>
+    <p class="hint full">The image plane is drawn in front of the pinhole, the usual trick in computer vision. On the real sensor, behind the hole, the picture is upside down; the math is the same. The sensor's pixels are 3 µm wide, so a focal length of 737 px is about 2.2 mm.</p>
   </div>
 
-  <div class="split top">
+  <div class="full">
+
+
+  <div class="split top full">
     <div class="prose">
       <h3 style="margin-top:0">Four numbers, one matrix</h3>
       <p>Divide by the distance <code>Z</code> (things farther away look smaller), scale by the focal length, and shift by the principal point. That's the whole pinhole model:</p>
@@ -113,13 +125,13 @@
     </div>
   </div>
 
-  <h3>Lenses bend straight lines</h3>
-  <div class="prose">
+  <h3 class="full">Lenses bend straight lines</h3>
+  <div class="prose full">
     <p>A real lens isn't a pinhole. Its curved glass bends light a little more near the edges than in the middle. Straight lines in the world come out curved in the picture: bulging outward (<strong>barrel</strong> <span class="term">distortion</span>, common in wide lenses) or pinched inward (<strong>pincushion</strong>).</p>
     <p>Calibration measures this bending too, as a handful of <em>distortion coefficients</em>. Radial ones (<code>k1</code>, <code>k2</code>, <code>k3</code>…) bend points toward or away from the center, more the farther out they are. Tangential ones (<code>p1</code>, <code>p2</code>) handle a lens that's slightly tilted. Once you know them, you can undo the bending and get the straight-line pinhole picture back.</p>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Lens distortion</h4></div>
     <div class="lab-grid">
       <div>
@@ -140,7 +152,7 @@
     <p class="hint">"TopLeft" and "TopRight" are our two cameras' real calibrations: the 8-number rational model, each with its own focal length and off-center principal point (TopLeft's comes straight from the file our Jetson saved). The readouts show how far the lens moves a point from where a pinhole would put it: at the image's top-left corner, and at the top-left corner of the tag on the left.</p>
   </div>
 
-  <div class="callout spectrum">
+  <div class="callout spectrum full">
     <h5>What we fixed: the lens model was cut short</h5>
     <p>PhotonVision's calibration produces OpenCV's 8-coefficient "rational" lens model: <code>k1 k2 p1 p2 k3 k4 k5 k6</code>. The CUDA detector uses the lens model while it refines each tag's corners: it straightens the tag's edges, fits the lines, then bends the corners back. But the 4143 fork passed it only the first 5 numbers. The missing three matter most near the edges of the image, so corners there came out slightly wrong. Our patch <code>photonvision-04</code> adds a <code>setparams8</code> call that passes all 8, and the log now says "(8 dist coeffs)" for each camera.</p>
   </div>
@@ -156,16 +168,16 @@
     </div>
   </details>
 
-  <h3>Inside and outside the camera</h3>
-  <div class="prose">
+  <h3 class="full">Inside and outside the camera</h3>
+  <div class="prose full">
     <p>The lens numbers are only half of what the robot needs. It also has to know where the camera is bolted on and which way it points. Those are the <span class="term">extrinsics</span>: a position (x, y, z) and a rotation (roll, pitch, yaw), usually relative to the center of the robot on the floor. In WPILib robot code it's a <code>Transform3d</code> called <code>robotToCamera</code>.</p>
   </div>
-  <div class="ie reveal">
+  <div class="ie reveal full">
     <div class="card"><div class="icon">🔍</div><h4>Intrinsics: inside the camera</h4><p>The lens: focal lengths, principal point and distortion.</p><ul><li>Measured on the bench with a calibration board.</li><li>One per camera, per resolution.</li><li>Changes if you refocus or bump the lens.</li></ul><span class="chip">K + 8 distortion numbers</span></div>
     <div class="card"><div class="icon">📐</div><h4>Extrinsics: where the camera sits</h4><p>The mount: where the camera is on the robot and which way it looks.</p><ul><li>From CAD, or measured by field calibration.</li><li>Lives in robot code.</li><li>Changes if the mount bends or the camera is moved.</li></ul><span class="chip">robotToCamera: x, y, z, roll, pitch, yaw</span></div>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Mount a camera on the robot</h4></div>
     <div class="lab-grid">
       <div>
@@ -185,7 +197,7 @@
   </div>
 
   <h3>The calibration board</h3>
-  <div class="split top">
+  <div class="split top full">
     <div class="prose">
       <p>To measure a lens, you show it something whose shape you know perfectly: a flat board printed with a pattern. Ours is a <span class="term">ChArUco</span> board, a chessboard with a small <span class="term">ArUco</span> marker printed in each white square.</p>
       <ul>
@@ -205,7 +217,7 @@
     </div>
   </div>
 
-  <div class="split top" style="margin:26px 0">
+  <div class="split top full" style="margin:26px 0">
   <div class="callout spectrum" style="margin:0">
     <h5>What we found: 12 × 9, not 9 × 12</h5>
     <p>Our board is labeled "9x12". Entered that way in PhotonVision, every calibration failed with "Negative corner in reprojection error calc". We wrote <code>tests/charuco-board-check/check_board.py</code>, which tries all four combinations of width, height and marker layout on a live camera frame. Only <strong>width 12, height 9</strong> found corners: 78 of 88, with 51 of 54 markers read. Our PhotonVision build (<code>photonvision-23</code>) now starts with our board's settings, in millimeters.</p>
@@ -214,12 +226,12 @@
   </div>
 
   <h3>From snapshots to lens numbers</h3>
-  <div class="prose">
+  <div class="prose full">
     <p>Calibrating means taking many snapshots of the board, held at different places, distances and angles. For each snapshot the software finds the corners. Then it asks one big question: <em>which lens numbers, and which board positions, would make a pinhole camera with this distortion see the corners exactly where they were found?</em></p>
     <p>No answer fits perfectly, because every corner is measured with a little noise. So it finds the numbers that fit best, by <span class="term">least squares</span>: guess, measure how far every predicted corner is from its detected spot, nudge all the numbers to shrink those misses, and repeat. The average miss that's left is the <span class="term">reprojection error</span>.</p>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Calibrate a camera</h4></div>
     <div class="lab-grid">
       <div>
@@ -249,19 +261,19 @@
     <p class="hint" id="cal-covmsg">This is a real calibration, run in your browser: the simulated camera has TopRight's true lens, corners get about 0.7 px of noise (similar to our bench), and a least-squares solver fits all 12 lens numbers plus every board position. "Lens error" compares the fitted lens with the true one, something you can't see on a real camera. Try 10 lazy snapshots first, then reset and try auto snapshots.</p>
   </div>
 
-  <div class="callout idea">
+  <div class="callout idea full">
     <h5>The trap in that lab</h5>
     <p>With every snapshot in the middle, the reprojection error looks great, about the same as a good calibration. But the lens error near the edges is tens of pixels, because the solver never saw a corner there and its curve can do anything outside the data. A low reprojection error only means the model fits the snapshots you took. Coverage is what makes it right everywhere else.</p>
   </div>
 
-  <figure class="fig yt reveal">
+  <figure class="fig yt reveal full">
     <button class="yt-play" type="button" data-yt="GUbWsXU1mac" aria-label="Play video: Camera calibration, First Principles of Computer Vision"><img src="https://i.ytimg.com/vi/GUbWsXU1mac/hqdefault.jpg" alt="" loading="lazy"></button>
     <figcaption><strong>Watch: Camera calibration</strong> (First Principles of Computer Vision, 7:46). Columbia professor Shree Nayar shows how one photo of an object with known 3D points pins down the camera's intrinsic and extrinsic numbers. He uses a 3D target instead of many photos of a flat board, but the idea is the same as the lab you just ran: known points in, lens numbers out.</figcaption>
   </figure>
 
-  <h3>Our real calibration: TopLeft's 43 snapshots</h3>
-  <div class="prose">
-    <p>That was a simulation. Here's the real thing: the calibration file our Jetson saved for the TopLeft camera, with every snapshot, every detected corner and every leftover error. First, three of the snapshot images, with the corners the calibration used.</p>
+  <h3 class="full">Our real calibration: TopLeft's 43 snapshots</h3>
+  <div class="prose full">
+    <p class="full">That was a simulation. Here's the real thing: the calibration file our Jetson saved for the TopLeft camera, with every snapshot, every detected corner and every leftover error. First, three of the snapshot images, with the corners the calibration used.</p>
   </div>
   <div class="lab">
     <div class="lab-head"><span class="tag">Real data</span><h4>Three of TopLeft's calibration snapshots</h4></div>
@@ -278,13 +290,13 @@
           <div><small>Corners used</small><b id="cal-rs-c">–</b></div>
           <div><small>Mean error</small><b id="cal-rs-e">–</b></div>
         </div>
-        <p class="hint">The camera's own 1280×800 gray frames, saved by PhotonVision during calibration. Distance and tilt come from the solved board pose. The markers are the real 5×5 ones.</p>
+        <p class="hint full">The camera's own 1280×800 gray frames, saved by PhotonVision during calibration. Distance and tilt come from the solved board pose. The markers are the real 5×5 ones.</p>
       </div>
     </div>
     <p class="hint">From our Jetson, Sept 25, 2026.</p>
   </div>
 
-  <div class="lab">
+  <div class="lab full">
     <div class="lab-head"><span class="tag">Real data</span><h4>All 43 snapshots at once</h4></div>
     <div class="lab-grid">
       <div>
@@ -307,14 +319,14 @@
     <p class="hint">TopLeft's saved calibration at 1280×800, from our Jetson, Sept 25, 2026. It was taken before PhotonVision required 100 snapshots. PhotonVision's card rounds the mean error to 0.87 px.</p>
   </div>
 
-  <div class="stats reveal">
+  <div class="stats reveal full">
     <div class="stat"><b>0.87<small>px</small></b><span>TopLeft mean reprojection error, 97% of corners kept</span></div>
     <div class="stat"><b>0.97<small>px</small></b><span>TopRight mean reprojection error, 96% of corners kept</span></div>
     <div class="stat"><b>737<small>px</small></b><span>focal length, the same in all three of camera 1's calibrations</span></div>
-    <div class="stat"><b>42<small>%</small></b><span>outliers in a bad try, when the board hung mostly out of the frame</span></div>
+    <div class="stat"><b>3,486</b><span>corners in TopLeft's calibration, from 43 snapshots</span></div>
   </div>
 
-  <div class="split top">
+  <div class="split top full">
     <div class="prose">
       <h3 style="margin-top:0">Reading the result</h3>
       <p>Under about <strong>0.5 px</strong> is ideal, and under <strong>1 px</strong> is fine for FRC. We couldn't get below 0.5 px with a hand-held board, and that's okay: the remaining ~0.8–0.9 px is mostly noise from the camera's JPEG compression.</p>
@@ -338,7 +350,7 @@
       <p>Why tilt matters: a flat board straight on can't tell a longer focal length from a board that's farther away; both make it look bigger. Tilted views break the tie, because perspective changes the board's shape differently.</p>
     </div>
   </details>
-  <div class="deeper">
+  <div class="deeper full">
     <a href="https://docs.photonvision.org/en/latest/docs/calibration/calibration.html">PhotonVision: calibrating your camera</a>
     <a href="https://mrcal.secretsauce.net/tour.html">mrcal: a tour of calibration</a>
     <a class="video" href="https://www.youtube.com/watch?v=_EhY31MSbNM" target="_blank" rel="noopener">First Principles of Computer Vision: Pinhole and perspective projection (20:43)</a>
@@ -346,12 +358,12 @@
     <a class="video" href="https://www.youtube.com/watch?v=GUbWsXU1mac" target="_blank" rel="noopener">First Principles of Computer Vision: Camera calibration (7:46)</a>
   </div>
 
-  <h3>Field calibration: the real field, and every mount</h3>
-  <div class="prose">
+  <h3 class="full">Field calibration: the real field, and every mount</h3>
+  <div class="prose full">
     <p>A lens calibration is done once, on the bench. Two other numbers can be wrong at an event: <strong>where the tags really are</strong> (a field element built a couple of centimeters off) and <strong>where each camera sits on the robot</strong> (CAD says one thing, the real mount another). Pitch matters most: a 1° pitch error puts a tag 4 m away off by about 7 cm.</p>
     <p>Our PhotonVision has a <strong>Field Calibration</strong> page (<code>photonvision-30</code>) that measures both with the robot's own cameras, during the event's field calibration time.</p>
   </div>
-  <div class="field-row">
+  <div class="field-row full">
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Animation</span><h4>One solve for everything</h4></div>
       <canvas id="cal-field" aria-label="Top-down half field: the robot visits spots, each camera sees tags, and the solve moves two misplaced tags to where they really are"></canvas>
@@ -369,21 +381,31 @@
     </div>
   </div>
 
-  <div style="display:grid;gap:26px;margin:30px 0">
+  <div class="full" style="display:grid;gap:26px;margin:30px 0">
     <figure class="photo" style="max-width:760px"><img src="assets/from-jetson/screenshots/field-calibration-camera-tune-crop.webp" alt="Field Calibration step 1: Tune cards for TopLeft and TopRight with sliders for exposure, gain, brightness, contrast, gamma, sharpness and backlight compensation" loading="lazy"><figcaption>Step 1, the per-camera Tune cards. The room was dark, so the camera views are flat gray with no tags. From our Jetson, Sept 25, 2026.</figcaption></figure>
     <figure class="photo"><img src="assets/from-jetson/screenshots/field-calibration-results-map-crop.webp" alt="Field Calibration results: each camera's solved height, pitch and roll, and a map and table of every tag's offset, marked as drawn or moved" loading="lazy"><figcaption>Step 4, the results: each camera's solved mount, and every tag's offset marked "as drawn" or "moved". <b>These results come from a synthetic test run</b>, not a real field. From our Jetson, Sept 25, 2026.</figcaption></figure>
   </div>
 
-  <div class="callout spectrum">
+  <div class="callout spectrum full">
     <h5>What we built: tested, not yet on a real field</h5>
     <p>So far the solver has been tested on synthetic data, including whole rendered recordings with the official tag images, our lens calibration, blur, noise and JPEG. On those it found tags to a median of 0.2–0.7 cm, moved tags of 15 and 25 cm to within about 1 cm, and mounts to about 1 cm or better. It also caught both mistakes planted in the test's CAD file: one camera's pitch off by 1.5°, another's height off by 1 cm. Next is a shop test on our half field. We expect about 1 cm in real life, limited by the lens calibration and the floor.</p>
   </div>
-  <div class="callout idea">
+  <div class="callout idea full">
     <h5>A quicker check: the camera mount estimate</h5>
     <p>With the robot level on the floor and 2+ tags in view, the Targets tab's <b>Camera mount estimate</b> (<code>photonvision-17</code>) shows the camera's height, pitch and roll, averaged over the last 100 samples. While the robot is level, the camera's height, pitch and roll on the field <em>are</em> its mount's, wherever the robot is. The numbers use <code>robotToCamera</code>'s signs, so they go straight into robot code, and robot code can compare them with its configured mount to catch a bumped camera.</p>
   </div>
 
-  <div class="recap reveal">
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Chapter 11 recap</h5>
+    <ul>
+      <li>Intrinsics describe the lens: focal lengths, principal point, distortion. Ours: fx ≈ 737 px.</li>
+      <li>Pinhole model: <code>u = fx·X/Z + cx</code>. Extrinsics (<code>robotToCamera</code>): where the camera sits.</li>
+      <li>Many ChArUco snapshots all over the image; least squares finds the lens. Ours: 0.87 and 0.97 px.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
     <h5>Chapter 11 recap</h5>
     <ul>
       <li>Intrinsics describe the lens: focal lengths <code>fx, fy</code>, principal point <code>cx, cy</code> (the matrix <code>K</code>) and distortion. Ours: fx ≈ 737 px, centers off by tens of pixels.</li>

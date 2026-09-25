@@ -44,7 +44,7 @@ const MATS = {
 
 // Clickable labels. Each covers one or more nodes.
 const HOTS = [
-  ['fan', 'Fan', ['fan'], 'Pulls air through the heatsink. We run it at full speed (about 5,600 rpm): 56 → 43 °C on the bench.'],
+  ['fan', 'Fan', ['fan'], 'Pulls air through the heatsink. It runs at full speed, about 5,600 rpm.'],
   ['heatsink', 'Heatsink', ['heatsink'], 'Metal fins spread the chip\'s heat into the air. A leaf spring presses it onto the module.'],
   ['module', 'Orin Nano module', ['module', 'module_screws'], 'The computer itself, 69.6 × 45 mm: the SoC (CPU, GPU, engines) and 8 GB of LPDDR5.'],
   ['sodimm', 'SO-DIMM socket', ['sodimm'], '260 pins, the shape laptops use for RAM. Power, PCIe, USB, Ethernet and camera signals all pass through it.'],

@@ -429,7 +429,8 @@ Site.chapter('camera', (root) => {
 
   /* ── Focus lab ─────────────────────────────────────────── */
   (async () => {
-    const F = await FRAME, W = 320, H = 180, st = Site.canvas($('#c-focus'), H / W);
+    let redraw = () => {}; // repaint when the lab is shown (it starts hidden in short mode)
+    const F = await FRAME, W = 320, H = 180, st = Site.canvas($('#c-focus'), H / W, () => redraw());
     // the frame's middle, at quarter size
     const base = new Float32Array(W * H);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let a = 0; for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) a += F.g[(290 + y * 2 + j) * F.W + 170 + x * 2 + i]; base[y * W + x] = a / 4; }
@@ -478,6 +479,7 @@ Site.chapter('camera', (root) => {
     // start as if the lens had been swept once, so the percentages mean something right away
     const keep = lens; for (let v = 0; v <= 100; v += 4) { lens = v; draw(); } lens = keep;
     Site.range($('#c-lens'), (v) => { lens = v; draw(); }, (v) => v.toFixed(0));
+    redraw = draw;
     $('#c-freset').onclick = () => { best = Array(9).fill(0); draw(); };
     $('#c-tilt').onchange = (e) => { tilt = e.target.checked; best = Array(9).fill(0); draw(); };
   })();

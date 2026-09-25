@@ -59,9 +59,9 @@
   <div class="split">
     <div class="prose">
       <h3 style="margin-top:0">One painter or a thousand?</h3>
-      <p>Imagine painting a huge mural made of small square tiles. One master painter is fast and skilled, but paints one tile at a time. A crowd of ordinary painters is slower per tile, but if each one takes a tile, the whole wall is done in the time it takes to paint <em>one</em> tile.</p>
+      <p>Imagine painting a huge mural of small tiles. One master painter is fast but paints one tile at a time. A crowd of ordinary painters is slower per tile, but if each takes one, the wall is done in the time of <em>one</em> tile.</p>
       <p>That's the difference between a <span class="term">CPU</span> and a <span class="term">GPU</span>. The Jetson's CPU has <strong>6 cores</strong>: a few smart, fast workers that can each follow a complicated recipe. Its GPU has <strong>1,024 cores</strong>: simple workers that are best when they all do the <em>same</em> thing to different pieces of data.</p>
-      <p>Try the race. Then switch the job to a chain of steps, where each tile needs the one before it. The crowd can't help with that at all, and the master painter wins easily. A GPU is only fast when the work can be split up.</p>
+      <p>Try the race, then switch to a chain of steps where each tile needs the one before: the crowd can't help, and the master painter wins. A GPU is only fast when the work splits up.</p>
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>The painting race</h4></div>
@@ -71,12 +71,16 @@
         <button class="btn-sm primary" id="c-race-go">▶ Race again</button>
       </div>
       <div class="readout"><div><small>CPU · 6 fast cores</small><b id="c-race-cpu">–</b></div><div><small>GPU · 1 core per tile</small><b id="c-race-gpu">–</b></div></div>
-      <p class="hint">Simplified illustration: here a GPU core takes 5× longer per tile than a CPU core. Real speeds depend on the job.</p>
+      <p class="hint">Simplified illustration: a GPU core here is 5× slower per tile than a CPU core.</p>
     </div>
   </div>
 
+  <p class="prose short">Our AprilTag detector asks the same questions of every pixel, so thousands of GPU threads answer at once. Only reading the few tags' bits runs on the CPU. It takes about <strong>1.7 ms</strong> a frame.</p>
+
+  <div class="full">
   <div class="callout analogy"><h5>Analogy: grading tests</h5><p>One teacher grading 1,000 multiple-choice tests takes all weekend. Hand one test to each of 1,000 students with the answer key, and it's done in a minute. It works because every test is graded the same way, and no test depends on another. Pixels are like that: "is this pixel brighter than its neighbors?" is the same question for every pixel.</p></div>
 
+  <div class="full">
   <h3>Few smart cores, or many simple ones</h3>
   <div class="split top">
     <div class="prose">
@@ -251,6 +255,8 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
     </figure>
   </div>
 
+  </div>
+
   <!-- ───────────── The 971 detector ───────────── -->
   <h3>How the 971 detector puts AprilTags on the GPU</h3>
   <p class="prose">The classic AprilTag library was written for CPUs. Austin Schuh of FRC 971 rebuilt its first half so that each step is either "one thread per pixel" or a standard parallel building block like sort, scan (running totals) or select (keep only the items that pass a test), from NVIDIA's <span class="term" data-term="CUB" data-def="NVIDIA's library of fast, ready-made parallel building blocks for the GPU: sort, scan (running totals), select, reduce. The 971 detector uses it between its own kernels.">CUB</span> library. The part that isn't very parallel, reading each tag's bits, stays on the CPU. Scroll through it on a real camera frame from an FRC field: the 2026 blue outpost, with four tags. Chapter 02 showed <em>what</em> each step does; here the question is <em>who does the work</em>: thousands of GPU threads at once, or a few CPU threads.</p>
@@ -284,6 +290,7 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
     <p>The half-size search is hard-wired (<code>CHECK_EQ(quad_decimate, 2)</code>), which limits range for very small, far tags; <code>docs/VISION-RESEARCH.md</code> has our measurements. Corner refinement and decoding use the full-size image, so found tags keep full accuracy.</p>
   </div></details>
 
+  <div class="full">
   <h4>How fast, and where the speedup came from</h4>
   <div class="split top">
     <div class="prose">
@@ -299,11 +306,13 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
       <figcaption>Measured 2026-09-23, one camera at 1280×800, one tag held still, 6 s averages (<code>tests/detector-ab</code>). "mwbd" is <code>min_white_black_diff</code>. Two bars per build: exposure 3 ms and 8.3 ms.</figcaption>
     </figure>
   </div>
+  </div>
 
   <!-- ───────────── Real engineering ───────────── -->
   <h3>Real bugs, from our repo</h3>
   <p class="prose">None of this code was written for our exact setup. Here's what broke, and how we fixed it. Every fix is a small <span class="term">patch</span> file (chapter 06 explains patches).</p>
 
+  <div class="full">
   <div class="callout spectrum"><h5>What we fixed: the sticky error flag</h5><p>When a CUDA call fails, CUDA remembers the error in a flag that stays set until someone reads it. Newer versions of CUB check that flag before they start, and fail on <em>any</em> leftover error. One unchecked call early in the frame left the flag set, and a later, unrelated CUB step failed on every frame. Our fix (<code>gpudetector-01</code>) clears leftover errors between stages and logs which stage left one; the unchecked calls are now checked.</p></div>
   <figure class="fig pad reveal">
     <svg id="c-sticky" viewBox="0 0 900 150" role="img" aria-label="A row of GPU calls: an unchecked call raises the error flag, it stays up, and a later CUB call fails because of it"></svg>
@@ -330,16 +339,15 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
       <div class="status" id="c-slot-st"></div>
     </div>
   </div>
+  </div>
 
   <div class="callout spectrum"><h5>What we fixed: the blank frame</h5><p>With nothing to detect (a covered lens, a dark pit, a plain wall), the detector computed 0 blocks and launched <code>FitLines&lt;&lt;&lt;0, 128&gt;&gt;&gt;</code>. A launch with zero blocks is an invalid configuration, and the error surfaced in the next CUB call on every blank frame. With the old watchdog, that restarted PhotonVision in a loop. <code>bos-02</code> returns "no detections" early when no blobs survive. <code>tests/detector-frame-sizes</code> showed blank frames failing at 5 resolutions before, and passing at all of them after.</p></div>
 
-  <div class="callout spectrum"><h5>What we fixed: one GPU error took down everything</h5><p>Austin's code stops the whole program on any CUDA error, which kills PhotonVision and every camera with it. Now (<code>bos-01</code>) a CUDA error throws instead, and our wrapper skips that one frame and rebuilds the detector. Only if the GPU itself is broken (<code>cudaDeviceSynchronize</code> keeps failing for 1 s) does it exit, and systemd restarts PhotonVision. The exit is a quick <code>_exit</code>: the old crash path ran Ubuntu's crash reporter, which spent 28 s writing a 156 MB report. Fault tests: an error every 100 frames, no restart; the worst case, back detecting in <strong>about 8 s instead of 62 s</strong>.</p></div>
-  <figure class="fig pad reveal">
-    <svg id="c-outage" viewBox="0 0 900 170" role="img" aria-label="Timeline comparison: 62 seconds of outage before, 8 seconds after"></svg>
-  </figure>
+  <div class="callout spectrum full"><h5>What we fixed: one GPU error took down everything</h5><p>Austin's code stopped the whole program on any CUDA error, taking every camera with it. Now (<code>bos-01</code>) a failed frame is just skipped, and PhotonVision restarts only if the GPU itself stays broken for 1 s. The worst outage went from about 62 s to about 8 s; <a href="#failsafes">chapter 16</a> tells the whole story.</p></div>
 
-  <div class="callout spectrum"><h5>What we fixed: a slow leak</h5><p>The old detector leaked two small matrices every time it decoded a tag. Tiny per frame, but at 120 frames a second over a long event it could run the Jetson out of memory. We applied Austin's upstream fix (<code>3e570d5a</code>), which is part of why we moved to his current code.</p></div>
+  <div class="callout spectrum full"><h5>What we fixed: a slow leak</h5><p>The old detector leaked two small matrices every time it decoded a tag. Tiny per frame, but at 120 frames a second over a long event it could run the Jetson out of memory. We applied Austin's upstream fix (<code>3e570d5a</code>), which is part of why we moved to his current code.</p></div>
 
+  <div class="full">
   <!-- ───────────── Four cameras, one GPU ───────────── -->
   <h3>Four cameras, one GPU: waiting in line</h3>
   <div class="split top">
@@ -389,7 +397,19 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
     <a class="video" href="https://www.youtube.com/watch?v=h9Z4oGN89MU" target="_blank" rel="noopener">Branch Education: How do graphics cards work? (28:30)</a>
   </div>
 
-  <div class="recap reveal">
+  </div>
+
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Chapter 8 recap</h5>
+    <ul>
+      <li>A CPU has a few fast, clever cores; our GPU has 1,024 simple ones.</li>
+      <li>A GPU wins when the same job is done to lots of data, like every pixel.</li>
+      <li>Our detector's per-pixel work runs on the GPU: about 1.7 ms a frame.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
     <h5>Chapter 8 recap</h5>
     <ul>
       <li>A CPU has a few fast, clever cores; the Orin Nano's GPU has 1,024 simple ones in 8 SMs, best at doing the same thing to lots of data.</li>

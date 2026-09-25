@@ -163,7 +163,7 @@ Site.chapter('latency', (root) => {
   /* ── Stale answers lab ─────────────────────────────────── */
   {
     const cv = $('#l-bot');
-    const narrow = (cv.clientWidth || cv.parentElement.clientWidth) < 520;
+    const narrow = (cv.clientWidth || cv.parentElement.clientWidth || root.clientWidth) < 520;
     const st = Site.canvas(cv, narrow ? 1.12 : 0.43);
     let mode = 'ts', L = 15, V = 4, W = 3;
     const e1 = $('#l-e1'), e2 = $('#l-e2'), e3 = $('#l-e3'), e4 = $('#l-e4');
@@ -318,7 +318,7 @@ Site.chapter('latency', (root) => {
 
   /* ── Mid-exposure diagram ──────────────────────────────── */
   {
-    const cv = $('#l-mid'), nw = (cv.clientWidth || cv.parentElement.clientWidth) < 480, st = Site.canvas(cv, nw ? 1.15 : 0.57);
+    const cv = $('#l-mid'), nw = (cv.clientWidth || cv.parentElement.clientWidth || root.clientWidth) < 480, st = Site.canvas(cv, nw ? 1.15 : 0.57);
     let E = 5;
     const late = $('#l-late'), sub = $('#l-sub');
     Site.range($('#l-exp'), (v) => { E = v; late.textContent = (v / 2).toFixed(1) + ' ms + ?'; sub.textContent = (v / 2).toFixed(2) + ' ms'; }, (v) => v.toFixed(1) + ' ms');
@@ -392,7 +392,7 @@ Site.chapter('latency', (root) => {
 
   /* ── Time sync ping-pong ───────────────────────────────── */
   {
-    const cv = $('#l-sync'), st = Site.canvas(cv, (cv.clientWidth || cv.parentElement.clientWidth) < 600 ? 0.62 : 0.36);
+    const cv = $('#l-sync'), st = Site.canvas(cv, (cv.clientWidth || cv.parentElement.clientWidth || root.clientWidth) < 600 ? 0.62 : 0.36);
     const OFFSET = 718266.4312; // robot = jetson + OFFSET (ms), made up
     const base = performance.now() - 812004.513;
     const jet = () => performance.now() - base;

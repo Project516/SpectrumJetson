@@ -15,14 +15,14 @@ Site.chapter('photonvision', (root) => {
     const N = {
       cam: ['USB camera', 'MJPEG 1280×800, 120 fps', 'The Thriftiest Cam compresses each 1280×800 frame into a JPEG (about 50 KB) and sends it over USB 2.0, 120 times a second.'],
       cscore: ['cscore', 'WPILib camera library', 'WPILib\'s camera library. It talks to the Linux camera driver, keeps the newest frame, and serves video streams.'],
-      fp: ['USBFrameProvider', 'grab JPEG → gray image', 'Asks cscore for the newest frame. With our patch 09 it takes the camera\'s JPEG untouched, and our detector library decodes it straight to gray (on the Jetson\'s JPEG hardware, with <code>--jpeg nvjpg</code>).'],
-      vr: ['VisionRunner', 'this camera\'s own thread', 'This camera\'s own thread: grab a frame, run the pipeline, pass the result on, repeat forever. With Low Latency Mode off it never sits waiting for a frame (chapter 10).'],
+      fp: ['USBFrameProvider', 'grab JPEG → gray image', 'Asks cscore for the newest frame, takes the camera\'s JPEG untouched, and has it decoded straight to gray on the Jetson\'s JPEG hardware.', ' (Our patch 09, with <code>--jpeg nvjpg</code>.)'],
+      vr: ['VisionRunner', 'this camera\'s own thread', 'This camera\'s own thread: grab a frame, run the pipeline, pass the result on, repeat forever. It never sits waiting for a new frame; it takes the newest one.', ' (Low Latency Mode off: <a href="#speed">chapter 10</a>.)'],
       det: ['Detect on the GPU', 'AprilTagDetectionCudaPipe', 'Hands the gray image to the 971 detector on the GPU: about 1.7 ms. Out come tag IDs, corners and decision margins (chapter 08).'],
       pose: ['Pose', 'single-tag + multi-tag', 'With a lens calibration, each tag\'s corners become a 3D pose (single-tag), and all the tags in view are solved together against the field layout (multi-tag). Chapter 12.'],
       res: ['CVPipelineResult', 'everything about this frame', 'Everything PhotonVision knows about this frame: targets, corners, poses, and when the frame was captured.'],
       nt: ['NTDataPublisher', '→ NetworkTables', 'Packs the result into PhotonLib\'s message format (the one with the hash) and publishes it on NetworkTables (chapter 15).'],
       robot: ['Robot code', 'PhotonLib on the SystemCore', 'Robot code reads the result with PhotonLib on the SystemCore, over Ethernet, and fuses it with odometry (chapter 12).'],
-      stream: ['Stream thread', 'shrink, draw boxes', 'OutputStreamPipeline shrinks the frame and draws the boxes and axes you see in the dashboard. Since our patch 15, only while someone is watching, and at most 30 frames a second.'],
+      stream: ['Stream thread', 'shrink, draw boxes', 'OutputStreamPipeline shrinks the frame and draws the boxes and axes you see in the dashboard. Only while someone is watching, and at most 30 frames a second.', ' (Our patch 15.)'],
       mjpeg: ['MJPEG server', 'cscore MjpegServer', 'cscore\'s MjpegServer sends the video to your browser as a stream of JPEG pictures.'],
       browser: ['Dashboard', 'your web browser', 'The dashboard in your browser. Every open stream costs the Jetson CPU, so close it before measuring anything.'],
     };
@@ -60,8 +60,8 @@ Site.chapter('photonvision', (root) => {
     svg.innerHTML = s;
     svg.querySelectorAll('.nd').forEach((g) => g.addEventListener('click', () => {
       svg.querySelectorAll('.nd').forEach((x) => x.classList.toggle('sel', x === g));
-      const [t, , d] = N[g.dataset.k];
-      info.innerHTML = `<b>${t}.</b> ${d}`;
+      const [t, , d, extra] = N[g.dataset.k];
+      info.innerHTML = `<b>${t}.</b> ${d}${extra && Site.mode === 'full' ? extra : ''}`;
     }));
     let watching = false;
     Site.seg($('#pv-view'), (v) => { watching = v === 'yes'; $('#pv-view-note').textContent = watching ? 'every 4th frame also goes to the stream (30 of 122 fps)' : 'the stream thread gets no frames at all'; });
@@ -167,8 +167,8 @@ Site.chapter('photonvision', (root) => {
     ['photonvision-06', 'usability', 'Team camera defaults', 'A new camera starts with our tuned pipeline (AprilTagCuda, 1280×800, 5 ms, margin 15). 3D and multi-tag switch on once it\'s calibrated.', '', ''],
     ['photonvision-07', 'diag', 'Rewind', 'Records every camera\'s own JPEGs to the SSD while robot code asks, stamped with the robot\'s clock. Download from the web UI.', '3% of one core; ~1 GB a match', ''],
     ['photonvision-08', 'robot', 'Clock from the robot', 'The Jetson has no clock battery and no internet at events, so it sets its date from the robot\'s clock.', '', ''],
-    ['photonvision-09', 'speed', 'Direct gray decode', 'Decode the camera\'s JPEG straight to gray in our detector library instead of cscore\'s hidden color decode.', '8.9 → 2.6 ms a frame; 122 fps', 'pv-s09'],
-    ['photonvision-10', 'usability', 'Exposure in milliseconds', 'The raw value is in 100 µs units, so 295 meant 29.5 ms. The slider now shows ms; new cameras start at 5 ms and margin 15.', '', 'pv-s10'],
+    ['photonvision-09', 'speed', 'Direct gray decode', 'Decode the camera\'s JPEG straight to gray in our detector library instead of cscore\'s hidden color decode.', '8.9 → 2.6 ms a frame; 122 fps', '#speed|In chapter 10 →'],
+    ['photonvision-10', 'usability', 'Exposure in milliseconds', 'The raw value is in 100 µs units, so 295 meant 29.5 ms. The slider now shows ms; new cameras start at 5 ms and margin 15.', '', '#settings|In chapter 04 →'],
     ['photonvision-11', 'robot', 'setEnabled()', 'Robot code can pause a camera with PhotonCamera.setEnabled(). Server side ported from upstream #2484 and #2499.', '', ''],
     ['photonvision-12', 'reliability', 'OpenCV leak fixes', 'Upstream\'s sweep of native-memory leaks (#2511), hand-ported to our 2026 code.', '', ''],
     ['photonvision-13', 'robot', 'Mid-exposure timestamps', 'Each frame\'s time is moved to the middle of its exposure, so the robot matches it to the right moment.', '', 'pv-s13'],
@@ -189,16 +189,16 @@ Site.chapter('photonvision', (root) => {
     ['photonvision-28', 'usability', 'More camera controls', 'Contrast, gamma, sharpness and backlight compensation, which stock PhotonVision hides. Saved per pipeline.', '', ''],
     ['photonvision-29', 'reliability', 'Stuck-camera recovery', 'No usable frames for 3 s: reconnect. Still none 5 s later: reset the camera at the USB level, like a replug.', 'bench test: back in 9.1 s', 'pv-s29'],
     ['photonvision-30', 'field', 'Field calibration page', 'Push the robot to 10–20 spots; the Jetson solves the event\'s real tag positions and every camera\'s mount.', 'synthetic test: tags to a few mm', 'pv-s30'],
-    ['photonvision-31', 'reliability', 'USB trouble detection', 'Watches the kernel log for "not enough bandwidth" and connection failures by port, reports them, and skips resets that can\'t help.', '', 'pv-s32'],
-    ['photonvision-32', 'diag', 'USB bandwidth card', 'The Camera Matching page shows the shared USB budget, what each camera reserves and sends, and lets you change it.', '', 'pv-s32'],
+    ['photonvision-31', 'reliability', 'USB trouble detection', 'Watches the kernel log for "not enough bandwidth" and connection failures by port, reports them, and skips resets that can\'t help.', '', '#speed|In chapter 10 →'],
+    ['photonvision-32', 'diag', 'USB bandwidth card', 'The Camera Matching page shows the shared USB budget, what each camera reserves and sends, and lets you change it.', '', '#speed|In chapter 10 →'],
     ['photonvision-33', 'diag', 'Quiet frame errors', 'With a camera gone, every failed grab was logged. Now the first one, then one line per 5 s with a count.', '~20,000 lines a minute → 1 per 5 s', ''],
-    ['photonvision-34', 'field', 'Focus score', 'A live sharpness score on a 3×3 grid while you turn the lens, like Limelight\'s focus tool.', '', 'pv-s34'],
+    ['photonvision-34', 'field', 'Focus score', 'A live sharpness score on a 3×3 grid while you turn the lens, like Limelight\'s focus tool.', '', '#camera|In chapter 03 →'],
     ['bos-01', 'reliability', 'Non-fatal CUDA errors', 'A CUDA error throws instead of stopping the program: skip one frame, restart only if the GPU is broken for 1 s.', 'worst outage 62 s → 8 s', ''],
     ['bos-02', 'reliability', 'Blank frames', 'No zero-block kernel launch when there\'s nothing to detect: return "no detections" early.', 'blank frames pass at 5 resolutions', ''],
     ['gpudetector-01', 'reliability', 'Clear stale CUDA errors', 'For the older 4143 detector: clear leftover errors after each stage and log which stage left one.', '', ''],
     ['gpudetector-02', 'diag', 'The "971 stats" line', 'Once a second: frames, ms per frame, tags per frame, decision margin. It showed the GPU was idle.', '', ''],
     ['gpudetector-03', 'reliability', 'Leak and handle fixes', 'Austin\'s fix for a leak on every tag decode, plus detector slots that are reused and checked.', 'stress test: 300 detectors', ''],
-    ['uvcvideo payload cap', 'speed', 'Camera driver bandwidth cap', 'Our patch to Linux\'s USB camera driver: cap what each camera reserves on the shared USB 2.0 bus.', '4 cameras fit instead of 2', ''],
+    ['uvcvideo payload cap', 'speed', 'Camera driver bandwidth cap', 'Our patch to Linux\'s USB camera driver: cap what each camera reserves on the shared USB 2.0 bus.', '4 cameras fit instead of 2', '#speed|In chapter 10 →'],
   ];
   {
     const svg = $('#pv-build');
@@ -246,7 +246,7 @@ Site.chapter('photonvision', (root) => {
     const fl = $('#pv-filters'), gal = $('#pv-gallery');
     const count = (g) => PATCHES.filter((p) => p[1] === g).length;
     fl.innerHTML = `<button data-g="all" class="on">All <small>${PATCHES.length}</small></button>` + Object.entries(GROUPS).map(([k, [n, c]]) => `<button data-g="${k}"><i style="background:${c}"></i>${n} <small>${count(k)}</small></button>`).join('');
-    gal.innerHTML = PATCHES.map(([id, g, name, what, eff, story]) => `<div class="pcard" data-g="${g}" style="--c:${GROUPS[g][1]}"><div class="top"><span class="num">${id.replace('photonvision-', 'PV ')}</span><span style="font-size:.72rem;color:${GROUPS[g][1]};font-weight:700">${GROUPS[g][0]}</span></div><h5>${name}</h5><div>${what}</div><div class="eff">${eff}</div>${story ? `<a class="more" href="#${story}">Read the story ↓</a>` : ''}</div>`).join('');
+    gal.innerHTML = PATCHES.map(([id, g, name, what, eff, story]) => `<div class="pcard" data-g="${g}" style="--c:${GROUPS[g][1]}"><div class="top"><span class="num">${id.replace('photonvision-', 'PV ')}</span><span style="font-size:.72rem;color:${GROUPS[g][1]};font-weight:700">${GROUPS[g][0]}</span></div><h5>${name}</h5><div>${what}</div><div class="eff">${eff}</div>${story ? (story[0] === '#' ? `<a class="more" href="${story.split('|')[0]}">${story.split('|')[1]}</a>` : `<a class="more" href="#${story}">Read the story ↓</a>`) : ''}</div>`).join('');
     fl.addEventListener('click', (e) => {
       const b = e.target.closest('button'); if (!b) return;
       fl.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
@@ -255,21 +255,6 @@ Site.chapter('photonvision', (root) => {
   }
 
   /* ── 6. Story visuals ─────────────────────────────────── */
-  // 09: decode bars
-  {
-    const cv = $('#pv-c09'), st = Site.canvas(cv, 0.3); let t0 = 0;
-    Site.onVisible(cv, (v) => { if (v) t0 = performance.now() / 1000; });
-    Site.loop(cv, (t) => {
-      const { ctx, w, h } = st, e = Site.clamp((t - t0) / 1.4, 0, 1), sc = (w - 150) / 9.5;
-      ctx.clearRect(0, 0, w, h);
-      [['cscore: JPEG → color → gray', 8.9, '#f59e0b'], ['ours: JPEG → gray', 2.6, LIME]].forEach(([n, v, c], i) => {
-        const y = 12 + i * (h / 2);
-        ctx.fillStyle = MUTED; ctx.font = '600 11px "Plus Jakarta Sans", sans-serif'; ctx.fillText(n, 0, y + 2);
-        ctx.fillStyle = c; ctx.fillRect(0, y + 8, v * sc * e, h / 2 - 26);
-        ctx.fillStyle = '#fff'; ctx.font = '700 14px Outfit, sans-serif'; ctx.fillText(`${(v * e).toFixed(1)} ms`, v * sc * e + 8, y + 8 + (h / 2 - 26) / 2 + 5);
-      });
-    });
-  }
   // 27: sharp vs stretched
   {
     const cv = $('#pv-c27'), st = Site.canvas(cv, 0.62);
@@ -311,25 +296,6 @@ Site.chapter('photonvision', (root) => {
       ctx.fillStyle = MUTED; ctx.font = '600 11px "Plus Jakarta Sans", sans-serif'; ctx.fillText(watch ? 'was 0.52, with the stream at 121 fps; now 30 fps' : 'was 0.49: the stream thread worked for no one', 0, h - 6);
     });
   }
-  // 10: exposure units
-  {
-    const cv = $('#pv-c10'), st = Site.canvas(cv, 0.4); let raw = 295;
-    const draw = () => {
-      const { ctx, w, h } = st, ms = raw / 10, fps = Math.min(120, 1000 / ms);
-      ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = MUTED; ctx.font = '600 11px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('raw value', 0, 14); ctx.fillText('really', w * 0.34, 14); ctx.fillText('frame rate it allows', w * 0.64, 14);
-      ctx.fillStyle = '#fff'; ctx.font = `800 ${Math.min(28, w / 15)}px Outfit, sans-serif`;
-      ctx.fillText(`${raw}`, 0, 46); ctx.fillStyle = ms > 8.4 ? AMBER : LIME; ctx.fillText(`${ms.toFixed(1)} ms`, w * 0.34, 46); ctx.fillText(`${Math.floor(fps)} fps`, w * 0.64, 46);
-      ctx.font = '600 11px "Plus Jakarta Sans", sans-serif';
-      const by = h - 30, bw = w; ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(0, by, bw, 14);
-      const per = Math.max(ms, 1000 / 120);
-      ctx.fillStyle = MUTED; ctx.fillText(`a frame every ${per.toFixed(1)} ms, light collected for ${ms.toFixed(1)} ms of it`, 0, by - 8);
-      for (let x = 0, i = 0; x < bw && i < 60; x += per * (bw / 60), i++) { ctx.fillStyle = ms > 8.4 ? AMBER : LIME; ctx.fillRect(x, by, ms * (bw / 60) - 1.5, 14); }
-    };
-    Site.range($('#pv-exp'), (v) => { raw = v; draw(); });
-    new ResizeObserver(draw).observe(cv.parentElement);
-  }
   // 13: timestamp timeline
   {
     const x0 = 14, sc = 30; // px per ms (the unknown camera delay is drawn at 3 ms)
@@ -356,54 +322,6 @@ Site.chapter('photonvision', (root) => {
     }
     s += `<text x="10" y="172" font-size="11.5" fill="#635a72">Bench test (TopRight). Still stuck? A USB reset every 30 s.</text>`;
     $('#pv-c29').innerHTML = s;
-  }
-  // 34: focus score (real variance-of-Laplacian on a synthetic image)
-  {
-    const cv = $('#pv-c34'), st = Site.canvas(cv, 0.62);
-    const SW = 180, SH = 112;
-    const scene = document.createElement('canvas'); scene.width = SW; scene.height = SH;
-    const sx = scene.getContext('2d');
-    sx.fillStyle = '#9a9a9a'; sx.fillRect(0, 0, SW, SH);
-    for (let i = 0; i < 40; i++) { sx.fillStyle = i % 2 ? '#bdbdbd' : '#6e6e6e'; sx.fillRect((i * 37) % SW, (i * 53) % SH, 6 + (i % 5) * 3, 3 + (i % 3) * 2); }
-    [[8, 10, 3], [66, 34, 12], [128, 12, 22], [14, 66, 5], [124, 64, 7]].forEach(([x, y, id]) => sx.drawImage(Site.tagCanvas(id, 200), x, y, 40, 40));
-    const buf = document.createElement('canvas'); buf.width = SW; buf.height = SH;
-    const bx = buf.getContext('2d', { willReadFrequently: true });
-    const tmp = document.createElement('canvas');
-    let lens = 20, best = Array(9).fill(0);
-    const peak = [53, 55, 58]; // tilted lens: each column is sharpest at a different turn
-    const draw = () => {
-      for (let c = 0; c < 3; c++) {
-        const s = 1.5 + Math.abs(lens - peak[c]) / 9; // always resampled a little, so the score changes smoothly
-        tmp.width = Math.max(4, Math.round(SW / s)); tmp.height = Math.max(4, Math.round(SH / s));
-        const tx = tmp.getContext('2d'); tx.imageSmoothingEnabled = true; tx.drawImage(scene, 0, 0, tmp.width, tmp.height);
-        bx.save(); bx.beginPath(); bx.rect(c * SW / 3, 0, SW / 3, SH); bx.clip(); bx.imageSmoothingEnabled = true; bx.drawImage(tmp, 0, 0, SW, SH); bx.restore();
-      }
-      const d = bx.getImageData(0, 0, SW, SH).data, g = (x, y) => d[(y * SW + x) * 4];
-      const score = [];
-      for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
-        let n = 0, m = 0, m2 = 0;
-        for (let y = Math.floor(r * SH / 3) + 1; y < (r + 1) * SH / 3 - 1; y++) for (let x = Math.floor(c * SW / 3) + 1; x < (c + 1) * SW / 3 - 1; x++) {
-          const L = g(x - 1, y) + g(x + 1, y) + g(x, y - 1) + g(x, y + 1) - 4 * g(x, y); n++; m += L; m2 += L * L;
-        }
-        score.push(m2 / n - (m / n) ** 2);
-      }
-      score.forEach((v, i) => (best[i] = Math.max(best[i], v)));
-      const { ctx, w, h } = st;
-      ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
-      ctx.imageSmoothingEnabled = true; ctx.drawImage(buf, 0, 0, w, h);
-      for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
-        const i = r * 3 + c, p = best[i] ? Math.round(100 * score[i] / best[i]) : 0;
-        const x = c * w / 3, y = r * h / 3;
-        ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.strokeRect(x + .5, y + .5, w / 3 - 1, h / 3 - 1);
-        ctx.fillStyle = 'rgba(14,5,24,.72)'; ctx.fillRect(x + 6, y + 6, 54, 22);
-        ctx.fillStyle = p >= 97 ? LIME : p >= 80 ? AMBER : RED; ctx.font = '800 15px Outfit, sans-serif'; ctx.fillText(`${p}%`, x + 12, y + 23);
-      }
-    };
-    for (let v = 0; v <= 100; v += 2) { lens = v; draw(); } // as if someone already turned it past the peak
-    lens = 55;
-    Site.range($('#pv-focus'), (v) => { lens = v; draw(); });
-    $('#pv-focus-reset').onclick = () => { best = Array(9).fill(0); draw(); };
-    new ResizeObserver(draw).observe(cv.parentElement);
   }
   // 22: excluded tags
   {

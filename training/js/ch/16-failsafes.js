@@ -10,7 +10,7 @@ Site.chapter('failsafes', (root) => {
 
   /* ── Watchdog dog ──────────────────────────────────────── */
   {
-    const cv = $('#f-dog'), st = Site.canvas(cv, (cv.clientWidth || cv.parentElement.clientWidth) < 500 ? 0.78 : 0.62);
+    const cv = $('#f-dog'), st = Site.canvas(cv, (cv.clientWidth || cv.parentElement.clientWidth || root.clientWidth) < 500 ? 0.78 : 0.62);
     const since = $('#f-since'), state = $('#f-state'), fb = $('#f-freeze'), pb = $('#f-panic');
     let mode = 'run', lastPat = 0, sim = 0, boot = 0, panicAt = 0, hearts = [];
     const SPEED = 6, LIMIT = 30;
@@ -108,7 +108,7 @@ Site.chapter('failsafes', (root) => {
     { id: 'corrupt', icon: '🧩', name: 'Camera stuck sending garbage', time: '~9 s', secs: 9.1, m: 1,
       src: 'photonvision-29, bench test with its test hook on TopRight',
       steps: [
-        ['fault', ['camB'], '', 'TopRight is connected but sends only corrupt frames ("invalid JPEG image received"). Seen once after rapid restarts.'],
+        ['fault', ['camB'], '', 'TopRight is connected but sends only corrupt frames ("invalid JPEG image received"). Seen once after rapid restarts.', 'TopRight is connected but sends only corrupt frames ("invalid JPEG image received").'],
         ['detect', ['pv'], '+3 s', 'The stuck-camera watchdog sees no usable frame for 3 s and reconnects the camera.'],
         ['detect', ['pv', 'kern', 'hub'], '+8 s', 'Still nothing 5 s later: a USB-level reset, like unplugging and replugging it in software.'],
         ['recover', ['camB', 'kern'], '+9.1 s', 'The kernel re-finds the camera and re-applies its USB bandwidth cap. cscore reconnects.'],
@@ -118,18 +118,18 @@ Site.chapter('failsafes', (root) => {
       src: 'bos-01 + detector/, fault injection with /tmp/spectrum-971-fault-every',
       steps: [
         ['fault', ['gpu'], '', 'A GPU call fails on one frame.'],
-        ['detect', ['gpu', 'pv'], 'same frame', 'The error is caught instead of crashing the program (it used to abort everything).'],
+        ['detect', ['gpu', 'pv'], 'same frame', 'The error is caught instead of crashing the program (it used to abort everything).', 'The error is caught; the program keeps running.'],
         ['recover', ['gpu'], 'next frame', 'That frame is skipped and the detector is rebuilt on the next one.'],
         ['info', ['robot'], '', 'Tested with 1 error every 100 frames: no restart, 99% of frames still detected.'],
       ] },
-    { id: 'gpu', icon: '🧨', name: 'GPU context broken', time: '~8 s (was 62 s)', cl: '~8 s', secs: 8, m: 1,
+    { id: 'gpu', icon: '🧨', name: 'GPU context broken', time: '~8 s (was 62 s)', ts: '~8 s', cl: '~8 s', secs: 8, m: 1,
       src: 'CUDA error handling, fault injection: every frame failing',
       steps: [
         ['fault', ['gpu'], '', 'Every frame fails: the GPU context itself is broken.'],
         ['detect', ['gpu'], '1 s', 'After each failure the detector checks the GPU (cudaDeviceSynchronize). Broken for a full second? It exits cleanly with _exit.'],
         ['detect', ['sysd'], '+1.7 s', 'PhotonVision has exited. systemd notices at once (Restart=always).'],
         ['recover', ['sysd', 'pv'], '', 'systemd restarts PhotonVision. No crash report, no core dump.'],
-        ['recover', ['gpu', 'robot'], '+8 s', 'Detecting again 6.2 s after the exit: about 8 s in total. Before our fixes: about 62 s.'],
+        ['recover', ['gpu', 'robot'], '+8 s', 'Detecting again 6.2 s after the exit: about 8 s in total. Before our fixes: about 62 s.', 'Detecting again 6.2 s after the exit: about 8 s in total.'],
       ] },
     { id: 'crash', icon: '💥', name: 'PhotonVision crashes', time: 'seconds', cl: '≈ 6 s', secs: 6.2, m: 0,
       src: 'Restart=always and StartLimitIntervalSec=0 (09-robot-tuning.sh); JVM core dumps off (06-install-fork-jar.sh)',
@@ -145,7 +145,7 @@ Site.chapter('failsafes', (root) => {
       steps: [
         ['fault', ['kern', 'sysd'], '', 'The whole operating system locks up. Nothing in software can react.'],
         ['detect', ['wd'], '30 s', 'systemd stops petting the hardware watchdog. After 30 s the watchdog resets the board.'],
-        ['info', ['kern'], '', 'A kernel panic is quicker: kernel.panic=3 reboots 3 s after it. (The default was to sit frozen.)'],
+        ['info', ['kern'], '', 'A kernel panic is quicker: kernel.panic=3 reboots 3 s after it. (The default was to sit frozen.)', 'A kernel panic is quicker: the Jetson reboots itself 3 s after it.'],
         ['recover', ['kern', 'sysd', 'pv'], '+16.5 s', 'Linux boots in 16.5 s. PhotonVision starts.'],
         ['recover', ['gpu', 'robot'], '≈ +20 s', 'Detecting about 20 s after the reset. Total ≈ 50 s: added up from measured parts, not timed end to end.'],
       ] },
@@ -179,7 +179,7 @@ Site.chapter('failsafes', (root) => {
     { id: 'heat', icon: '🌡️', name: 'Overheating', time: 'no outage', secs: 0, m: 1,
       src: 'Fan and fanless tests (TECHNICAL.md "Match readiness", "Fanless")',
       steps: [
-        ['info', ['fan'], '', 'The fan runs at full speed from boot: the hottest sensor went from 56 to 43 °C on the bench.'],
+        ['info', ['fan'], '', 'The fan runs at full speed from boot: the hottest sensor went from 56 to 43 °C on the bench.', 'The fan runs at full speed from boot (about 43 °C on the bench).'],
         ['fault', ['fan'], '', 'Suppose the fan dies.'],
         ['detect', ['fan', 'robot'], '', 'health-check.sh reads the fan\'s speed sensor and FAILs under 1,000 rpm. Temperatures are on NetworkTables.'],
         ['info', ['gpu'], 'minutes', 'Fan off at full power: 42 → 85 °C in about 10 minutes. The chip only starts throttling at 99 °C and shuts down at 104.5 °C.'],
@@ -193,7 +193,7 @@ Site.chapter('failsafes', (root) => {
         ['detect', ['gpu', 'robot'], '', 'If the chip\'s supply current spikes, it throttles itself, and /photonvision/jetson/throttle reads OVER-CURRENT.'],
         ['info', ['ssd'], '', 'If power is lost completely, it\'s a power cut: see that fault.'],
       ] },
-    { id: 'mode', icon: '🔍', name: 'Camera silently at 320×240', time: '~1–2 s', secs: 1.5, m: 0,
+    { id: 'mode', hist: 1, icon: '🔍', name: 'Camera silently at 320×240', time: '~1–2 s', secs: 1.5, m: 0,
       src: 'photonvision-27; seen at about 1 in 20 PhotonVision starts',
       steps: [
         ['fault', ['camB'], '', 'A startup race leaves TopRight streaming 320×240 while PhotonVision believes 1280×800.'],
@@ -202,7 +202,7 @@ Site.chapter('failsafes', (root) => {
         ['recover', ['camB', 'pv'], '', 'Reopening makes cscore apply the right video mode again.'],
         ['detect', ['robot'], '', 'health-check.sh also FAILs any camera whose real format differs from what PhotonVision set.'],
       ] },
-    { id: 'flood', icon: '📜', name: 'Log flood', time: 'prevented', secs: 0, m: 1,
+    { id: 'flood', hist: 1, icon: '📜', name: 'Log flood', time: 'prevented', secs: 0, m: 1,
       src: 'photonvision-33; journal size in 09-robot-tuning.sh',
       steps: [
         ['fault', ['pv', 'ssd'], '', 'With cameras gone, PhotonVision logged an error for every attempt: about 20,000 lines a minute.'],
@@ -255,9 +255,10 @@ Site.chapter('failsafes', (root) => {
     const select = (f) => {
       cur = f; stepI = 0; timer = 0; compState = {};
       title.textContent = f.icon + ' ' + f.name;
-      time.textContent = f.time; time.classList.toggle('bad', f.secs === Infinity);
+      time.innerHTML = f.ts ? `<span class="full">${f.time}</span><span class="short">${f.ts}</span>` : f.time; time.classList.toggle('bad', f.secs === Infinity);
       srcEl.textContent = 'Source: ' + f.src + (f.m ? '' : '. Times marked ≈ are estimates.');
-      stepsEl.innerHTML = f.steps.map(([k, , at, txt]) => `<li class="${k}">${at ? `<b class="at">${at}</b>` : ''}${txt}</li>`).join('');
+      // a step's 5th element is its short-mode wording (the short tour describes the system, not its history)
+      stepsEl.innerHTML = f.steps.map(([k, , at, txt, sh]) => `<li class="${k}">${at ? `<b class="at">${at}</b>` : ''}${sh === undefined ? txt : `<span class="full">${txt}</span><span class="short">${sh}</span>`}</li>`).join('');
       paint(); advance();
       root.querySelectorAll('#f-faults button').forEach((b) => b.classList.toggle('on', b.dataset.id === f.id));
       chart && chart();
@@ -270,7 +271,7 @@ Site.chapter('failsafes', (root) => {
       stepI++; paint();
     };
     const fl = $('#f-faults');
-    fl.innerHTML = FAULTS.map((f) => `<button data-id="${f.id}">${f.icon} ${f.name}</button>`).join('');
+    fl.innerHTML = FAULTS.map((f) => `<button data-id="${f.id}"${f.hist ? ' class="full"' : ''}>${f.icon} ${f.name}</button>`).join('');
     fl.onclick = (e) => { const b = e.target.closest('button'); if (b) select(FAULTS.find((f) => f.id === b.dataset.id)); };
     $('#f-replay').onclick = () => select(cur);
     let chart = null;

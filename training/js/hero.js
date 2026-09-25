@@ -24,14 +24,14 @@
     const c = Math.cos(cam.yaw), s = Math.sin(cam.yaw);
     const x = p[0] - cam.x, y = p[1] - cam.y, z = p[2];
     const xr = c * x - s * z, zr = s * x + c * z;
-    const f = narrow ? W * 0.9 : H * 0.95;
+    const f = narrow ? W * 0.9 : H * 0.8;
     return [cx + (f * xr) / zr, H * (narrow ? 0.24 : 0.52) - (f * y) / zr, zr];
   }
 
   Site.loop(cv, (t) => {
     const W = st.w, H = st.h;
     const wide = W > 900;
-    const cx = wide ? W * 0.7 : W * 0.5;
+    const cx = wide ? W * 0.76 : W * 0.5;
     ctx.clearRect(0, 0, W, H);
 
     // floor grid in perspective

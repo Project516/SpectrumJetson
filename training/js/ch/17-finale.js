@@ -43,7 +43,7 @@ Site.chapter('finale', (root) => {
       { n: 'Light', t: '0 ms', ch: 'camera', cn: '03', d: 'Room light shines on tag 3, propped on a box in our shop. White squares reflect a lot of light, black ones very little. Some of that light heads into TopLeft\'s lens.', data: 'photons → lens → sensor' },
       { n: 'Exposure', t: '0 → 5 ms (likely)', ch: 'settings', cn: '04', d: 'Every pixel of the global-shutter sensor collects light at once, then each pixel\'s charge becomes a number: 0 is black, 255 is white. This recording didn\'t save its exposure; our setting then was 5 ms, so it was likely 5 ms.', data: () => 'real pixel values at the tag\'s top-left corner:\n' + (pix ? pix.map((r) => r.map((v) => String(v).padStart(3)).join(' ')).join('\n') : '…') },
       { n: 'JPEG', t: 'camera delay (?)', ch: 'camera', cn: '03', d: 'The camera compresses the 1,024,000 numbers into a JPEG, 8×8 pixel blocks at a time. This frame\'s JPEG is exactly 52,801 bytes, about 1/19 of the raw pixels. The time this takes inside the camera isn\'t measured yet.', data: 'the real first bytes of this frame:\n' + HEX.slice(0, 24).join(' ') + '\n' + HEX.slice(24).join(' ') + ' …\n(52,801 bytes in all)' },
-      { n: 'USB', t: `+${USB_MS.toFixed(1)} ms`, ch: 'speed', cn: '10', d: 'The JPEG crosses USB 2.0 in slices of up to 1280 bytes, one slice every 125 µs microframe. The Linux driver stamps the frame when the first slice arrives.', data: `52,801 B ÷ 1280 B → ${MF} microframes\n${MF} × 125 µs ≈ ${USB_MS.toFixed(1)} ms\nshared bus: ~6,700 B per microframe for all cameras` },
+      { n: 'USB', t: `+${USB_MS.toFixed(1)} ms`, ch: 'speed', cn: '10', chs: 'dataflow', cns: '07', d: 'The JPEG crosses USB 2.0 in slices of up to 1280 bytes, one slice every 125 µs microframe. The Linux driver stamps the frame when the first slice arrives.', data: `52,801 B ÷ 1280 B → ${MF} microframes\n${MF} × 125 µs ≈ ${USB_MS.toFixed(1)} ms\nshared bus: ~6,700 B per microframe for all cameras` },
       { n: 'Decode', t: '+2.6 ms', ch: 'dataflow', cn: '07', d: 'The Jetson\'s NVJPG hardware turns the JPEG back into a gray image in shared (unified) memory, where the GPU can read it without a copy across a bus. The picture here is that gray decode, pixel for pixel.', data: 'a gray image, 1 byte per pixel:\n1280 × 800 = 1,024,000 bytes\nNVJPG: 2.59 ms a frame (our Jetson\'s log)' },
       { n: 'Blobs', t: 'GPU, ~1–2 ms total', ch: 'cuda', cn: '08', d: 'Thousands of GPU threads threshold the image into black and white, then group touching pixels into blobs. The tag\'s black border pops out as a ring.', data: 'threshold → connected components → blob edges\n(1,024 CUDA cores, 32-thread warps)\nthe threshold view is an illustration' },
       { n: 'Corners', t: '(same GPU step)', ch: 'cuda', cn: '08', d: 'Blob edges are fit with four straight lines. Their crossings are the tag\'s corners, found to a fraction of a pixel. Then a few CPU threads read the inside as bits to get the ID. These are the corners our Jetson\'s detector really found.', data: () => TAGS.map((tg) => `tag ${tg.id}, decision margin ${tg.dm}:\n` + tg.k.map((pt) => `  (${pt[0].toFixed(1)}, ${pt[1].toFixed(1)})`).join('\n')).join('\n') },
@@ -54,15 +54,17 @@ Site.chapter('finale', (root) => {
     const N = S.length, PER = 2.6;
     const cv = $('#fn-stage'), st = Site.canvas(cv, 0.625);
     const now = $('#fn-now'), scrub = $('#fn-scrub'), btn = $('#fn-play'), jr = $('#fn-journey');
-    jr.innerHTML = S.map((s, i) => `<li><button data-i="${i}"><i>ch ${s.cn}</i><b>${i + 1}. ${s.n}</b><small>${s.t}</small><span class="fill"></span></button></li>`).join('');
+    jr.innerHTML = S.map((s, i) => `<li><button data-i="${i}"><i>${s.chs ? `<span class="full">ch ${s.cn}</span><span class="short">ch ${s.cns}</span>` : `ch ${s.cn}`}</i><b>${i + 1}. ${s.n}</b><small>${s.t}</small><span class="fill"></span></button></li>`).join('');
     const lis = [...jr.children];
+    addEventListener('site:mode', () => { shown = -1; });
     let T = 0, playing = false, shown = -1;
     const setT = (v) => { T = Site.clamp(v, 0, N * PER - 0.001); scrub.value = Math.round((T / (N * PER)) * 1000); };
     btn.onclick = () => { if (!playing && T >= N * PER - 0.01) setT(0); playing = !playing; btn.textContent = playing ? '❚❚ Pause' : '▶ Play'; };
     scrub.oninput = () => { T = (scrub.value / 1000) * N * PER; playing = false; btn.textContent = '▶ Play'; };
     jr.onclick = (e) => { const b = e.target.closest('button'); if (b) { setT(+b.dataset.i * PER + 0.01); playing = false; btn.textContent = '▶ Play'; } };
     const info = (i) => {
-      const s = S[i];
+      const s0 = S[i], sh = document.body.classList.contains('mode-short') && s0.chs;
+      const s = sh ? { ...s0, ch: s0.chs, cn: s0.cns } : s0;
       now.innerHTML = `<h5>Stage ${i + 1} of ${N} · chapter ${s.cn}</h5><h4>${s.n}</h4><span class="t">${s.t}</span><p>${s.d}</p><div class="data">${typeof s.data === 'function' ? s.data() : s.data}</div><p style="margin-bottom:0"><a href="#${s.ch}">Read chapter ${s.cn} →</a></p>`;
     };
 
@@ -258,16 +260,16 @@ Site.chapter('finale', (root) => {
     const QS = [
       ['What does the pattern inside an AprilTag tell the robot?', ['Its distance to the tag', 'Which tag it is (an ID number)', 'The robot\'s team number', 'The match time'], 1, 'The squares encode an ID (36 data bits in tag36h11). The field map says where each ID is mounted.', 'apriltags'],
       ['Why use a global-shutter camera on a moving robot?', ['It records color', 'Every pixel captures at the same instant, so motion isn\'t skewed', 'It doesn\'t need USB', 'It focuses itself'], 1, 'A rolling shutter reads rows one after another, so a fast-moving tag comes out slanted.', 'camera'],
-      ['PhotonVision\'s exposure was set to 295. How long was each exposure?', ['0.3 ms', '2.95 ms', '29.5 ms', '295 ms'], 2, 'USB cameras count exposure in 100 µs units. 29.5 ms capped the camera near 34 fps; we run 50 (5 ms).', 'settings'],
-      ['Why could only two cameras stream with the stock camera driver?', ['The GPU was full', 'Each reserved ~196 Mbps of one shared USB 2.0 budget', 'The Jetson has only two USB ports', 'The CPU was full'], 1, 'Every USB 2.0 port shares one bus of about 6,700 bytes per microframe. Our driver caps each camera so four fit.', 'speed'],
-      ['What took both cameras to 122 fps?', ['A faster GPU', 'Turning Low Latency Mode on', 'Decoding the JPEG straight to gray: 8.9 → 2.6 ms', 'Lowering the resolution'], 2, 'cscore secretly decoded each frame to full color first. The GPU was never the bottleneck.', 'speed'],
-      ['What is NVJPG?', ['A brand of camera', 'A JPEG decoder built into the Jetson\'s chip', 'A NetworkTables topic', 'A PhotonVision pipeline'], 1, 'Hardware decode, ~2.6 ms a frame, took PhotonVision from 0.85 to 0.52 CPU cores. We check its frames against the CPU decoder.', 'dataflow'],
+      ['PhotonVision\'s exposure was set to 295. How long was each exposure?', ['0.3 ms', '2.95 ms', '29.5 ms', '295 ms'], 2, 'USB cameras count exposure in 100 µs units. 29.5 ms capped the camera near 34 fps; we run 50 (5 ms).', 'settings', 'full'],
+      ['Why could only two cameras stream with the stock camera driver?', ['The GPU was full', 'Each reserved ~196 Mbps of one shared USB 2.0 budget', 'The Jetson has only two USB ports', 'The CPU was full'], 1, 'Every USB 2.0 port shares one bus of about 6,700 bytes per microframe. Our driver caps each camera so four fit.', 'speed', 'full'],
+      ['What took both cameras to 122 fps?', ['A faster GPU', 'Turning Low Latency Mode on', 'Decoding the JPEG straight to gray: 8.9 → 2.6 ms', 'Lowering the resolution'], 2, 'cscore secretly decoded each frame to full color first. The GPU was never the bottleneck.', 'speed', 'full'],
+      ['What is NVJPG?', ['A brand of camera', 'A JPEG decoder built into the Jetson\'s chip', 'A NetworkTables topic', 'A PhotonVision pipeline'], 1, 'Hardware decode, ~2.6 ms a frame, took PhotonVision from 0.85 to 0.52 CPU cores. We check its frames against the CPU decoder.', 'dataflow', 'full'],
       ['What\'s special about the Jetson\'s memory?', ['It has no RAM', 'The CPU and GPU share the same RAM', 'It stores images on the SSD', 'The GPU has its own 8 GB'], 1, 'Unified memory: a decoded image is already where the GPU can read it, with no copy across a slow bus.', 'dataflow'],
-      ['On an NVIDIA GPU, a warp is…', ['32 threads that run the same instruction together', 'One CUDA core', 'A distorted image', 'A memory chip'], 0, 'The GPU schedules threads in warps of 32. Code runs fastest when all 32 do the same thing.', 'cuda'],
-      ['What is a patch file, like photonvision-13?', ['A firmware image', 'A list of lines to remove and add in someone else\'s code', 'A calibration file', 'A cable repair'], 1, 'Our build scripts apply our patches to PhotonVision and the detector automatically, so every fix is small and reviewable.', 'photonvision'],
+      ['On an NVIDIA GPU, a warp is…', ['32 threads that run the same instruction together', 'One CUDA core', 'A distorted image', 'A memory chip'], 0, 'The GPU schedules threads in warps of 32. Code runs fastest when all 32 do the same thing.', 'cuda', 'full'],
+      ['What is a patch file, like photonvision-13?', ['A firmware image', 'A list of lines to remove and add in someone else\'s code', 'A calibration file', 'A cable repair'], 1, 'Our build scripts apply our patches to PhotonVision and the detector automatically, so every fix is small and reviewable.', 'photonvision', 'full'],
       ['Which of these are camera intrinsics, found by calibration?', ['Where the camera is mounted on the robot', 'Focal length, image center and lens distortion', 'Exposure and brightness', 'The camera\'s USB port'], 1, 'Our cameras\' focal length came out at about 737 px. The mount position is the extrinsics.', 'calibration'],
       ['Why is a multi-tag pose more trustworthy than one tag?', ['It\'s computed faster', 'One small tag can look nearly the same from two poses; more tags pin down one answer', 'It needs no calibration', 'It uses less USB bandwidth'], 1, 'A single square tag often has an ambiguous "flipped" pose. Corners from several tags at once remove the ambiguity.', 'pose'],
-      ['How does the robot\'s gyro help vision?', ['It measures distance to tags', 'Its very accurate heading lets the solver fix the heading and reject wrong poses', 'It cleans the lens', 'It replaces odometry'], 1, 'Heading-constrained solves (like MegaTag2) hold the heading to the gyro and only solve position.', 'gyro'],
+      ['How does the robot\'s gyro help vision?', ['It measures distance to tags', 'Its very accurate heading lets the solver fix the heading and reject wrong poses', 'It cleans the lens', 'It replaces odometry'], 1, 'Heading-constrained solves (like MegaTag2) hold the heading to the gyro and only solve position.', 'gyro', 'full'],
       ['A robot drives 4 m/s and treats a 15 ms old vision pose as "now." How far off is it?', ['0.6 mm', '6 cm', '60 cm', '6 m'], 1, '4 m/s × 0.015 s = 0.06 m. The fix: addVisionMeasurement(pose, timestamp).', 'latency'],
       ['In NetworkTables 4, where does the server run?', ['On the Jetson', 'In the robot program on the SystemCore', 'On the driver station', 'In the cloud'], 1, 'PhotonVision and dashboards are clients that connect on port 5810 and publish or subscribe to topics.', 'networktables'],
       ['What does the Jetson\'s hardware watchdog do?', ['Resets the board if Linux stops "petting" it for 30 s', 'Checks lens focus', 'Watches for other robots', 'Cools the GPU'], 0, 'systemd pets it regularly. If Linux freezes, the petting stops and the hardware resets the Jetson.', 'failsafes'],
@@ -279,7 +281,8 @@ Site.chapter('finale', (root) => {
     try { ans = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { ans = {}; }
     const save = () => { try { localStorage.setItem(KEY, JSON.stringify(ans)); } catch (e) { /* storage blocked: answers just aren't kept */ } };
     const qz = $('#fn-quiz');
-    qz.innerHTML = QS.map(([q, opts], i) => `<div class="q" data-i="${i}"><h4><span>${i + 1}</span>${q}</h4><div class="opts">${opts.map((o, j) => `<button data-j="${j}">${o}</button>`).join('')}</div><div class="fb"></div></div>`).join('');
+    // a 6th element 'full' marks a question only the full course teaches: hidden (and not scored) in short mode
+    qz.innerHTML = QS.map(([q, opts, , , , only], i) => `<div class="q${only === 'full' ? ' full' : ''}" data-i="${i}"><h4><span>${i + 1}</span>${q}</h4><div class="opts">${opts.map((o, j) => `<button data-j="${j}">${o}</button>`).join('')}</div><div class="fb"></div></div>`).join('');
     const sc = $('#fn-sc'), bar = $('#fn-bar'), msg = $('#fn-msg');
     const show = (i) => {
       const card = qz.children[i], a = ans[i], [, , right, why, ch] = QS[i];
@@ -289,10 +292,14 @@ Site.chapter('finale', (root) => {
       fb.classList.toggle('show', a !== undefined);
       if (a !== undefined) fb.innerHTML = `<b class="${a === right ? 'ok' : 'no'}">${a === right ? 'Right.' : 'Not quite.'}</b> ${why} <a href="#${ch}">Review →</a>`;
     };
+    const visible = () => QS.map((_, i) => i).filter((i) => !(document.body.classList.contains('mode-short') && QS[i][5] === 'full'));
     const score = () => {
-      const done = Object.keys(ans).length, ok = Object.entries(ans).filter(([i, a]) => QS[i] && QS[i][2] === a).length;
-      sc.textContent = `${ok} / ${QS.length}`; bar.style.width = (100 * ok / QS.length) + '%';
-      msg.textContent = done === 0 ? 'Pick an answer to start.' : done < QS.length ? `${QS.length - done} to go.` : ok === QS.length ? 'Perfect score. You know how our robot sees.' : ok >= 12 ? 'Great job. Review the ones you missed.' : 'Done. Follow the review links and try again.';
+      const vis = visible(), n = vis.length;
+      // number the visible questions 1..n
+      vis.forEach((i, k) => (qz.children[i].querySelector('h4 span').textContent = k + 1));
+      const done = vis.filter((i) => ans[i] !== undefined).length, ok = vis.filter((i) => ans[i] === QS[i][2]).length;
+      sc.textContent = `${ok} / ${n}`; bar.style.width = (100 * ok / n) + '%';
+      msg.textContent = done === 0 ? 'Pick an answer to start.' : done < n ? `${n - done} to go.` : ok === n ? 'Perfect score. You know how our robot sees.' : ok >= Math.round(n * 0.8) ? 'Great job. Review the ones you missed.' : 'Done. Follow the review links and try again.';
     };
     qz.onclick = (e) => {
       const b = e.target.closest('.opts button'); if (!b || b.disabled) return;
@@ -300,6 +307,7 @@ Site.chapter('finale', (root) => {
     };
     $('#fn-reset').onclick = () => { ans = {}; save(); QS.forEach((_, i) => show(i)); score(); };
     QS.forEach((_, i) => show(i)); score();
+    addEventListener('site:mode', score);
   }
 
   /* ── Glossary ──────────────────────────────────────────── */
