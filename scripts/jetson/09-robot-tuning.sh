@@ -15,12 +15,17 @@
 #                               ext4's journal keeps the filesystem itself consistent.
 #   7. Fan at full speed      - jetson_clocks --fan (noise doesn't matter on a robot; NVIDIA's
 #                               "quiet" profile ran it at ~2000 rpm at 56 C)
-#   8. Recover from hangs     - hardware watchdog 30 s (NVIDIA's default 2 min), kernel panic ->
-#                               reboot in 3 s (default: hang forever), PhotonVision restarted on
-#                               any exit (default: only on failure), with no restart limit
+#   8. Recover from hangs     - hardware watchdog 30 s (NVIDIA's default 2 min), also while
+#                               rebooting (default 10 min), kernel panic -> reboot in 3 s (default:
+#                               hang forever), PhotonVision restarted on any exit (default: only on
+#                               failure), with no restart limit
 #   9. OpenCV threads sleep   - OpenCV's worker pool busy-waits between jobs by default; its only
 #                               jobs here are tiny (preview-stream resize/colour), so 5 workers
 #                               spun at ~7% each for nothing. Active waiting off; pool kept.
+#  10. USB retries 1 s        - a camera that stops answering (e.g. a Thriftiest after a hub
+#                               reset) holds up every other camera on its hub while the kernel
+#                               retries it: ~65 s each with the default 5 s timeout. 1 s cuts that
+#                               to seconds. A healthy device answers in milliseconds.
 #
 # Usage: 09-robot-tuning.sh [--undo]
 set -euo pipefail
@@ -37,12 +42,14 @@ WATCHDOG_CONF=/etc/systemd/system.conf.d/zz-spectrum-watchdog.conf
 PANIC_CONF=/etc/sysctl.d/90-spectrum-panic.conf
 PV_RESTART_CONF=/etc/systemd/system/photonvision.service.d/90-spectrum-restart.conf
 PV_OPENCV_CONF=/etc/systemd/system/photonvision.service.d/90-spectrum-opencv.conf
+USB_TMPFILES=/etc/tmpfiles.d/90-spectrum-usb.conf
 
-sudo -v
+sudo -n true 2>/dev/null || sudo -v   # ask for the password only if sudo needs one
 
 if [[ ${1:-} == --undo ]]; then
   sudo rm -f "$APT_CONF" "$UDEV_RULE" "$SYSCTL_CONF" "$JOURNALD_CONF"
-  sudo rm -f "$WATCHDOG_CONF" "$PANIC_CONF" "$PV_RESTART_CONF" "$PV_OPENCV_CONF"
+  sudo rm -f "$WATCHDOG_CONF" "$PANIC_CONF" "$PV_RESTART_CONF" "$PV_OPENCV_CONF" "$USB_TMPFILES"
+  echo 5000 | sudo tee /sys/module/usbcore/parameters/initial_descriptor_timeout >/dev/null
   sudo sysctl -q kernel.panic=0
   sudo systemctl daemon-reexec
   sudo systemctl start nvfancontrol || true   # back to NVIDIA's fan control
@@ -129,10 +136,12 @@ sudo sysctl -q -p "$SYSCTL_CONF"
 sudo mkdir -p /var/log/journal "$(dirname "$JOURNALD_CONF")"
 sudo tee "$JOURNALD_CONF" >/dev/null <<'CONF'
 # SpectrumJetson: keep logs across power cuts (brownout debugging), synced every 5 s, capped.
+# 2 GB: with cameras gone, PhotonVision once logged 13 MB a minute (fixed in photonvision-33),
+# which at the old 300 MB cap kept only ~25 minutes, less than an event's gap between matches.
 [Journal]
 Storage=persistent
 SyncIntervalSec=5s
-SystemMaxUse=300M
+SystemMaxUse=2G
 CONF
 sudo systemd-tmpfiles --create --prefix /var/log/journal
 sudo systemctl restart systemd-journald
@@ -144,9 +153,11 @@ sudo systemctl restart jetson-clocks.service
 echo "==> 8. Recover from hangs"
 sudo mkdir -p "$(dirname "$WATCHDOG_CONF")" "$(dirname "$PV_RESTART_CONF")"
 sudo tee "$WATCHDOG_CONF" >/dev/null <<'CONF'
-# SpectrumJetson: reboot a hung Jetson after 30 s, not NVIDIA's 2 min (a match is 2:30).
+# SpectrumJetson: reboot a hung Jetson after 30 s, not NVIDIA's 2 min (a match is 2:30). The same
+# while rebooting (default 10 min): a reboot hung on 2026-09-25 with cameras stuck on the USB hub.
 [Manager]
 RuntimeWatchdogSec=30s
+RebootWatchdogSec=30s
 CONF
 sudo tee "$PANIC_CONF" >/dev/null <<'CONF'
 # SpectrumJetson: reboot 3 s after a kernel panic (default 0: hang until the watchdog fires).
@@ -180,6 +191,14 @@ if [[ $(cat "$PV_OPENCV_CONF") != "$opencv_before" ]]; then
   sudo systemctl restart photonvision
 fi
 
+echo "==> 10. USB enumeration retries time out after 1 s, not 5 s"
+sudo tee "$USB_TMPFILES" >/dev/null <<'CONF'
+# SpectrumJetson: a USB device that stops answering holds up the others on its hub while the
+# kernel retries it (~65 s each at the default 5 s). Healthy devices answer in milliseconds.
+w /sys/module/usbcore/parameters/initial_descriptor_timeout - - - - 1000
+CONF
+sudo systemd-tmpfiles --create "$USB_TMPFILES"
+
 echo
 echo "Summary:"
 # (|| true: systemctl is-enabled exits non-zero for disabled/masked units, which is the goal.)
@@ -196,6 +215,7 @@ echo "  writeback: $(sysctl -n vm.dirty_expire_centisecs vm.dirty_writeback_cent
 echo "  journal: $( [[ -d /var/log/journal ]] && echo "on the SSD (/var/log/journal)" || echo "RAM only")"
 fan=$(cat /sys/devices/platform/pwm-fan*/hwmon/hwmon*/pwm1 2>/dev/null | head -1)
 echo "  fan: pwm ${fan:-?}/255, nvfancontrol $(systemctl is-active nvfancontrol 2>&1 || true)"
-echo "  watchdog: $(systemctl show -p RuntimeWatchdogUSec --value), kernel.panic=$(sysctl -n kernel.panic)"
+echo "  watchdog: $(systemctl show -p RuntimeWatchdogUSec --value) (rebooting: $(systemctl show -p RebootWatchdogUSec --value)), kernel.panic=$(sysctl -n kernel.panic)"
+echo "  USB descriptor timeout: $(cat /sys/module/usbcore/parameters/initial_descriptor_timeout) ms"
 echo "  photonvision: Restart=$(systemctl show photonvision -p Restart --value), $(systemctl show photonvision -p Environment --value | tr ' ' '\n' | grep -c OPENCV_THREAD_POOL) OpenCV pool settings"
 echo "Reboot to apply the boot changes: sudo reboot"

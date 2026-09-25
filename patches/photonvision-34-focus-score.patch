@@ -1,0 +1,371 @@
+diff --git a/photon-client/src/components/cameras/CameraFocusCard.vue b/photon-client/src/components/cameras/CameraFocusCard.vue
+new file mode 100644
+index 00000000..594f3b80
+--- /dev/null
++++ b/photon-client/src/components/cameras/CameraFocusCard.vue
+@@ -0,0 +1,119 @@
++<script setup lang="ts">
++// SpectrumJetson (photonvision-34): a focus score while turning a camera's lens, like Limelight's.
++// The Jetson measures the image's sharpness on a 3x3 grid (FocusMeter, GET /api/focus) while this
++// is on. Each cell is shown against its own best since "Reset", which doesn't depend on how much
++// detail that part of the scene has.
++import axios from "axios";
++import { computed, onBeforeUnmount, ref, watch } from "vue";
++import { useCameraSettingsStore } from "@/stores/settings/CameraSettingsStore";
++
++interface Reading {
++  grid: number[]; // row-major, cell 4 is the centre
++  centre: number;
++  best: number;
++  width: number;
++  height: number;
++  ageMs: number;
++}
++
++const on = ref(false);
++const reading = ref<Reading | null>(null);
++const cellBest = ref<number[]>(Array(9).fill(0));
++const camera = computed(() => useCameraSettingsStore().currentCameraSettings.uniqueName);
++
++let timer: ReturnType<typeof setTimeout> | undefined;
++const poll = async (reset = false) => {
++  clearTimeout(timer);
++  if (reset) cellBest.value = Array(9).fill(0);
++  try {
++    const r = await axios.get(`/focus?camera=${encodeURIComponent(camera.value)}${reset ? "&reset=1" : ""}`);
++    reading.value = r.status === 200 ? r.data : null;
++    if (reading.value) cellBest.value = cellBest.value.map((b, i) => Math.max(b, reading.value!.grid[i]));
++  } catch {
++    reading.value = null;
++  }
++  if (on.value) timer = setTimeout(() => poll(), 250);
++};
++watch(on, (v) => {
++  if (v) poll(true);
++  else {
++    clearTimeout(timer);
++    reading.value = null;
++  }
++});
++watch(camera, () => {
++  if (on.value) poll(true);
++});
++onBeforeUnmount(() => clearTimeout(timer));
++
++const share = (v: number, best: number) => (best > 0 ? Math.min(1, v / best) : 0);
++const centrePct = computed(() => (reading.value ? 100 * share(reading.value.centre, reading.value.best) : 0));
++const colour = (pct: number) => (pct >= 97 ? "success" : pct >= 85 ? "warning" : "error");
++const status = computed(() => {
++  if (!reading.value) return "Measuring…";
++  if (centrePct.value >= 97) return "At the sharpest so far.";
++  if (centrePct.value >= 85) return "Close to the sharpest so far.";
++  return "Softer than the sharpest so far: turn back.";
++});
++const cells = computed(() =>
++  (reading.value?.grid ?? Array(9).fill(0)).map((v, i) => Math.round(100 * share(v, cellBest.value[i])))
++);
++</script>
++
++<template>
++  <v-card color="surface" class="rounded-12 mt-3">
++    <v-card-title class="d-flex align-center">
++      Focus
++      <v-spacer />
++      <v-switch v-model="on" label="Measure" color="primary" density="compact" hide-details class="flex-grow-0" />
++    </v-card-title>
++    <v-card-text v-if="!on" class="pt-0 text-body-2">
++      Turn on while focusing the lens: it scores how sharp this camera's image is, like Limelight's focus tool.
++    </v-card-text>
++    <v-card-text v-else class="pt-0">
++      <div class="d-flex align-end" style="gap: 20px">
++        <div>
++          <div class="text-caption">Centre</div>
++          <div class="text-h4">{{ reading ? Math.round(reading.centre) : "…" }}</div>
++        </div>
++        <div>
++          <div class="text-caption">Sharpest so far</div>
++          <div class="text-h6">{{ reading ? Math.round(reading.best) : "" }}</div>
++        </div>
++        <v-spacer />
++        <v-btn size="small" variant="tonal" @click="poll(true)">Reset</v-btn>
++      </div>
++      <v-progress-linear :model-value="centrePct" :color="colour(centrePct)" height="10" rounded class="mt-2" />
++      <div class="text-caption mt-1">{{ status }}</div>
++
++      <div class="text-caption mt-3">Each part of the image, against its own sharpest so far:</div>
++      <div class="grid mt-1">
++        <div v-for="(pct, i) in cells" :key="i" class="cell" :class="`text-${colour(pct)}`">{{ pct }}%</div>
++      </div>
++
++      <div class="text-caption mt-3">
++        Point the camera at something detailed that stays still: a tag or the calibration board, about as far away as
++        the tags you care about most. Press Reset, turn the lens slowly past the sharpest point, then back to it. When
++        the centre is at 100%, the corners should be close to 100% too; a corner well below means a tilted lens or a
++        soft corner. Then lock the lens (glue or silicone) and recalibrate. The numbers depend on the scene and light,
++        so only compare them without moving the camera.
++      </div>
++    </v-card-text>
++  </v-card>
++</template>
++
++<style scoped>
++.grid {
++  display: grid;
++  grid-template-columns: repeat(3, 1fr);
++  gap: 4px;
++  max-width: 240px;
++}
++.cell {
++  text-align: center;
++  padding: 6px 0;
++  border: 1px solid rgba(128, 128, 128, 0.35);
++  border-radius: 6px;
++  font-variant-numeric: tabular-nums;
++}
++</style>
+diff --git a/photon-client/src/views/CameraSettingsView.vue b/photon-client/src/views/CameraSettingsView.vue
+index 70737975..2e41d26b 100644
+--- a/photon-client/src/views/CameraSettingsView.vue
++++ b/photon-client/src/views/CameraSettingsView.vue
+@@ -6,6 +6,7 @@ import { computed } from "vue";
+ import CamerasView from "@/components/cameras/CamerasView.vue";
+ import { useStateStore } from "@/stores/StateStore";
+ import CameraControlCard from "@/components/cameras/CameraControlCard.vue";
++import CameraFocusCard from "@/components/cameras/CameraFocusCard.vue";
+ 
+ const cameraViewType = computed<number[]>({
+   get: (): number[] => {
+@@ -50,6 +51,7 @@ const cameraViewType = computed<number[]>({
+       </v-col>
+       <v-col class="pl-md-3 pt-3 pt-md-0" cols="12" md="5">
+         <CamerasView v-model="cameraViewType" />
++        <CameraFocusCard />
+       </v-col>
+     </v-row>
+   </div>
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/FocusMeter.java b/photon-core/src/main/java/org/photonvision/vision/processes/FocusMeter.java
+new file mode 100644
+index 00000000..7cdb0dff
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/FocusMeter.java
+@@ -0,0 +1,129 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.processes;
++
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.atomic.AtomicBoolean;
++import org.opencv.core.Core;
++import org.opencv.core.CvType;
++import org.opencv.core.Mat;
++import org.opencv.core.MatOfDouble;
++import org.opencv.core.Rect;
++import org.opencv.imgproc.Imgproc;
++import org.photonvision.common.dataflow.CVPipelineResultConsumer;
++import org.photonvision.vision.pipeline.result.CVPipelineResult;
++
++/**
++ * SpectrumJetson (photonvision-33): a focus score for turning a camera's lens, like Limelight's.
++ *
++ * <p>Only while someone is looking (a request in the last 3 s), up to 5 times a second, it measures
++ * the variance of the Laplacian of the camera's input image on a 3x3 grid. The centre cell is the
++ * main score, and the others show a tilted lens or soft corners. Higher is sharper.
++ *
++ * <p>The score depends on the scene, so compare values while turning the lens with the camera and
++ * scene still. "Best" is the centre's peak since the last reset. The vision thread only copies the
++ * image; the measurement runs on its own thread.
++ */
++public class FocusMeter implements CVPipelineResultConsumer {
++    private static final long WANTED_NS = 3_000_000_000L;
++    private static final long PERIOD_NS = 200_000_000L;
++
++    /** The latest measurement: grid is row-major, cell 4 is the centre. */
++    public record Reading(double[] grid, double centre, double best, int width, int height, long ageMs) {}
++
++    private final ExecutorService worker =
++            Executors.newSingleThreadExecutor(
++                    r -> {
++                        Thread t = new Thread(r, "FocusMeter");
++                        t.setDaemon(true);
++                        return t;
++                    });
++    private final AtomicBoolean busy = new AtomicBoolean(false);
++    private volatile long wantedUntilNs = 0;
++    private long nextNs = 0;
++    private volatile double[] grid = null;
++    private volatile double best = 0;
++    private volatile long measuredNs = 0;
++    private volatile int width = 0, height = 0;
++
++    /** The latest reading, and keep measuring for the next 3 s. Null until the first one. */
++    public Reading read() {
++        wantedUntilNs = System.nanoTime() + WANTED_NS;
++        double[] g = grid;
++        if (g == null) return null;
++        return new Reading(
++                g.clone(), g[4], best, width, height, (System.nanoTime() - measuredNs) / 1_000_000L);
++    }
++
++    public void resetBest() {
++        best = 0;
++    }
++
++    @Override
++    public void accept(CVPipelineResult result) {
++        long now = System.nanoTime();
++        if (now > wantedUntilNs || now < nextNs || busy.get()) return;
++        var frame = result.inputAndOutputFrame;
++        if (frame == null || frame.colorImage == null) return;
++        Mat src = frame.colorImage.getMat();
++        if (src == null || src.empty()) return;
++        nextNs = now + PERIOD_NS;
++        Mat copy = new Mat();
++        if (src.channels() == 1) src.copyTo(copy);
++        else Imgproc.cvtColor(src, copy, Imgproc.COLOR_BGR2GRAY);
++        busy.set(true);
++        worker.execute(
++                () -> {
++                    try {
++                        measure(copy);
++                    } finally {
++                        copy.release();
++                        busy.set(false);
++                    }
++                });
++    }
++
++    private void measure(Mat gray) {
++        Mat lap = new Mat();
++        MatOfDouble mean = new MatOfDouble(), std = new MatOfDouble();
++        try {
++            Imgproc.Laplacian(gray, lap, CvType.CV_32F);
++            int w = gray.cols(), h = gray.rows();
++            double[] g = new double[9];
++            for (int r = 0; r < 3; r++) {
++                for (int c = 0; c < 3; c++) {
++                    Mat cell = lap.submat(new Rect(c * w / 3, r * h / 3, w / 3, h / 3));
++                    Core.meanStdDev(cell, mean, std);
++                    double s = std.toArray()[0];
++                    g[r * 3 + c] = s * s;
++                    cell.release();
++                }
++            }
++            width = w;
++            height = h;
++            grid = g;
++            best = Math.max(best, g[4]);
++            measuredNs = System.nanoTime();
++        } finally {
++            lap.release();
++            mean.release();
++            std.release();
++        }
++    }
++}
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index f5f8d818..796989f8 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -86,6 +86,8 @@ public class VisionModule {
+     private final NTDataPublisher ntConsumer;
+     private final UIDataPublisher uiDataConsumer;
+     private final StatusLEDConsumer statusLEDsConsumer;
++    // SpectrumJetson (photonvision-34): a focus score for turning the lens (Camera page)
++    private final FocusMeter focusMeter = new FocusMeter();
+     protected final QuirkyCamera cameraQuirks;
+ 
+     protected TrackedTarget lastPipelineResultBestTarget;
+@@ -171,6 +173,7 @@ public class VisionModule {
+                 new StatusLEDConsumer(visionSource.getSettables().getConfiguration().uniqueName);
+         addResultConsumer(ntConsumer);
+         addResultConsumer(uiDataConsumer);
++        addResultConsumer(focusMeter); // SpectrumJetson (photonvision-34): idle unless asked
+         addResultConsumer(statusLEDsConsumer);
+         addResultConsumer(
+                 (result) ->
+@@ -1072,6 +1075,11 @@ public class VisionModule {
+         saveAndBroadcastAll();
+     }
+ 
++    /** SpectrumJetson (photonvision-34): the focus score for this camera's lens. */
++    public FocusMeter focusMeter() {
++        return focusMeter;
++    }
++
+     /** SpectrumJetson (photonvision-32): this camera's USB frame provider, or null (CSI, file). */
+     public USBFrameProvider usbFrameProvider() {
+         return visionSource.getFrameProvider() instanceof USBFrameProvider usb ? usb : null;
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index d832f736..c46333ad 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -645,6 +645,41 @@ public class RequestHandler {
+         }
+     }
+ 
++    private static org.photonvision.vision.processes.VisionModule moduleByUniqueName(String name) {
++        for (var m : VisionSourceManager.getInstance().vmm.getModules()) {
++            if (m.uniqueName().equals(name)) return m;
++        }
++        return null;
++    }
++
++    /**
++     * GET /api/focus?camera=UNIQUE_NAME (photonvision-34): the camera's focus score, and keep
++     * measuring for 3 s (FocusMeter). 204 until the first measurement. {@code &reset=1} clears the
++     * best score first.
++     */
++    public static void onFocusRequest(Context ctx) {
++        var m = moduleByUniqueName(ctx.queryParam("camera"));
++        if (m == null) {
++            ctx.status(404);
++            ctx.result("No camera " + ctx.queryParam("camera"));
++            return;
++        }
++        if (ctx.queryParam("reset") != null) m.focusMeter().resetBest();
++        var r = m.focusMeter().read();
++        try {
++            if (r == null) {
++                ctx.status(204);
++                return;
++            }
++            ctx.status(200);
++            ctx.contentType("application/json");
++            ctx.result(kObjectMapper.writeValueAsString(r));
++        } catch (Exception e) {
++            ctx.status(500);
++            ctx.result("Focus reading failed: " + e.getMessage());
++        }
++    }
++
+     /** GET /api/fieldcal: state, live guidance, solve progress, recordings and results. */
+     public static void onFieldCalStatusRequest(Context ctx) {
+         try {
+diff --git a/photon-server/src/main/java/org/photonvision/server/Server.java b/photon-server/src/main/java/org/photonvision/server/Server.java
+index 71b9fac4..bde2a7b0 100644
+--- a/photon-server/src/main/java/org/photonvision/server/Server.java
++++ b/photon-server/src/main/java/org/photonvision/server/Server.java
+@@ -135,6 +135,7 @@ public class Server {
+         app.get("/api/rewind", RequestHandler::onRewindStatusRequest);
+         app.post("/api/rewind", RequestHandler::onRewindSetRequest);
+         app.get("/api/rewind/download", RequestHandler::onRewindDownloadRequest);
++        app.get("/api/focus", RequestHandler::onFocusRequest); // SpectrumJetson (34)
+         app.get("/api/usb/bandwidth", RequestHandler::onUsbBandwidthRequest); // SpectrumJetson (32)
+         app.post("/api/usb/bandwidth", RequestHandler::onUsbAllocationRequest);
+         app.get("/api/fieldcal", RequestHandler::onFieldCalStatusRequest); // SpectrumJetson

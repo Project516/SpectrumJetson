@@ -220,7 +220,8 @@ def survey() -> dict:
         else:
             advice.append(f"USB port {port}: something plugged in there {', '.join(what)} (in the last 10 min). That's "
                           "usually the cable or adapter, or the plug not fully in; sometimes not enough power. Re-seat it, "
-                          "or try another cable or port.")
+                          "or try another cable or port. A camera that worked until a USB hub reset is stuck instead: "
+                          "replug it, or power-cycle the robot (a reboot doesn't cut USB power).")
     return {"budgetBytes": BUDGET, "payloadCap": read(CAP_FILE) or "(stock driver: no cap)", "cameras": cams,
             "buses": sorted(buses.values(), key=lambda b: b["bus"]), "connectFailures": connect, "advice": advice}
 

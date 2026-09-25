@@ -892,7 +892,7 @@ The Jetson has one xHCI controller (`3610000.usb`): one USB 2.0 bus, one USB 3 b
 - **Consequences:** moving a camera to USB-C doesn't help.
   - **A second USB 2.0 bus:** only a PCIe USB controller in the empty M.2 Key M 2230 (x2) slot. The
     kernel has `xhci-pci` as a module.
-  - **Or avoid USB 2.0:** USB 3 cameras or CSI.
+  - **Or avoid USB 2.0:** USB 3 cameras (CSI isn't planned).
 
 **The driver** (`kernel/uvcvideo-payload-cap.patch`, rebuilt by `11-uvcvideo-payload-cap.sh`):
 - **Writable cap:** `payload_cap` is now `module_param_string`, 0644, and parsed under
@@ -947,6 +947,83 @@ The Jetson has one xHCI controller (`3610000.usb`): one USB 2.0 bus, one USB 3 b
   - TopRight: 47.5 KB, 5.8 MB/s;
   - the Global Shutters: 60 fps, 39–57 KB, 2.4–3.4 MB/s;
   - the colour camera: 30 fps, 36.6 KB, 1.1 MB/s of 12.8.
+
+### USB hub reset, stuck Thriftiest Cams, a hung reboot, and the log flood (2026-09-25)
+
+**The test** (`tests/usb-hub-reset/run.sh`): set the USB-A hub's sysfs `authorized` (1-2) to 0 for 2 s,
+then back to 1, with 4 cameras streaming.
+- **Global Shutter cameras (32e4:0144)** re-enumerate and stream again by themselves.
+- **Thriftiest Cams (1bcf:28c5)** never answer again.
+  - The kernel logs "device descriptor read/64, error -110", then after the retries "unable to
+    enumerate USB device".
+  - The USB link comes up (high speed), but the camera doesn't answer control transfers.
+  - A deauthorized hub stops sending SOFs, so its devices see an idle bus (suspend). The
+    Thriftiest's firmware apparently doesn't recover from that without a power cut.
+  - A device-level reset (the camera's own `authorized`, as `photonvision-29` and `-32` do) is
+    fine: TopRight went through it twice.
+- **What didn't revive them:**
+  - the kernel's own port power cycle;
+  - `ClearPortFeature(PORT_POWER)` from usbfs for 3 s and 10 s, on one port and on all four;
+  - rebinding `tegra-xusb` (a full controller reset);
+  - a warm reboot.
+- **Why:** the hub descriptor claims per-port power switching (`wHubCharacteristic` 0x00a9), but
+  no port loses its 5 V.
+  - Every `usbN-*-vbus` supply in the device tree resolves to `regulator-fixed`,
+    `regulator-always-on` supplies (`VDD_5V0_SYS`, `VDD_AV10_HUB`), with no GPIO.
+  - The Global Shutters on switched-off ports got -71 protocol errors but never a disconnect.
+- **What revives them:** a real power cut, by replugging or a cold power cycle.
+- **Retries:** each stuck port holds up the hub's other ports.
+  - With usbcore's default 5 s `initial_descriptor_timeout`, the Global Shutters were back after
+    65 s and 86 s.
+  - At 1 s (`09-robot-tuning.sh` step 10, a tmpfiles.d write to the module parameter), both were
+    back after ~41 s, about 20 s of retries per stuck port.
+  - `use_both_schemes=0` would roughly halve that again; not tried.
+
+**The hung reboot.** `systemctl reboot` right after the test, with both Thriftiest Cams stuck, never
+came back.
+- **What we know:**
+  - The fan fell from full speed, so the SoC reset. It never returned to full, so Linux didn't
+    finish booting.
+  - A cold power cycle fixed it.
+  - Allen has seen it once before.
+- **The log:** journald wrote nothing after 03:48:31, although the system ran until the reboot at
+  ~03:50. `sudo` entries from that time are missing too. So there's no record of the shutdown.
+- **Suspected, not confirmed:** UEFI's USB scan waiting on the stuck cameras.
+- **Changed:** `RebootWatchdogSec=30s` (was 10 min), so a hung shutdown resets itself. A hang in the
+  boot firmware isn't covered; to find it, repeat the test with a DisplayPort monitor plugged in.
+
+**The log flood** (`photonvision-33`).
+- **What happened:** with cameras gone, each frame provider logged "Error grabbing image: timed out
+  getting frame" and `CpuImageProcessor` printed "Input was empty!", for every attempt.
+  - That was ~20,000 lines a minute: 39 MB journal files every 3 minutes, with journald
+    suppressing ~2,500 more every 30 s.
+  - At the old 300 MB `SystemMaxUse`, that kept ~25 minutes of history.
+- **Now:**
+  - Both log the first failure, then at most one line per 5 s with a count ("and 248 more since
+    the last message"). The hub test logged 2,065 lines in a minute.
+  - The journal keeps up to 2 GB.
+  - Still frequent: cscore's own "Attempting to connect" lines, about 300 a minute with cameras
+    stuck. Acceptable.
+- **The "not answering" problem:** a camera that isn't connected, while the kernel has logged a
+  connect failure on its port in the last 90 s, now gets the health `problem` "not answering on USB
+  port X: replug it, or power-cycle the robot", logged once.
+
+**USB controller watchdog** (`14-usb-watchdog.sh`, `usb-watchdog.service`, `usb-watchdog.py`).
+- **Trigger:** it follows `journalctl -k -f` for "xHCI host controller not responding", "assume
+  dead", "HC died" or "Host halt failed".
+- **Action:** it rebinds `tegra-xusb` (3610000.usb), at most once a minute, then reports which
+  cameras came back within 60 s. It never reboots.
+- **Tested:** with a faked line on `/dev/kmsg`, it reset the controller in ~2 s. The Global
+  Shutters came back; the stuck Thriftiest Cams didn't, as expected.
+
+**Focus score** (`photonvision-34`, `FocusMeter`).
+- **What it measures:** the variance of the Laplacian of the input image (gray; colour is converted
+  first) on a 3x3 grid, at most 5 times a second, only within 3 s of a request.
+- **Cost to the vision thread:** one image copy. The rest runs on its own thread.
+- **API and UI:** `GET /api/focus?camera=UNIQUE_NAME[&reset=1]` returns
+  `{grid, centre, best, width, height, ageMs}`, and 204 before the first reading. The Camera page's
+  Focus card shows each cell against its own best since Reset.
+- **Checked:** TopLeft returned readings about 5 times a second at 1280x800.
 
 ## Changes from the handoff
 

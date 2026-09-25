@@ -1,0 +1,140 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/CpuImageProcessor.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/CpuImageProcessor.java
+index 173aae51..f870b622 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/CpuImageProcessor.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/CpuImageProcessor.java
+@@ -29,6 +29,9 @@ import org.photonvision.vision.pipe.impl.HSVPipe;
+ import org.photonvision.vision.pipe.impl.RotateImagePipe;
+ 
+ public abstract class CpuImageProcessor extends FrameProvider {
++    private long emptyLoggedNs = 0; // SpectrumJetson (photonvision-33)
++    private int emptySince = 0;
++
+     protected static class CapturedFrame {
+         CVMat colorImage;
+         FrameStaticProperties staticProps;
+@@ -81,7 +84,17 @@ public abstract class CpuImageProcessor extends FrameProvider {
+ 
+             ++sequenceID;
+         } else {
+-            System.out.println("Input was empty!");
++            // SpectrumJetson (photonvision-33): at most once per 5 s (it printed for every missing
++            // frame: ~150 lines a second with 4 cameras gone).
++            long now = System.nanoTime();
++            if (emptyLoggedNs == 0 || now - emptyLoggedNs >= 5_000_000_000L) {
++                System.out.println(
++                        "Input was empty!" + (emptySince > 0 ? " (and " + emptySince + " more since the last message)" : ""));
++                emptyLoggedNs = now;
++                emptySince = 0;
++            } else {
++                emptySince++;
++            }
+             outputMat = new CVMat();
+         }
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index bdaea210..f54d50db 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -111,10 +111,27 @@ public class USBFrameProvider extends CpuImageProcessor {
+         if (usable) {
+             String fixedBy = stuckWatchdog.good();
+             if (!fixedBy.isEmpty()) logger.info("The camera is delivering frames again, after " + fixedBy);
+-            if (!problem.isEmpty()) logger.info("The camera has USB bandwidth again");
++            if (!problem.isEmpty()) logger.info("The camera is working again (it had: " + problem + ")");
+             problem = "";
+         } else if (!camera.isConnected()) {
+             stuckWatchdog.notConnected();
++            // SpectrumJetson (photonvision-33): it's plugged in but won't answer (the kernel couldn't
++            // enumerate it). A USB hub reset leaves a Thriftiest Cam like this, and on this carrier
++            // board only a real power cut revives it: USB power can't be switched from software.
++            String port = usbPort();
++            if (org.photonvision.common.hardware.UsbTrouble.connectFailed(port, BANDWIDTH_WINDOW_NS)) {
++                if (!problem.startsWith("not answering")) {
++                    problem = "not answering on USB port " + port + ": replug it, or power-cycle the robot";
++                    logger.error(
++                            "The camera on USB port "
++                                    + port
++                                    + " is plugged in but won't answer (the kernel can't enumerate it). A USB hub reset"
++                                    + " can leave a camera like this; only cutting its power fixes it: replug it, or"
++                                    + " power-cycle the robot.");
++                }
++            } else if (problem.startsWith("not answering")) {
++                problem = "";
++            }
+         } else if (org.photonvision.common.hardware.UsbTrouble.bandwidthFailed(usbPort(), BANDWIDTH_WINDOW_NS)) {
+             // SpectrumJetson (photonvision-31): the kernel refuses this camera USB bandwidth. Say so,
+             // and don't reset it (that can't help); retry once a minute in case some frees up.
+@@ -124,8 +141,8 @@ public class USBFrameProvider extends CpuImageProcessor {
+                         "Not enough USB bandwidth for this camera on USB port "
+                                 + usbPort()
+                                 + ": other cameras on the same root port have reserved it. Run "
+-                                + "~/SpectrumJetson/scripts/jetson/usb-bandwidth.py on the Jetson to see what to change "
+-                                + "(cap the camera, or move it to the USB-C port).");
++                                + "~/SpectrumJetson/scripts/jetson/usb-bandwidth.py on the Jetson, or open the Camera "
++                                + "Matching page: lower an allocation (every USB 2.0 port shares one budget).");
+             }
+             if (stuckWatchdog.noFrameNoBandwidth() == StuckCameraWatchdog.Action.RECONNECT) {
+                 reconnectCamera("retrying: not enough USB bandwidth a minute ago");
+@@ -148,6 +165,26 @@ public class USBFrameProvider extends CpuImageProcessor {
+         return frame;
+     }
+ 
++    // SpectrumJetson (photonvision-33): with a camera gone every grab failed and logged, ~40 lines a
++    // second per camera (13 MB a minute with 4 cameras), so the system log kept only ~25 minutes.
++    // Now: the first failure, then at most one line per 5 s, with a count.
++    private long grabErrorLoggedNs = 0;
++    private int grabErrorsSince = 0;
++
++    private void logGrabError(String error) {
++        long now = System.nanoTime();
++        if (grabErrorLoggedNs != 0 && now - grabErrorLoggedNs < 5_000_000_000L) {
++            grabErrorsSince++;
++            return;
++        }
++        logger.error(
++                "Error grabbing image: "
++                        + error
++                        + (grabErrorsSince > 0 ? " (and " + grabErrorsSince + " more since the last message)" : ""));
++        grabErrorLoggedNs = now;
++        grabErrorsSince = 0;
++    }
++
+     /** Reconnects and USB resets done for this camera, for CameraHealthPublisher. */
+     public long getRecoveries() {
+         return stuckWatchdog.recoveries();
+@@ -304,7 +341,7 @@ public class USBFrameProvider extends CpuImageProcessor {
+ 
+             if (captureTimeNs == 0) {
+                 var error = sink.getError();
+-                logger.error("Error grabbing image: " + error);
++                logGrabError(String.valueOf(error));
+             }
+ 
+             return new CapturedFrame(mat, settables.getFrameStaticProperties(), captureTimeNs);
+@@ -333,7 +370,7 @@ public class USBFrameProvider extends CpuImageProcessor {
+ 
+             if (captureTimeUs == 0) {
+                 var error = sink.getError();
+-                logger.error("Error grabbing image: " + error);
++                logGrabError(String.valueOf(error));
+ 
+                 frame.close();
+                 ret = new CVMat();
+@@ -426,7 +463,7 @@ public class USBFrameProvider extends CpuImageProcessor {
+                     CscoreExtras.grabRawSinkFrameTimeoutLastTime(
+                             sink.getHandle(), frame.getNativeObj(), CSCORE_DEFAULT_FRAME_TIMEOUT, afterTimeUs);
+             if (captureTimeUs == 0) {
+-                logger.error("Error grabbing image: " + sink.getError());
++                logGrabError(sink.getError());
+                 return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
+             }
+             lastTime = captureTimeUs;
+@@ -536,7 +573,7 @@ public class USBFrameProvider extends CpuImageProcessor {
+                     CscoreExtras.grabRawSinkFrameTimeoutLastTime(
+                             sink.getHandle(), frame.getNativeObj(), CSCORE_DEFAULT_FRAME_TIMEOUT, afterTimeUs);
+             if (captureTimeUs == 0) {
+-                logger.error("Error grabbing image: " + sink.getError());
++                logGrabError(sink.getError());
+                 return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
+             }
+             lastTime = captureTimeUs;

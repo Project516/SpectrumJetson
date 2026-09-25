@@ -52,7 +52,8 @@ flowchart LR
 | Computer | Jetson Orin Nano Super devkit (8 GB), booting from a 256 GB NVMe SSD, no SD card |
 | Operating system | JetPack 6.2.3 (Jetson Linux 36.5.2, Ubuntu 22.04) with CUDA 12.6 |
 | Power mode | MAXN SUPER (the fastest mode, which gives the board its "Super" name) |
-| Cameras | 2 (4 planned) Thrifty Bot [Thriftiest Cam](https://www.thethriftybot.com/products/thriftiest-cam) ([docs](https://docs.thethriftybot.com/electrical/thriftiest-cam/latest/overview)): OV9281, mono, global shutter, 1280x800, USB 2.0 |
+| Cameras | 2 Thrifty Bot [Thriftiest Cams](https://www.thethriftybot.com/products/thriftiest-cam) ([docs](https://docs.thethriftybot.com/electrical/thriftiest-cam/latest/overview)) for AprilTags: OV9281, mono, global shutter, 1280x800, USB 2.0. On the bench also: 2 "Global Shutter Camera" (32e4:0144) and a colour USB camera (32e4:62f0) for game pieces |
+| Power | From the robot through a 15 V boost regulator board, which kept the Jetson running down to a 5 V input (tested 2026-09-25) |
 | Vision software | FRC-Team-4143's PhotonVision fork (2026 version), merged with upstream PhotonVision v2026.3.4, plus our patches |
 | Tag detector | Austin Schuh's current CUDA detector (from 971 / RealtimeRoboticsGroup), built from frc971/bos |
 | Game pieces | YOLO models on the GPU through TensorRT 10.3 (our backend), FUEL model by Team 2826 |
@@ -103,9 +104,10 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 | 1 | PhotonVision service | Jetson (installer) | `jetson/03-photonvision.sh` | Installs the systemd service that starts PhotonVision at boot. We then replace its jar with the fork. |
 | 2 | allwpilib `v2026.2.1` | Jetson | `jetson/04-build-allwpilib.sh` | Libraries the CUDA detector links against. Must be the **v2026.2.1 tag**: its `main` branch has moved on and won't compile with the detector. Took 17 minutes. |
 | 3 | CUDA detector `lib971apriltag.so` | Jetson | `jetson/07-build-bos-detector.sh`, then `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg` | Austin Schuh's current code (see below) plus our JNI wrapper in `detector/`. `--jpeg nvjpg` decodes the camera JPEGs on the Jetson's JPEG hardware (`libspectrumnvjpg.so`, see Performance), gray and colour; it uses ~180 MB of memory per camera. Leave it out to decode on the CPU. |
-| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–32. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
+| 4 | PhotonVision fork jar | Laptop | `host/03-build-photonvision-fork.sh`, then `jetson/06-install-fork-jar.sh` | The 4143 fork, upstream v2026.3.4 (patch 00) and our patches 01–34. It builds on the laptop in about 30 s instead of taxing the Jetson. The Jetson runs it on Java 17. |
 | 5 | Camera driver with a bandwidth cap | Jetson | `jetson/11-uvcvideo-payload-cap.sh --install` | Needed for 3–4 cameras on the USB-A ports (see Performance). |
 | 6 | TensorRT backend `libspectrumtrt.so` | Jetson | built by `07-build-bos-detector.sh`; install to `/usr/lib` | Game-piece detection. Models go in with `jetson/12-install-yolo-model.sh`. |
+| 7 | USB controller watchdog | Jetson | `jetson/14-usb-watchdog.sh --install` | Resets the USB controller if the kernel says it died, so the cameras come back without a person. It never reboots (see Known issues). |
 
 **Where the detector code comes from.** FRC 971 (Spartan Robotics) wrote the CUDA AprilTag detector. Austin Schuh, its author, now maintains it in the [**RealtimeRoboticsGroup/aos**](https://github.com/RealtimeRoboticsGroup/aos) repo and works with team 1868. We started with FRC-Team-4143's copy (`GpuDetectorJNI`), which dates from about August 2024. We switched to **frc971/bos**, which has Austin's current code with a CMake build that works on our exact CUDA version. In a side-by-side test, the new detector found tags exactly as well as the old one, and **30–40% faster** (1.7 ms per frame instead of 2.4–3.0 ms).
 
@@ -113,7 +115,7 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 
 **Safe deploys.** `06-install-fork-jar.sh` refuses to install a jar that isn't a valid zip, and it keeps the previous working jar as `photonvision.jar.prev`. We added that after a truncated jar took PhotonVision down (see the bugs section).
 
-**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, USB autosuspend off for cameras, power-cut safety (data on the SSD within 3 s, the system log kept across power cuts), the fan at full speed, a 30 s hardware watchdog, reboot on kernel panic, PhotonVision restarted on any exit, and OpenCV's worker threads sleeping instead of spinning. After it, the Jetson boots in 16.5 s instead of 57 s, and both cameras are detecting about 20 s after power-on. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
+**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, USB autosuspend off for cameras, power-cut safety (data on the SSD within 3 s, the system log kept across power cuts), the fan at full speed, a 30 s hardware watchdog (also while rebooting, where it was 10 minutes), reboot on kernel panic, PhotonVision restarted on any exit, OpenCV's worker threads sleeping instead of spinning, and 1 s USB retries (a stuck camera held up the others on its hub for ~65 s each). The system log keeps up to 2 GB. After it, the Jetson boots in 16.5 s instead of 57 s, and both cameras are detecting about 20 s after power-on. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
 
 ## Bugs we found and fixed
 
@@ -191,7 +193,6 @@ So about **6700 bytes fit, whichever ports the cameras are on** (about 430 Mbps)
   - **Drivers:** Key M slots carry only PCIe, not USB, so this needs a PCIe-to-USB controller card. The Jetson's kernel has the drivers (`xhci-pci`, plus the Renesas firmware loader).
   - **Untested:** most such cards are 2280 or need a riser, and the new ports must be mounted on the robot.
   - **Not the Key E slot:** its USB is Bus 1 again, and it holds the Wi-Fi card.
-- **CSI cameras:** the dev kit's two ribbon-cable connectors don't use USB at all (see "Next season" below).
 
 **The Camera Matching page shows all of this** (`photonvision-32`). A **USB bandwidth** card at the top draws the shared budget as a bar, one colour per camera, with what each actually sends filled in. Per camera it shows:
 - **FPS** and **Using:** what the camera really sends, in MB/s and as a share of its allocation. At 90% or more it says "squeezed" (see below).
@@ -266,6 +267,14 @@ Both cameras use the same PhotonVision settings. Each one needs its own calibrat
 All the Jetson's USB 2.0 ports share one bandwidth budget: the four USB-A ports, the USB-C port, and anything on a hub (see Performance). Four cameras fit only with our capped camera driver installed (`scripts/jetson/11-uvcvideo-payload-cap.sh --install`; the health check shows which driver is loaded). With the stock driver, only two fit.
 
 A calibration belongs to one physical camera and lens, so if you move a camera to another port, recalibrate it there.
+
+**Focusing a lens** (`photonvision-34`): the Camera page's **Focus** card scores how sharp the image is, like Limelight's focus tool.
+1. Turn on **Measure**, and point the camera at something detailed that stays still: a tag or the calibration board, about as far away as the tags you care about most.
+2. Press **Reset**. Turn the lens slowly past the sharpest point, then back to where the centre reads 100%.
+3. Check the 3x3 grid: each part of the image is shown against its own sharpest. A corner well below 100% when the centre is at 100% means a tilted lens or a soft corner.
+4. Lock the lens (glue or silicone), then recalibrate.
+
+The score depends on the scene and the light, so only compare numbers without moving the camera. It's measured only while the card is on, about 5 times a second, off the vision thread.
 
 **Copying settings between cameras** (`photonvision-25`): no more photographing one camera's settings and typing them into another.
 - **Where:** in the pipeline menu (☰ next to the pipeline name), **Copy settings from…** copies from any camera and pipeline into the one you're looking at.
@@ -389,6 +398,31 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
   - **Don't build TensorRT engines while measuring.** A `trtexec` build uses the GPU hard for ~8 minutes and made our first measurements look like FUEL doubled the AprilTag detect time. It didn't.
 - **Which camera:** a colour camera should do even better (FUEL is yellow), and a mono Thriftiest Cam works too. With 4 Thriftiest Cams on USB-A, a 5th USB 2.0 camera fits only capped (the USB-C port shares the same budget; see Performance), or use a USB 3 camera.
 
+## Known issues
+
+**A Thriftiest Cam can get stuck after a USB hub reset, and only cutting its power fixes it** (found 2026-09-25 with `tests/usb-hub-reset/run.sh`).
+- **What happens:** when the Jetson's USB-A hub resets while the cameras stay powered, both Thriftiest Cams stop answering. We reset it in software; a static shock can do the same. The kernel logs "device descriptor read/64, error -110", then "unable to enumerate USB device".
+- **The Global Shutter cameras** come back by themselves, in about 40 s: each stuck camera holds up the hub for ~20 s of retries first.
+- **What doesn't fix it:**
+  - switching the port's power off in software (the hub says it can, but the carrier board's USB 5 V is always on);
+  - resetting the USB controller;
+  - rebooting the Jetson: a reboot doesn't cut USB power either.
+- **What does:** cutting the camera's power. Replug it, or power-cycle the robot.
+- **How you'll know:** the camera's `health/problem` topic and the log say "not answering on USB port 1-2.1: replug it, or power-cycle the robot" (`photonvision-33`). The health check and `usb-bandwidth.py` name the port.
+- **Our decision:** keep the Jetson's own USB ports. We won't add a hub that can really switch its ports' power. Hot glue and strain relief make loose plugs, a likely cause, less likely. If a camera is out, power-cycle the robot between matches.
+
+**A software reboot hung twice (2026-09-25).**
+- **What happened:** after `sudo reboot` the Jetson reset (the fan dropped from full speed) but never finished booting. A power cycle fixed it.
+  - The second time, both Thriftiest Cams were stuck (see above). We don't know about the first.
+  - The log from the last 2 minutes before that reboot is missing.
+- **Suspected cause, not confirmed:** the boot firmware waiting on the stuck cameras, since a reboot doesn't cut USB power.
+- **What's covered now:**
+  - A shutdown that hangs resets itself after 30 s: the hardware watchdog while rebooting, which was 10 minutes.
+  - Nothing reboots automatically: the USB watchdog only resets the controller.
+- **Not covered:** a hang in the boot firmware, before Linux starts the watchdog.
+- **What to do:** if cameras are stuck, power-cycle instead of rebooting.
+- **To find the cause:** with a DisplayPort monitor plugged in, run `tests/usb-hub-reset/run.sh`, then `sudo reboot`, and see where the boot stops.
+
 ## Troubleshooting quick reference
 
 | Symptom | Likely cause | What to do |
@@ -397,6 +431,8 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 | Flash hangs at "Waiting for target to boot-up" for minutes | NetworkManager or the firewall is interfering | Use `02-flash-nvme.sh`, which handles both. |
 | Camera doesn't show up (`lsusb`, no `/dev/video*`) | Loose cable, or plugged straight into the USB-C port | Reseat or swap the cable. Cameras work on USB-C through a hub (it shares the USB-A ports' bandwidth). |
 | Kernel log: "new low-speed USB device … error -71 … unable to enumerate USB device" | The camera's data wires aren't connecting: cable, adapter, or a plug not fully in (seen with two cameras at once on 2026-09-24) | A camera that should be high-speed showing up as low-speed is a data-line problem. Reseat it, or swap the cable. `scripts/jetson/usb-bandwidth.py` and the health check name the port. |
+| A camera is gone after a USB glitch, and its health says "not answering on USB port …" (kernel: "device descriptor read/64, error -110") | The camera is stuck: a USB hub reset leaves Thriftiest Cams like this (see Known issues) | Replug it, or power-cycle the robot. A Jetson reboot doesn't help: it doesn't cut USB power. |
+| The Jetson doesn't come back after a reboot, and the fan never returns to full speed | The boot stopped before Linux started (seen twice; see Known issues) | Power-cycle it. If cameras were stuck, power-cycle instead of rebooting. |
 | A 3rd, 4th or 5th camera won't start streaming ("No space left on device", "Not enough bandwidth" in the kernel log) | USB 2.0 bandwidth: a camera reserves bandwidth for its alternate setting, and every USB 2.0 port shares one budget (moving to USB-C doesn't help) | On the Camera Matching page, lower another camera's allocation in the USB bandwidth card. Or run `scripts/jetson/usb-bandwidth.py`: it prints the cap to install, e.g. `CAP=1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600 scripts/jetson/11-uvcvideo-payload-cap.sh --install`. A camera it can't cap (the Razer Kiyo) takes half the budget by itself. |
 | Low FPS (~34) | Exposure too long (the units are 100 µs; the slider shows ms) | Exposure 50–83 (5–8.3 ms). |
 | Tags flicker in and out | Decision margin near the cutoff (dim light, or flickering light) | Run `tests/flicker-check/run.sh`. If frames pulse, use exposure 83; otherwise lower the cutoff a little. Retune on the field. |
@@ -431,13 +467,13 @@ The detailed technical reference, with exact versions, commits and measurements,
 | Folder | What's in it |
 | --- | --- |
 | `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), back up and restore the SSD (04, 05), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
-| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), install a YOLO model (12), field-calibration replay tool (13), plus `health-check.sh` and `usb-bandwidth.py` (what each camera reserves on USB, and the fix) |
+| `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), install a YOLO model (12), field-calibration replay tool (13), USB controller watchdog (14), plus `health-check.sh` and `usb-bandwidth.py` (what each camera reserves on USB, and the fix) |
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoders, CPU and hardware, the TensorRT object detector, and `fieldcal_detect`, which replays Rewind recordings through the detector) |
 | `tools/fieldcal/` | Field calibration: tag positions and camera mounts from a recording of the robot pushed to still spots ([README](tools/fieldcal/README.md)) |
 | `tools/fieldmodel/`, `assets/field-models/` | The 3D field model for the Field Calibration page, converted from *FIRST*'s field CAD ([README](tools/fieldmodel/README.md)) |
 | `kernel/` | Our patch to Linux's USB camera driver (bandwidth cap), built by `11-uvcvideo-payload-cap.sh` |
-| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, robot clock test, flicker check, CPU profiler, performance snapshot, telemetry and mount-estimate check |
+| `tests/` | Detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, USB hub reset test, robot clock test, flicker check, CPU profiler, performance snapshot, telemetry and mount-estimate check |
 | `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, the upstream PhotonVision port, the game-piece models, and the original handoff document that started the project |
 
 **Still to do before the October event:**
@@ -450,14 +486,17 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Power-cut test: pulled the plug mid-recording. No filesystem errors, the log survived, PhotonVision came back healthy, 1.4 s of video lost (`tests/power-cut/run.sh`)
 - [x] Reboot test: tuning survives a reboot; boot 57 s → 16.5 s, first detection ~20 s after power-on
 - [x] Name the cameras after their ports (TopLeft, TopRight; BottomLeft/BottomRight when added)
+- [ ] Rename the Global Shutter cameras BottomLeft (port 2.2) and BottomRight (port 2.4), if they stay
 - [x] Wi-Fi / Bluetooth switches in PhotonVision (Bluetooth off; Wi-Fi off before events)
 - [x] Static IP 10.85.15.15 on Ethernet (set in PhotonVision: Settings > Networking)
 - [x] Rewind: record every camera to the SSD when robot code asks (bench-tested, no fps cost)
 - [x] Jetson sets its date from the robot's clock when it has no internet (`photonvision-08`; robot code publishes `/photonvision/clock/unixMs`, issue #10)
-- [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results, Rewind's robot-clock timestamps, the Jetson's date from the robot)
+- [ ] Test on the robot network with the SystemCore (NetworkTables, time sync, PhotonLib reading results, Rewind's robot-clock timestamps, the Jetson's date from the robot). Include pulling the Ethernet cable for 5 s mid-test: NetworkTables and time sync should reconnect by themselves
+- [ ] Hot glue the USB connectors and add strain relief. Label the cables and ports: every Thriftiest Cam has the same serial number, so a camera in the wrong port silently swaps calibrations
+- [ ] Lock each lens after focusing (glue or silicone, like 6328), then recalibrate. Vibration can turn a lens and spoil its calibration
 - [ ] Turn off Wi-Fi for competition (Bluetooth is already off)
 - [ ] Write the vision subsystem in `2026-FM-SystemCore` using the AndyMark field layout, with photonlib kept at alpha-2
-- [ ] Check temperatures with the Jetson mounted on the robot (44 °C on the bench with the fan at full speed)
+- [ ] Check temperatures with the Jetson mounted on the robot (44 °C on the bench with the fan at full speed). We're working on running it fanless; the tests are in the passive-cooling work
 - [x] Decode speedup: both cameras at 122 fps, 13 ms latency, 1.3 of 6 CPU cores
 - [x] Upstream PhotonVision v2026.3.4 fixes, `setEnabled()` support, OpenCV leak fixes (`docs/UPSTREAM-PORT.md`)
 - [x] Frame timestamps moved to mid-exposure (`photonvision-13`); the camera's own delay is still to be measured with the robot spin test
@@ -471,9 +510,15 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] USB bandwidth card on Camera Matching (`photonvision-32`): allocated vs used per camera, and a per-camera allocation setting
 - [ ] Check `photonvision-31` live: the `health/problem` topic, and no USB resets while a camera lacks bandwidth
 - [ ] Measure whether a squeezed AprilTag camera (lower JPEG quality) loses range or precision
-- [ ] Test 3–4 cameras on the USB-A ports when they arrive, then re-measure with `tests/perf-snapshot.sh`
-- [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights
-- [ ] Benchmark AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
+- [x] 4 cameras on the USB-A ports (2 Thriftiest, 2 Global Shutter) and a colour camera on a USB-C hub, all streaming
+- [ ] Re-measure with `tests/perf-snapshot.sh` with every camera running
+- [x] USB hub reset test (`tests/usb-hub-reset/run.sh`): the Global Shutter cameras come back by themselves; the Thriftiest Cams stay stuck until their power is cut (Known issues)
+- [x] USB controller watchdog (`14-usb-watchdog.sh`), tested with a faked dead controller: it resets the controller and reports which cameras came back
+- [x] Log flood fixed (`photonvision-33`): a camera failure logged 20,000 lines a minute. The system log also keeps up to 2 GB now, and the hardware watchdog covers reboots (30 s)
+- [ ] Find why a software reboot can hang: repeat it with a DisplayPort monitor plugged in (Known issues)
+- [x] Focus score on the Camera page (`photonvision-34`), like Limelight's
+- [ ] Retune exposure and decision margin on the event field, and run `tests/flicker-check/run.sh` under its lights. Compare decision margin 15 against AOS's 50 on Rewind footage (false positives)
+- [ ] Later, if we need it: AprilTags and game pieces in one pipeline on the same camera (plan in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md#future-work))
 - [ ] Field calibration mode: push the robot by hand to 10–20 spots, then solve for the event's real tag positions, every camera's mount and the best camera settings ([docs/FIELD-CALIBRATION-PLAN.md](docs/FIELD-CALIBRATION-PLAN.md)). Test in the shop first.
   - [x] Solver: [tools/fieldcal](tools/fieldcal/README.md). On synthetic recordings: tags to a few mm, camera height to 4 mm, pitch and roll to 0.03°
   - [x] Runs on the Jetson, replaying the recording through the 971 GPU detector at ~400 fps (`scripts/jetson/13-build-fieldcal-detect.sh --install`)
@@ -490,12 +535,13 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [ ] Test the detector's `max_line_fit_mse` at 2.5 (upstream #2138: rejects tags cut off at the image edge) against the default 10 with tags in view: range and edge behaviour. Then set it with `08-select-detector.sh bos --mwbd 20 --jpeg nvjpg --mse 2.5`
 - [ ] Test whether the Camera Gain slider does anything on our cameras (`photonvision-21`)
 - [ ] Re-test the detector's thread count with several tags per camera, the field case (`tests/detector-threads/run.sh`, switches live; with one tag it made no difference)
-- [ ] Cheap wins from other teams' systems: Rewind starting itself on enable and named by match (robot code, issue #10 8a). Robot-side items, like trusting tags less near the image edge, are in [issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10)
+- [ ] Robot code, in progress: Rewind starting itself on FMS matches, named by match ([issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10) 8a)
+- [ ] Robot code: drop a bad tag at run time from the dashboard ([issue #10](https://github.com/Spectrum3847/2026-FM-SystemCore/issues/10) 11b and 12). The Jetson side is done (`photonvision-22`)
+- [ ] Robot code: the rest of issue #10's robot-side items (trusting tags less near the image edge, single-tag checks, sanity gates, standard deviations, alerts on the Jetson's health topics)
 - [x] Full backup image of the SSD with PhotonVision's settings (`scripts/host/04-backup-ssd.sh`: 8.7 GB, 7 min). Keep it on the team drive, never GitHub (it holds the Wi-Fi password and SSH keys)
 - [x] GitHub release [v2026.09.24](https://github.com/Spectrum3847/SpectrumJetson/releases/tag/v2026.09.24): the PhotonVision jar, TensorRT backend, camera driver and settings
 - [ ] Clone a spare SSD from the backup (`scripts/host/05-restore-ssd.sh`)
 
-**Next season:** faster CSI (ribbon-cable) cameras would skip the USB and MJPEG decoding and could reach 120+ fps. That's the setup Austin's AOS system is built around. For October, this USB setup is the right one.
 
 ## Credits and licenses
 

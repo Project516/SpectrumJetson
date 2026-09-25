@@ -183,6 +183,11 @@ cap=$(cat /sys/module/uvcvideo/parameters/payload_cap 2>/dev/null || true)
 if [[ -n $cap && $cap != "(null)" ]]; then pass "camera driver: bandwidth cap $cap"
 elif [[ $cams -gt 2 ]]; then warn "stock camera driver: only 2 cameras fit on USB 2.0, on any ports (run 11-uvcvideo-payload-cap.sh --install)"
 else pass "stock camera driver (fine for 2 cameras; more need 11-uvcvideo-payload-cap.sh)"; fi
+# The USB controller watchdog (14-usb-watchdog.sh) and the 1 s USB retries (09-robot-tuning.sh).
+if systemctl is-active --quiet usb-watchdog 2>/dev/null; then pass "USB controller watchdog running"
+else warn "USB controller watchdog not running (scripts/jetson/14-usb-watchdog.sh --install)"; fi
+udt=$(cat /sys/module/usbcore/parameters/initial_descriptor_timeout 2>/dev/null || echo "?")
+[[ $udt == 1000 ]] || warn "USB retries time out after $udt ms, not 1000 (rerun 09-robot-tuning.sh)"
 # USB bandwidth and connection trouble in the last 10 minutes, with what to do about it
 # (usb-bandwidth.py: each camera's reservation, what failed, and the fix).
 UB=$(dirname "$0")/usb-bandwidth.py

@@ -236,7 +236,8 @@ PhotonVision 2027.
     code trusts: a 12 px tag gives a noisy single-tag pose. Cheaper options: full size only on the
     cameras facing downfield, or only in a band around the horizon, where far tags appear.
 - **CSI cameras:** the devkit has 2 connectors; Arducam's OV9281 does 80 fps at 1280x800 (slower
-  than our USB 120 fps). No JPEG step, and hardware timestamps. A next-season option.
+  than our USB 120 fps). No JPEG step, and hardware timestamps. Not planned (team decision,
+  2026-09-25): only if USB stops being enough.
   - The 4143 fork's camera table already lists Innomaker OV9281 MIPI cameras on the Orin (the
     `vi-output, ov9281` V4L2 devices), and it re-enabled gray video modes for them.
   - So PhotonVision may run them through plain V4L2. Untested by us.
@@ -454,7 +455,7 @@ recordings through the 971 detector, or on a laptop.
   findings).
 - A joint or heading-constrained solve (Whacknet, bos).
 - IRQ affinity and real-time priorities.
-- CSI, USB 3 or triggered cameras.
+- USB 3 or triggered cameras (CSI isn't planned).
 - JetPack 7 (1868 is porting their image now).
 - Basing on upstream PhotonVision 2027 main with our CUDA pipeline, instead of the 2026-based 4143
   fork.
