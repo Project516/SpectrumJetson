@@ -87,15 +87,37 @@ float MaxLineFitMse() {
   return 10.0f;
 }
 
+// Worker threads for each detector's CPU stage (edge refinement and tag decoding). Every camera
+// has its own detector and pool, so 4 cameras x 6 threads compete for the Jetson's 6 cores. Set
+// with SPECTRUM_971_THREADS; /tmp/spectrum-971-threads overrides it without a restart
+// (re-read every 2 s; processimage swaps the pool between frames), for A/B tests.
+int DetectorThreads() {
+  static std::mutex mu;
+  static std::chrono::steady_clock::time_point next{};
+  static int threads = 6;
+  std::lock_guard<std::mutex> lock(mu);
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= next) {
+    next = now + std::chrono::seconds(2);
+    int n = 6;
+    if (const char *e = std::getenv("SPECTRUM_971_THREADS")) n = std::atoi(e);
+    if (FILE *f = std::fopen("/tmp/spectrum-971-threads", "r")) {
+      if (std::fscanf(f, "%d", &n) != 1) n = 6;
+      std::fclose(f);
+    }
+    threads = n >= 1 && n <= 12 ? n : 6;
+  }
+  return threads;
+}
+
 // How the CPU thread waits for the GPU (cudaSetDeviceFlags, at library load, before any CUDA
-// context exists): "auto" (CUDA's default; with one context on 6 cores it spins), "spin",
-// "yield" or "block" (sleep). Measured on the bench (2 cameras, 121 fps each, 2026-09-24):
-// spin ~192% CPU and 1.6/2.1 ms detect; block ~199% and 1.9/2.5 ms; yield ~200% and 2.2/2.5 ms.
-// Blocking saved no CPU and added ~0.3 ms, so the default stays CUDA's. Re-test with 4 cameras.
-// Set with SPECTRUM_971_CUDA_SYNC; /tmp/spectrum-971-cuda-sync overrides it (for A/B tests:
-// write it, restart PhotonVision).
+// context exists): "block" (sleep; the default), "auto" (CUDA's default; with one context on 6
+// cores it spins), "spin" or "yield". With 2 cameras (2026-09-24) blocking added ~0.3 ms and saved
+// no CPU. With 4 cameras it made no difference over 11 one-minute runs (docs/TECHNICAL.md), so it's
+// the default because it doesn't hurt. Set with SPECTRUM_971_CUDA_SYNC;
+// /tmp/spectrum-971-cuda-sync overrides it (for A/B tests: write it, restart PhotonVision).
 unsigned CudaScheduleFlag(std::string *name) {
-  std::string v = "auto";
+  std::string v = "block";
   if (const char *e = std::getenv("SPECTRUM_971_CUDA_SYNC")) v = e;
   if (FILE *f = std::fopen("/tmp/spectrum-971-cuda-sync", "r")) {
     char buf[16] = {0};
@@ -105,9 +127,9 @@ unsigned CudaScheduleFlag(std::string *name) {
   *name = v;
   if (v == "spin") return cudaDeviceScheduleSpin;
   if (v == "yield") return cudaDeviceScheduleYield;
-  if (v == "block") return cudaDeviceScheduleBlockingSync;
-  *name = "auto";
-  return cudaDeviceScheduleAuto;
+  if (v == "auto") return cudaDeviceScheduleAuto;
+  *name = "block";
+  return cudaDeviceScheduleBlockingSync;
 }
 
 // Test hooks, read from /tmp/spectrum-971-fault-every (re-read every 30 frames so a test can
@@ -183,7 +205,7 @@ DetectorSlot *Slot(jlong handle) {
 apriltag_detector_t *MakeTagDetector(apriltag_family_t *family) {
   apriltag_detector_t *td = apriltag_detector_create();
   apriltag_detector_add_family_bits(td, family, 1);
-  td->nthreads = 6;
+  td->nthreads = DetectorThreads();
   td->wp = workerpool_create(td->nthreads);
   td->qtp.min_white_black_diff = MinWhiteBlackDiff();
   td->qtp.max_line_fit_mse = MaxLineFitMse();
@@ -668,10 +690,14 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
   }
   std::string sync;
   const cudaError_t sync_err = cudaSetDeviceFlags(CudaScheduleFlag(&sync));
+  // CUDA reads CUDA_DEVICE_MAX_CONNECTIONS (default 8) from the process environment, which
+  // 08-select-detector.sh sets; only reported here.
+  const char *connections = std::getenv("CUDA_DEVICE_MAX_CONNECTIONS");
   std::cout << "971 library loaded (frc971/bos detector, min_white_black_diff "
-            << MinWhiteBlackDiff() << ", max_line_fit_mse " << MaxLineFitMse() << ", CUDA wait " << sync
+            << MinWhiteBlackDiff() << ", max_line_fit_mse " << MaxLineFitMse() << ", threads "
+            << DetectorThreads() << ", CUDA wait " << sync
             << (sync_err == cudaSuccess ? "" : std::string(" FAILED: ") + cudaGetErrorString(sync_err))
-            << ")" << std::endl;
+            << ", GPU connections " << (connections ? connections : "8") << ")" << std::endl;
   return JNI_VERSION_1_6;
 }
 
@@ -904,6 +930,14 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
       RecordFailure(*s, handle, "detector rebuild failed");
       return MakeJObjectArray(env, nullptr);
     }
+  }
+  // The pool is only used inside Detect (tag_detector_->wp and ->nthreads), so it can be
+  // swapped between frames.
+  if (const int n = DetectorThreads(); n != s->td->nthreads) {
+    workerpool_destroy(s->td->wp);
+    s->td->nthreads = n;
+    s->td->wp = workerpool_create(n);
+    std::cout << "971 detector h" << handle << ": " << n << " threads" << std::endl;
   }
 
   auto t0 = std::chrono::steady_clock::now();

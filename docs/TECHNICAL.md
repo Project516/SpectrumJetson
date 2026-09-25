@@ -419,7 +419,50 @@ Full write-up in [VISION-RESEARCH.md](VISION-RESEARCH.md).
   | block | ~199% | 1.9 / 2.5 ms |
   | yield | ~200% | 2.2 / 2.5 ms |
 
-  The default stays `auto` (CUDA's own, spins). Re-test with 4 cameras.
+  With 2 cameras the default stayed `auto` (CUDA's own, spins).
+- **4 cameras: CUDA wait and GPU work queues** (2026-09-24, 2 Thriftiest Cams at 122 fps and 2 global-shutter cameras at 61 fps, no tags in view, no dashboard streams, hardware decode on). Each config ran 1 minute after a restart; detect time in ms as average / typical worst (the average of each second's max) / worst. First run:
+
+  | Config | Thriftiest Cams | Global-shutter cameras |
+  |---|---|---|
+  | baseline (`auto`, 8 queues, 6 threads) | 3.09 / 6.65 / 11.98 | 3.52 / 6.16 / 11.66 |
+  | `block` | 2.99 / 5.99 / 11.90 | 2.95 / 5.00 / 8.29 |
+  | `CUDA_DEVICE_MAX_CONNECTIONS=32` | 2.81 / 4.87 / 9.34 | 2.81 / 4.60 / 7.15 |
+  | 2 detector threads | 3.25 / 6.39 / 9.72 | 3.55 / 5.83 / 8.74 |
+  | 3 detector threads | 4.02 / 7.29 / 11.41 | 4.12 / 6.88 / 13.02 |
+  | baseline again | 2.73 / 5.95 / 20.17 | 3.62 / 6.39 / 10.04 |
+
+  Second run, back to back (the "32 queues" config above looked like a clear win, so it was repeated alongside block with 32):
+
+  | Config | Thriftiest Cams | Global-shutter cameras | PhotonVision CPU |
+  |---|---|---|---|
+  | `block` + 32 queues | 2.75 / 5.37 / 10.69 | 3.06 / 5.05 / 8.82 | 1.43 cores |
+  | 32 queues (`auto`) | 4.05 / 6.59 / 8.87 | 3.35 / 5.34 / 9.54 | 1.63 |
+  | baseline (`auto`, 8 queues) | 2.85 / 6.46 / 9.96 | 3.43 / 6.24 / 10.17 | 1.48 |
+  | `block`, 8 queues | 2.88 / 6.32 / 9.26 | 4.17 / 6.31 / 9.89 | 1.50 |
+  | `block` + 32 queues again | 3.95 / 7.54 / 11.56 | 4.48 / 7.18 / 11.03 | 1.64 |
+
+  **Neither setting has a proven effect.** The same config varies by up to 2 ms in the typical worst between restarts (block + 32: 5.37, then 7.54), more than the configs differ from each other. Averaging each group's typical worst over all 11 runs:
+
+  | | Runs | Thriftiest Cams | Global-shutter cameras |
+  |---|---|---|---|
+  | 32 queues | 4 | 6.09 | 5.54 |
+  | 8 queues | 7 | 6.44 | 6.12 |
+  | `block` | 4 | 6.31 | 5.89 |
+  | `auto` | 7 | 6.31 | 5.92 |
+
+  32 queues may be worth ~0.5 ms (CUDA funnels every stream into 8 hardware queues by default, so one camera's kernels can wait behind another's even with the GPU only ~31% busy); `block` makes no difference. GPU ~31% in every run, and CPU tracked the detect times rather than the settings. **Both are the defaults because neither hurts:** `block` (the library's default) and 32 queues (`08-select-detector.sh --gpu-connections`, default 32, written to `971.conf`). The load line shows both ("CUDA wait block, GPU connections 32"), and `health-check.sh` warns if they differ. Proving an effect this small would take many alternating restarts (both settings are read only when CUDA starts). Detector threads (`SPECTRUM_971_THREADS`, or `/tmp/spectrum-971-threads`, applied live within 2 s; default 6) made no clear difference either.
+  - **Dashboard streams count.** With 4 streams open in a browser, the same settings ran at ~4 ms average and ~7.7 ms typical worst, and PhotonVision used ~2.0 cores instead of ~1.45. Close the dashboard before measuring.
+- **Detector threads with a tag in view** (2026-09-24, block + 32 queues, one hand-held tag seen by both Thriftiest Cams on every frame, 4 dashboard streams open). The thread count was switched live, cycling 6/2/3/4/1 threads; each segment was 3 s to settle and 7 s measured, over 3 rounds:
+
+  | Threads | Tag cameras (ms) | No-tag cameras (ms) | PhotonVision CPU |
+  |---|---|---|---|
+  | 6 | 4.22 / 7.75 / 10.68 | 3.75 / 7.30 / 13.09 | 2.02 cores |
+  | 4 | 4.06 / 6.99 / 8.82 | 3.60 / 6.77 / 8.85 | 1.93 |
+  | 3 | 4.17 / 7.38 / 9.80 | 3.68 / 6.88 / 9.23 | 1.95 |
+  | 2 | 4.19 / 7.43 / 9.41 | 3.71 / 6.98 / 9.39 | 1.92 |
+  | 1 | 4.15 / 7.32 / 13.00 | 3.68 / 6.77 / 11.70 | 1.94 |
+
+  No difference: the same setting varied more between rounds (6 threads: typical worst 8.25, 7.16, 7.80) than the settings did from each other. One tag is one decode task, so extra threads have nothing to share. The default stays 6; re-test with several tags per camera (the field case), where the decode tasks can spread out.
 - **Camera stuck after rapid restarts.** After 4 PhotonVision restarts in 3 minutes, TopRight sent only corrupt frames: cscore logged "invalid JPEG image received from camera" 120 times a second, and nothing reached the pipeline. One more restart fixed it. `health-check.sh` now warns about this, and when fewer detectors report than cameras are plugged in.
 - **Exposure 50 (5 ms), decision margin 15** (team-tuned), now the new-camera defaults (`photonvision-10`). `tests/flicker-check`: 0.6% average and 1% maximum frame-to-frame brightness change under the shop LEDs, so no flicker.
 

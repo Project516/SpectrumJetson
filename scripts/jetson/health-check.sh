@@ -36,7 +36,16 @@ fi
 
 echo "== CUDA detector"
 if grep -q "971 library loaded" <<<"$LOG"; then
-  pass "$(grep -m1 -o '971 library loaded.*' <<<"$LOG")"
+  loaded=$(grep -m1 -o '971 library loaded.*' <<<"$LOG")
+  pass "$loaded"
+  # The robot settings (2026-09-24): the CPU sleeps while the GPU works, and 32 GPU work queues.
+  # An older library doesn't print these.
+  if grep -q "GPU connections" <<<"$loaded"; then
+    grep -q "CUDA wait block" <<<"$loaded" ||
+      warn "CUDA wait isn't block (/tmp/spectrum-971-cuda-sync or SPECTRUM_971_CUDA_SYNC left from a test?)"
+    grep -q "GPU connections 32" <<<"$loaded" ||
+      warn "GPU connections isn't 32 (rerun 08-select-detector.sh, or remove a test drop-in)"
+  fi
 elif grep -q "creategpudetector" <<<"$LOG"; then
   warn "running the 4143 detector build (not Austin's current bos build)"
 else

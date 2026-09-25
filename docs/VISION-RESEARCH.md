@@ -40,11 +40,18 @@ Both cameras now run at their full 120 fps. CPU per frame went from about 17 ms 
 what makes 4 cameras realistic. (Measured with `tests/perf-snapshot.sh`, which also reports
 browser stream viewers, because a preview stream costs CPU.)
 
-**Also tried and not kept: letting the CPU sleep while the GPU works.** The 971 detector waits on
-the GPU ~8 times a frame, and CUDA's default wait busy-spins the CPU. Switching it
-(`cudaDeviceScheduleBlockingSync`) saved no CPU and added ~0.3 ms of detect time; `yield` was no
-better. The default stays CUDA's own, and the setting remains switchable for the 4-camera test
-(`SPECTRUM_971_CUDA_SYNC`, or `/tmp/spectrum-971-cuda-sync` + restart).
+**Letting the CPU sleep while the GPU works, and more GPU work queues: no proven effect.** The
+971 detector waits on the GPU ~8 times a frame, and CUDA's default wait busy-spins the CPU. With 2
+cameras, switching it (`cudaDeviceScheduleBlockingSync`) saved no CPU and added ~0.3 ms of detect
+time; `yield` was no better. With 4 cameras we also tried raising CUDA's hardware work queues from
+8 to 32 (`CUDA_DEVICE_MAX_CONNECTIONS`), since the GPU was only ~31% busy yet the slowest frames
+took twice the average. One run each made 32 queues look like a clear win (1–2 ms off the worst
+frames). Repeating it showed the same settings vary by 2 ms between restarts, and over 11 runs 32
+queues came out ~0.5 ms better and `block` no different. Both are now the defaults because neither
+hurts. The lesson: one run per setting isn't enough when the noise is this big. Numbers in
+[TECHNICAL.md](TECHNICAL.md) ("4 cameras: CUDA wait and GPU work queues"). Still switchable:
+`SPECTRUM_971_CUDA_SYNC`, or `/tmp/spectrum-971-cuda-sync` + restart; `08-select-detector.sh
+--gpu-connections N`.
 
 ### Exposure: 5 ms
 
