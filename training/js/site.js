@@ -62,6 +62,7 @@
   // Scrollytelling: calls cb(index, stepEl) as each .step crosses the middle of the screen.
   Site.scrolly = (root, cb) => {
     const steps = [...root.querySelectorAll('.step')];
+    const prog = scrollyProgress(root, steps);
     let cur = -1;
     const io = new IntersectionObserver((es) => {
       es.forEach((e) => {
@@ -70,12 +71,48 @@
         if (i === cur) return;
         cur = i;
         steps.forEach((s, j) => s.classList.toggle('active', j === i));
+        prog.set(i);
         cb(i, e.target);
       });
     }, { rootMargin: '-45% 0px -45% 0px' });
     steps.forEach((s) => io.observe(s));
     return steps;
   };
+
+  // Progress rail for a scrollytelling block: one dot per visible step, click to jump.
+  // Shared by every Site.scrolly call on the same root (some chapters register two callbacks).
+  function scrollyProgress(root, steps) {
+    if (root._prog) return root._prog;
+    const vis = root.querySelector('.vis') || root;
+    const rail = document.createElement('div');
+    rail.className = 'sc-prog';
+    rail.setAttribute('aria-label', 'Steps');
+    const title = (st) => (st.querySelector('h4, h5, .step-title')?.textContent || '').trim();
+    let active = 0;
+    const build = () => {
+      const shown = steps.filter((st) => st.offsetParent !== null || st.getClientRects().length);
+      rail.innerHTML = shown.map((st) => `<button type="button" data-i="${steps.indexOf(st)}" title="${title(st).replace(/"/g, '&quot;')}" aria-label="Go to step: ${title(st).replace(/"/g, '&quot;')}"></button>`).join('') + '<span class="n"></span>';
+      set(active);
+    };
+    const set = (i) => {
+      active = i;
+      const btns = [...rail.querySelectorAll('button')];
+      const k = btns.findIndex((b) => +b.dataset.i === i);
+      btns.forEach((b, j) => { b.classList.toggle('on', j === k); b.classList.toggle('done', j < k); });
+      rail.querySelector('.n').textContent = `${Math.max(1, k + 1)} / ${btns.length}`;
+    };
+    rail.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (b) steps[+b.dataset.i].scrollIntoView({ behavior: Site.reduced ? 'auto' : 'smooth', block: 'center' });
+    });
+    vis.appendChild(rail);
+    // sit in the gap on whichever side the step text is
+    const side = () => { const st = root.querySelector('.steps'); rail.classList.toggle('right', !!st && st.getBoundingClientRect().left > vis.getBoundingClientRect().left); };
+    new ResizeObserver(side).observe(root);
+    build();
+    addEventListener('site:mode', build);
+    return (root._prog = { set });
+  }
 
   // Binds a range input to an <output>, calling fn(value) now and on every change.
   Site.range = (input, fn, fmt = (v) => v) => {

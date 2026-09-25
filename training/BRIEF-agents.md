@@ -187,3 +187,21 @@ So in **short mode**:
 - Rewrite short-only prose (`.short`) to match; if a kept lab's caption or hint tells a history/comparison story, mark that caption `.full` and add a neutral `.short` caption if needed.
 - Chapter 10 (Making it fast) is now a full-course-only chapter (`section.chapter.full`); in short mode it disappears. Don't link to it from short-only text (a link from full-only text is fine).
 - Full mode keeps everything (the engineering stories are great there).
+
+## Round 3: make every interaction obvious (owner feedback)
+
+The owner found the chapter 15 Publish/Subscribe buttons "sometimes not clickable, but you don't know why". Cause: an auto-demo kept animating, toggle buttons' labels never changed, and nothing reacted the instant you clicked, so clicks felt ignored (fixed by the coordinator: the demo stops on the first click, labels follow state, the sender flashes, a log line says what happened). "Check all the other interactive elements to make sure it's clear what you should do."
+
+For **every interactive element in your chapters** (labs, sliders, buttons, segmented controls, draggable canvases/SVGs, clickable diagram boxes, hover-to-reveal things, 3D views, quiz), in BOTH modes, at 1280 and 390:
+1. **Say what to do.** Each lab has a visible one-line instruction near the top or right under the visual: "Drag the robot…", "Tap a box…", "Press Play…". Don't rely on a hint buried in the caption at the bottom.
+2. **Every click gives instant, visible feedback** (within ~100 ms): the thing changes, highlights, or a status line updates. No click may be silently ignored. If something can't be done right now (animation running, over budget, nothing selected), either queue/restart it, or show why (disabled style: `opacity:.45; cursor:not-allowed` plus a title/status text explaining).
+3. **Auto-playing demos stop on the first user interaction** (and don't fight the user's input), or have a clear pause/play button.
+4. **Toggle buttons show their state**: labels that change ("Start"/"Stop"), `.on` style, or `aria-pressed`.
+5. **Affordances**: draggable things show `cursor: grab`/`grabbing`, a handle or "drag me" cue, and a hover state; clickable SVG/canvas regions show `cursor: pointer` and a hover highlight; hover-only features also work by tap on phones.
+6. **Hit targets** at least ~40 px tall on phones; nothing clickable is covered by another element (check with `document.elementFromPoint` at the element's center after scrolling it into view).
+7. **Hidden-at-load labs** (short mode → full mode switch) still work and size correctly after `site:mode`.
+8. Keep changes small and in your own files. Test by actually clicking/dragging in a headless script (puppeteer-core is in the scratchpad `shot` folder; see `shot/pubsub.js` for a click/hit-test example) and by screenshots.
+
+Also: every `.scrolly` step section now gets a progress rail automatically (dots + "3 / 10", click a dot to jump) from `Site.scrolly`. Check that it looks right in your scrollies and doesn't overlap anything; tell the coordinator if not.
+
+Report: per chapter, which elements you changed and how, and anything you couldn't fix.

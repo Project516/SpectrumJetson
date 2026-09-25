@@ -103,16 +103,31 @@ Site.chapter('networktables', (root) => {
         });
       });
     };
-    const events = {
-      result: () => { seq++; const has = seq % 3 !== 0; publish('pv', 'raw', `${has ? 1 + (seq % 2) : 0} tag${has && seq % 2 ? 's' : ''} #${4000 + seq}`); publish('pv', 'has', has ? 'true' : 'false'); },
-      record: () => { const on = topics.find((x) => x.k === 'rec').v !== 'true'; publish('robot', 'rec', on ? 'true' : 'false'); },
-      pipe: () => { const nv = topics.find((x) => x.k === 'pir').v === '0' ? '1' : '0'; publish('dash', 'pir', nv, () => publish('pv', 'pis', nv)); },
+    // "Record" and "pipeline" are toggles, so their button labels follow the current value.
+    const btn = (k) => root.querySelector(`[data-pub="${k}"]`);
+    const labels = () => {
+      btn('record').textContent = topics.find((x) => x.k === 'rec').v === 'true' ? 'Robot: stop Rewind' : 'Robot: start Rewind';
+      btn('pipe').textContent = `Dashboard: switch to pipeline ${topics.find((x) => x.k === 'pir').v === '0' ? 1 : 0}`;
     };
-    let lastUser = -10, clock = 0, autoI = 0;
-    root.querySelectorAll('[data-pub]').forEach((b) => (b.onclick = () => { lastUser = clock; events[b.dataset.pub](); }));
+    const log = (m) => ($('#n-log').textContent = m);
+    const events = {
+      result: () => { seq++; const has = seq % 3 !== 0; publish('pv', 'raw', `${has ? 1 + (seq % 2) : 0} tag${has && seq % 2 ? 's' : ''} #${4000 + seq}`); publish('pv', 'has', has ? 'true' : 'false'); return 'PhotonVision publishes a new result: rawBytes and hasTarget. The robot and the dashboard subscribed, so both get it.'; },
+      record: () => { const on = topics.find((x) => x.k === 'rec').v !== 'true'; publish('robot', 'rec', on ? 'true' : 'false'); return `Robot code sets rewind/record = ${on}. PhotonVision subscribed, so it ${on ? 'starts' : 'stops'} recording.`; },
+      pipe: () => { const nv = topics.find((x) => x.k === 'pir').v === '0' ? '1' : '0'; publish('dash', 'pir', nv, () => publish('pv', 'pis', nv)); return `The dashboard asks for pipeline ${nv}. PhotonVision switches, then publishes pipelineIndexState = ${nv} to confirm.`; },
+    };
+    const flash = (who) => { glow['c' + who] = 1; };
+    const sender = { result: 'pv', record: 'robot', pipe: 'dash' };
+    // A demo plays until the first click, then only the student's own messages run.
+    let demo = true, clock = 0, autoI = 0;
+    root.querySelectorAll('[data-pub]').forEach((b) => (b.onclick = () => {
+      demo = false;
+      flash(sender[b.dataset.pub]);
+      log('You: ' + events[b.dataset.pub]());
+      labels();
+    }));
     Site.loop(svg, (t, dt) => {
       clock += dt;
-      if (!busy && clock - lastUser > 6 && clock % 2.2 < dt) { events[['result', 'result', 'pipe', 'result', 'record'][autoI++ % 5]](); }
+      if (demo && !busy && clock % 2.2 < dt) { const k = ['result', 'result', 'pipe', 'result', 'record'][autoI++ % 5]; flash(sender[k]); log('Demo: ' + events[k]()); labels(); }
       let s = '';
       for (let i = flights.length - 1; i >= 0; i--) {
         const f = flights[i]; f.t += dt / f.dur;

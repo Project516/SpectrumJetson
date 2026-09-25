@@ -49,6 +49,8 @@
   #networktables .port small { font: .75rem var(--mono); color: var(--muted); }
   #networktables .port-note { font-size: .9rem; margin-top: 12px; min-height: 3em; }
   #networktables .dir-cards .card { border-left: 4px solid #f59e0b; }
+  #networktables .n-log { margin-top: 10px; font: 500 .8rem var(--mono); color: #d9f99d; background: #0e0518; border-radius: 8px; padding: 7px 10px; min-height: 2.2em; }
+  #networktables [data-pub]:active { transform: scale(.96); }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -118,9 +120,10 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="btn-sm primary" data-pub="result">Jetson: new result</button>
         <button class="btn-sm" data-pub="record">Robot: start Rewind</button>
-        <button class="btn-sm" data-pub="pipe">Dashboard: pipeline 1</button>
+        <button class="btn-sm" data-pub="pipe">Dashboard: switch to pipeline 1</button>
       </div>
-      <p class="hint">Each client only receives the topics it subscribed to. Values are illustrative.</p>
+      <div class="n-log" id="n-log" aria-live="polite">Playing a demo. Press a button to publish a value yourself.</div>
+      <p class="hint">Press a button: the client sends one value to the server, and only the clients that subscribed to that topic get a copy (green). Values are illustrative.</p>
     </div>
   </div>
 

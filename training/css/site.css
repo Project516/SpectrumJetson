@@ -343,3 +343,19 @@ body.mode-full .short { display: none !important; }
 @media (max-width: 520px) { .mode-pick { grid-template-columns: 1fr; } }
 .toc a i, .road-part a i { font-style: normal; margin-left: auto; font: 500 .72rem var(--mono); opacity: .6; padding-left: 8px; white-space: nowrap; }
 .road-part a { display: flex; }
+
+/* progress rail for scrollytelling steps (built by Site.scrolly) */
+.scrolly .vis { position: sticky; }
+.scrolly .vis > .sc-prog { width: auto; }
+.sc-prog.right { left: auto; right: -32px; }
+.sc-prog { position: absolute; left: -32px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 7px; z-index: 3; }
+.sc-prog button { width: 10px; height: 10px; padding: 0; border-radius: 50%; border: 2px solid var(--accent); background: #fff; cursor: pointer; transition: transform .2s, background .2s; }
+.sc-prog button.done { background: var(--accent-soft); border-color: var(--accent-soft); }
+.sc-prog button.on { background: var(--accent); transform: scale(1.35); }
+.sc-prog button:hover { transform: scale(1.5); }
+.sc-prog .n { font: 600 .66rem var(--mono); color: var(--p600); margin-top: 4px; white-space: nowrap; }
+@media (max-width: 900px) {
+  .scrolly .vis { padding-bottom: 26px; }
+  .sc-prog, .sc-prog.right { left: 50%; right: auto; top: auto; bottom: 4px; transform: translateX(-50%); flex-direction: row; gap: 9px; }
+  .sc-prog .n { writing-mode: horizontal-tb; transform: none; margin: 0 0 0 4px; }
+}
