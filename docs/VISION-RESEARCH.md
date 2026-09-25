@@ -293,7 +293,7 @@ localizer).
 | Minimum decision margin **50** (ours is 15, team-tuned at 5 ms) | same | Med / med | A data point for field tuning. Check false positives in Rewind footage before choosing. |
 | Frames older than 55 ms dropped instead of queued | same | Low / med | Keeps latency bounded if the Jetson is overloaded. |
 | **Noise per detection:** how far undistortion moved the corners, pose-error ratio, noise growing with distance, per-tag trust, counters for 10 rejection reasons | `swerve_localizer/localizer.cc`, `status.fbs` | Med / high | Robot-side, from PhotonLib's corners (issue #10). |
-| **Health telemetry:** temperatures, fan, power rails every 5 s; good/failed JPEG decodes per camera; free disk | `frc/orin/hardware_monitor.cc`, `turbojpeg_decoder_status.fbs` | Med / med | A failed-decode count would catch frames the bandwidth cap cuts short. |
+| **Health telemetry:** temperatures, fan, power rails every 5 s; good/failed JPEG decodes per camera; free disk | `frc/orin/hardware_monitor.cc`, `turbojpeg_decoder_status.fbs` | **Done** (Jetson side) | On NetworkTables: temperatures, fan, power, throttling and over-current (`photonvision-17`), each camera's fps, decode failures, recoveries and problem (`-29`, `-31`), and Rewind's free disk. The robot code still has to log them and raise alerts. |
 | **Camera-mount calibration from data:** spin the robot between two ChArUco diamond targets | `calibrate_multi_cameras_lib.cc`, [971's procedure](https://github.com/frc971/971-Robot-Code/blob/master/y2024/vision/README.md) | Med / high | Measured robot-to-camera transforms beat CAD numbers. |
 | **Field tag map from logs** (Ceres solve) | `target_mapper.cc` | Low / med | WPILib's [WPIcal](https://docs.wpilib.org/en/stable/docs/software/wpilib-tools/wpical/index.html) measures tag positions from video, so Rewind footage could feed it. |
 | Hardware JPEG decode | see above | **Done** | On since 2026-09-24 ([TECHNICAL.md](TECHNICAL.md)). Only one way of calling it gives the right frames. |
@@ -336,9 +336,9 @@ The newest code is [RobotCode2026Public/northstar](https://github.com/Mechanical
   the coprocessor re-solves. **Med / high:** our multi-tag solve uses the Jetson's layout, so at
   an event the robot can't drop one badly placed tag.
 - **Self-healing cameras.** Before every restart it power-cycles and re-enumerates the USB port
-  (`uhubctl`), and it exits after 3 s of failed grabs. **Med / med:** our stuck-camera case
-  (corrupt JPEGs after rapid restarts) only gets a health-check warning. A USB unbind/rebind
-  would fix it without a person.
+  (`uhubctl`), and it exits after 3 s of failed grabs. **Done** (`photonvision-29`): a camera
+  with no usable frames for 3 s is reconnected, then reset at the USB level 5 s later, like a
+  replug.
 - **Throttle to 1 fps after 5 s disabled.** **Low / med:** less heat in the queue.
 - **Annotated match video**, with tags and detections drawn on, named by match. **Low / low:**
   we can draw overlays at export time from logged corners.
@@ -374,15 +374,18 @@ What an ideal system has that ours doesn't yet, roughly in order of value for ef
 1. **Every match recorded without anyone remembering to.** Rewind starts on enable, stops a few
    seconds after disable, and names files by event and match.
 2. **Replay.** Run any recording back through the exact detector and settings to tune thresholds
-   offline and to test every patch against real match footage before it ships.
+   offline and to test every patch against real match footage before it ships. **Partly done:**
+   `fieldcal_detect` replays Rewind recordings through the 971 detector at ~400 fps, with its
+   thresholds as flags.
 3. **Cameras that heal themselves.** Detect a stuck or corrupt camera and reset its USB port
-   automatically, instead of warning.
+   automatically, instead of warning. **Done** (`photonvision-29`).
 4. **Quality metadata on every tag,** so the robot can weigh each one: distance from the image
    edge, how far undistortion moved the corners, reprojection error, decision margin.
    - Tags near the edge are trusted less, on a tunable curve (robot side).
    - The robot chooses which tags to trust.
 5. **Health in the robot log:** temperatures, fps, failed decodes, USB resets and free disk, as
-   dashboard alerts. Today it's an SSH script.
+   dashboard alerts. The Jetson publishes all of it to NetworkTables now. What's left is the robot
+   code logging it and raising alerts.
 6. **Calibrated from data, not CAD.**
    - Camera mounts measured by spinning the robot in front of targets.
    - The event's real tag positions measured from Rewind video (WPIcal).
@@ -436,8 +439,9 @@ recordings through the 971 detector, or on a laptop.
 1. Test 3–4 cameras when they arrive (`tests/perf-snapshot.sh`).
 2. Rewind auto-start on enable, named by event and match (robot half: issue #10).
 3. Trust tags less as they near the image edge, on the robot (issue #10, 8b), instead of dropping them on the Jetson.
-4. Reset a stuck camera's USB port automatically.
-5. Per-camera failed-decode counts and temperatures in NetworkTables.
+4. ~~Reset a stuck camera's USB port automatically.~~ Done (`photonvision-29`).
+5. ~~Per-camera failed-decode counts and temperatures in NetworkTables.~~ Done; the robot code
+   still needs alerts on them.
 6. The calibration and event routine above. Rerun `tests/flicker-check` under the event lights.
    Compare decision margin 15 with 50 on Rewind footage.
 7. Robot-side filters and std devs (Northstar and AOS lists above) → issue #10.
