@@ -1,0 +1,18 @@
+Startup finished in 8.782s (kernel) + 7.734s (userspace) = 16.517s 
+multi-user.target reached after 6.183s in userspace
+
+2.050s lvm2-monitor.service
+2.042s systemd-update-utmp.service
+1.879s dev-nvme0n1p1.device
+1.493s systemd-udev-trigger.service
+1.470s nv-ftpm-device-provision.service
+1.099s nv-l4t-usb-device-mode.service
+ 495ms nv-tee-supplicant.service
+ 403ms nv-l4t-bootloader-config.service
+ 346ms alsa-restore.service
+ 314ms networkd-dispatcher.service
+ 291ms nvfb-udev.service
+ 288ms systemd-modules-load.service
+ 287ms systemd-remount-fs.service
+ 284ms keyboard-setup.service
+ 272ms kmod-static-nodes.service

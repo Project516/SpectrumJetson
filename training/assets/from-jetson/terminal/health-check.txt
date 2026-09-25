@@ -1,0 +1,39 @@
+== PhotonVision
+  PASS  running 13212s, version dev-v2026.1.1-27-gd8c9e8e1
+== CUDA detector
+  PASS  971 library loaded (frc971/bos detector, min_white_black_diff 20, max_line_fit_mse 10, threads 6, CUDA wait block, GPU connections 32)
+  PASS  h0: 60 fps, detect 1.09102 ms
+  PASS  h1: 121 fps, detect 0.984581 ms
+  PASS  h2: 60 fps, detect 1.12591 ms
+  PASS  h3: 122 fps, detect 1.01687 ms
+  PASS  JPEG decode: NVJPG hardware, 362 frames/s (checks: 19879 ok, 0 differ)
+  WARN  calibration loaded for only 2 of 4 AprilTag cameras
+== Cameras
+  PASS  TopLeft on USB port 2.1 (480 Mbps, autosuspend off)
+  PASS  TopLeft streaming 1280x800 MJPG, as set
+  PASS  Global_Shutter_Camera (1) on USB port 2.2 (480 Mbps, autosuspend off)
+  PASS  Global_Shutter_Camera (1) streaming 1280x720 MJPG
+  PASS  TopRight on USB port 2.3 (480 Mbps, autosuspend off)
+  PASS  TopRight streaming 1280x800 MJPG, as set
+  PASS  Global_Shutter_Camera on USB port 2.4 (480 Mbps, autosuspend off)
+  PASS  Global_Shutter_Camera streaming 1280x720 MJPG, as set
+  PASS  camera driver: bandwidth cap 1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600,1-1.1:256,1-2.1:1280,1-2.2:640,1-2.3:1280,1-2.4:640
+  PASS  USB controller watchdog running
+  PASS  USB bandwidth reserved: bus 1: 3840 of ~6720 bytes per microframe (usb-bandwidth.py for details)
+== Robot connection
+  WARN  not connected to the robot (server team is 8515); expected off the robot
+        addresses: enP8p1s0 10.85.15.15/8, wlP1p1s0 10.100.0.194/16
+  WARN  Wi-Fi is connected: turn it off before competition (robot coprocessors may not use radios)
+== System
+  PASS  power mode MAXN SUPER
+  PASS  clocks locked (CPU 1728 MHz, GPU 1020 MHz)
+  PASS  hottest sensor gpu-thermal 55 C
+  PASS  memory available 5101 MB
+  PASS  disk 10% used
+  PASS  fan: NVIDIA fan control, quiet profile, pwm 89/255, 1959 rpm
+  PASS  clock: 2026-09-25 07:53 UTC
+  PASS  filesystem: no ext4 errors recorded
+  PASS  system log kept across power cuts (2 boot(s) on file)
+        boot time: 16.517s (multi-user.target)
+
+READY (3 warning(s))
