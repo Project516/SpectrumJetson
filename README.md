@@ -69,7 +69,7 @@ flowchart LR
 
 These checks apply to the current WPILib alpha-6 and PhotonLib alpha-2 pair. They do not clear the alpha-7 migration.
 
-**Current compatibility limit.** Keep the robot on WPILib 2027.0.0-alpha-6 and PhotonLib v2027.0.0-alpha-2 until the separate CUDA port and robot-network test pass. WPILib 2027.0.0-alpha-7 is the migration target. As of 2026-09-24, no PhotonLib alpha-7 tag was found, and the current alpha-2 client is built against WPILib alpha-6. See [docs/WPILIB-2027-ALPHA-7.md](docs/WPILIB-2027-ALPHA-7.md).
+**Current compatibility limit.** Keep the robot on WPILib 2027.0.0-alpha-6 and PhotonLib v2027.0.0-alpha-2 until the separate CUDA port and robot-network test pass. WPILib 2027.0.0-alpha-7 is the migration target. As of 2026-09-25, no PhotonLib alpha-7 tag was found, and the current alpha-2 client is built against WPILib alpha-6. See [docs/WPILIB-2027-ALPHA-7.md](docs/WPILIB-2027-ALPHA-7.md).
 
 ## Step 1: Flash JetPack onto the SSD
 

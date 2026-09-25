@@ -7,7 +7,7 @@ robot-network integration test has not passed, so the pair is not fully
 validated.
 
 WPILib 2027.0.0-alpha-7 is the next migration target. Its [release notes](https://github.com/wpilibsuite/allwpilib/releases/tag/v2027.0.0-alpha-7)
-say alpha-6 and earlier vendordeps do not work with alpha-7. As of 2026-09-24,
+say alpha-6 and earlier vendordeps do not work with alpha-7. As of 2026-09-25,
 no PhotonLib alpha-7 tag was found in the official PhotonVision release feed.
 The current alpha-2 tag pins WPILib alpha-6. Do not replace the robot
 vendordep with a development asset and call the pair supported.
@@ -24,6 +24,7 @@ not released PhotonLib alpha-7 pins.
    PhotonVision source that pins WPILib 2027.0.0-alpha-7.
 2. Port the native bridge from the old `wpi/jni_util.h` and `wpi/RawFrame.h`
    includes to the alpha-7 headers, then rebuild the detector on ARM64.
+   Alpha-7 requires C++23 and G++ 14; JetPack 6 ships GCC 11.
 3. Build PhotonLib from reviewed alpha-7-compatible source or wait for a tagged
    release. Do not use the alpha-2 vendordep or label a development asset as a
    release.

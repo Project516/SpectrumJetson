@@ -108,7 +108,7 @@ The field is the **2026 Rebuilt AndyMark** layout, on the Jetson and in robot co
 **Current compatibility limit.** The deployed robot project uses WPILib
 2027.0.0-alpha-6 and PhotonLib v2027.0.0-alpha-2. Keep those pins while the CUDA
 fork and robot-network test remain on the 2026-era native bridge. WPILib
-2027.0.0-alpha-7 is the migration target, but as of 2026-09-24 no PhotonLib
+2027.0.0-alpha-7 is the migration target, but as of 2026-09-25 no PhotonLib
 alpha-7 tag was found. The release notes also say alpha-6 and earlier vendordeps
 do not work with alpha-7. The full order is in
 [WPILIB-2027-ALPHA-7.md](WPILIB-2027-ALPHA-7.md).
@@ -134,8 +134,9 @@ do not clear the alpha-7 migration:
 
 Porting CUDA to PhotonVision source that uses WPILib 2027.0.0-alpha-7 is a
 separate PR. It needs a rebase of the PhotonVision patches, updated JNI headers,
-and a real ARM64 Jetson build. It must not be combined with the robot-only pin
-change.
+and a real ARM64 Jetson build. Alpha-7 native code needs C++23 and G++ 14, while
+JetPack 6 ships GCC 11, so the detector toolchain is part of that port. It must
+not be combined with the robot-only pin change.
 
 | Piece | Version | Built on | Script |
 |---|---|---|---|
