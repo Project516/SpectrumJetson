@@ -7,8 +7,9 @@
   #pose .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
   #pose canvas.touch { touch-action: none; }
   #pose .three-wrap { position: relative; border-radius: 12px; overflow: hidden; background: #0e0518; aspect-ratio: 16 / 10; touch-action: none; }
+  #pose .three-wrap > canvas { cursor: grab; }
   #pose .three-wrap canvas { width: 100% !important; height: 100% !important; border-radius: 0; background: transparent; display: block; }
-  #pose .three-wrap .inset { position: absolute; z-index: 2; right: 10px; top: 10px; width: 36%; border: 1px solid var(--lab-line); border-radius: 8px; box-shadow: 0 8px 20px rgba(0,0,0,.5); }
+  #pose .three-wrap .inset { position: absolute; z-index: 2; pointer-events: none; right: 10px; top: 10px; width: 36%; border: 1px solid var(--lab-line); border-radius: 8px; box-shadow: 0 8px 20px rgba(0,0,0,.5); }
   #pose .three-wrap .inset canvas { height: auto !important; }
   #pose .three-wrap .inset b { position: absolute; left: 8px; top: 5px; font: 700 .62rem var(--font); letter-spacing: .1em; text-transform: uppercase; color: var(--lab-muted); }
   #pose .three-wrap .tip { position: absolute; z-index: 2; left: 10px; bottom: 8px; font-size: .75rem; color: var(--lab-muted); background: rgba(14,5,24,.75); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
@@ -17,7 +18,9 @@
   #pose .verdict { font: 700 .95rem var(--font-heading); padding: 8px 12px; border-radius: 10px; margin-top: 12px; }
   #pose .verdict.ok { background: rgba(163,230,53,.12); color: #a3e635; border: 1px solid rgba(163,230,53,.35); }
   #pose .verdict.bad { background: rgba(245,158,11,.12); color: #f59e0b; border: 1px solid rgba(245,158,11,.4); }
-  #pose .tagbtns button.off { opacity: .45; text-decoration: line-through; }
+  #pose .tagbtns button.off { color: var(--lab-muted); box-shadow: inset 0 0 0 1px rgba(196,181,253,.35); }
+  #pose .tagbtns button.off::before { content: "+ "; }
+  #pose .tagbtns button.on::before { content: "✓ "; }
   #pose .chk { display: flex; gap: 8px; align-items: center; font-size: .86rem; color: var(--lab-ink); margin: 8px 0; cursor: pointer; }
   #pose .chk input { accent-color: var(--accent); width: 16px; height: 16px; }
   #pose .code { font-family: var(--mono); font-size: .78rem; background: #1f1b23; border-radius: 10px; padding: 12px 14px; color: #f4efff; white-space: pre; overflow-x: auto; margin: 12px 0; }
@@ -28,6 +31,13 @@
   #pose .lab-grid > *, #pose .split > * { min-width: 0; }
   #pose table.data code { overflow-wrap: anywhere; }
   @media (max-width: 600px) { #pose table.data { font-size: .85rem; } #pose table.data code { font-size: .78em; } }
+  #pose .todo { display: flex; gap: 8px; align-items: baseline; margin: -4px 0 14px; font: 600 .92rem/1.45 var(--font); color: #efe6ff; }
+  #pose .todo::before { content: "\1F449"; flex: none; }
+  #pose canvas.drag { cursor: grab; touch-action: none; }
+  #pose canvas.drag:active, #pose canvas.dragging { cursor: grabbing; }
+  #pose canvas.tap { cursor: pointer; touch-action: manipulation; }
+  #pose .btn-sm[aria-busy="true"] { opacity: .6; cursor: progress; }
+  @media (max-width: 600px) { #pose .seg button, #pose .btn-sm { min-height: 40px; } #pose .lab input[type=range] { height: 40px; } #pose .chk { min-height: 40px; } }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -48,6 +58,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Similar triangles</h4></div>
+      <p class="todo">Move the slider to push the tag farther away.</p>
       <canvas id="po-tri" aria-label="Side view: a tag, the pinhole and the sensor, with the tag's image size"></canvas>
       <div class="ctl" style="margin-top:12px"><label>Distance to the tag <output></output></label><input type="range" id="po-tri-d" min="0.5" max="8" step="0.05" value="2"></div>
       <div class="readout"><div><small>Tag in the image</small><b id="po-tri-px">–</b></div><div><small>If corners are 1 px off</small><b id="po-tri-err">–</b></div></div>
@@ -66,6 +77,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Size, position, shape</h4></div>
+    <p class="todo">Move the sliders and watch the tag's picture change.</p>
     <div class="duo">
       <div><p class="cap">From above</p><canvas id="po-clue-top" aria-label="Top-down view of the camera and the tag"></canvas></div>
       <div><p class="cap">What the camera sees</p><canvas id="po-clue-img" aria-label="Camera image of the tag"></canvas></div>
@@ -93,6 +105,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Real frames</span><h4>Detected corners</h4></div>
+      <p class="todo">Pick a frame.</p>
       <div class="seg" id="po-real-seg" style="margin-bottom:10px"><button data-v="2024-speaker-63in" class="on">Close</button><button data-v="2024-speaker-143in">Far</button><button data-v="2024-stage-51in">One tag</button><button data-v="2026-blue-outpost-fuel">2026 outpost</button><button data-v="2024-speaker-amp-far">Edge of frame</button></div>
       <canvas id="po-real" aria-label="A real field camera frame with detected tag corners"></canvas>
       <p class="hint" id="po-real-info"></p>
@@ -116,9 +129,9 @@
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Solve the camera's pose</h4></div>
+    <p class="todo">Drag the robot to move it. Drag anywhere else to turn the view; scroll or pinch to zoom.</p>
     <div class="three-wrap" id="po-3d">
       <div class="inset"><b>What the camera sees</b><canvas id="po-3d-img"></canvas></div>
-      <div class="tip">Drag the robot to move it · drag elsewhere to orbit · scroll to zoom</div>
     </div>
     <div class="lab-grid" style="margin-top:16px">
       <div>
@@ -179,6 +192,7 @@ Pose3d robotPose = camPose.transformBy(robotToCamera.inverse());</div>
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>The flip</h4></div>
+    <p class="todo">Press New noisy frame, or move the sliders. Run 200 frames counts how often it flips.</p>
     <div class="duo">
       <div><p class="cap">From above: the two solutions</p><canvas id="po-amb-top" aria-label="Top-down view with the real camera and the two solved poses"></canvas></div>
       <div><p class="cap">Image: detected corners and both reprojections</p><canvas id="po-amb-img" aria-label="Camera image with the detected corners and the two solutions' reprojected corners"></canvas></div>
@@ -218,6 +232,7 @@ Pose3d robotPose = camPose.transformBy(robotToCamera.inverse());</div>
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Add tags, watch the uncertainty shrink</h4></div>
+    <p class="todo">Tap the tag buttons to add or remove tags, then try the two checkboxes.</p>
     <div class="lab-grid">
       <div>
         <canvas id="po-mt" aria-label="Top-down view: a cloud of solved robot poses from noisy frames"></canvas>
@@ -260,6 +275,7 @@ Pose3d robotPose = camPose.transformBy(robotToCamera.inverse());</div>
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Blending two guesses</h4></div>
+      <p class="todo">Move the sliders and watch the green blend lean toward the surer guess.</p>
       <canvas id="po-kf" aria-label="Bell curves for odometry, vision and the blended estimate"></canvas>
       <div class="ctl" style="margin-top:12px"><label>Tag distance <output></output></label><input type="range" id="po-kf-d" min="1" max="7" step="0.1" value="3"></div>
       <div class="ctl"><label>Tags in view <output></output></label><input type="range" id="po-kf-n" min="1" max="4" step="1" value="1"></div>

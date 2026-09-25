@@ -14,6 +14,13 @@
   #gyro .code .k { color: #c4b5fd; }
   #gyro .dials { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   #gyro .lab-grid > *, #gyro .split > * { min-width: 0; }
+  #gyro .todo { display: flex; gap: 8px; align-items: baseline; margin: -4px 0 14px; font: 600 .92rem/1.45 var(--font); color: #efe6ff; }
+  #gyro .todo::before { content: "\1F449"; flex: none; }
+  #gyro canvas.drag { cursor: grab; touch-action: none; }
+  #gyro canvas.drag:active, #gyro canvas.dragging { cursor: grabbing; }
+  #gyro canvas.tap { cursor: pointer; touch-action: manipulation; }
+  #gyro .btn-sm[aria-busy="true"] { opacity: .6; cursor: progress; }
+  @media (max-width: 600px) { #gyro .seg button, #gyro .btn-sm { min-height: 40px; } #gyro .lab input[type=range] { height: 40px; } #gyro .chk { min-height: 40px; } }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -33,6 +40,7 @@
     </div>
     <div class="lab full" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Two headings</h4></div>
+      <p class="todo">Just watch: the robot turns by itself.</p>
       <canvas id="gy-dials" aria-label="Two dials: heading from the gyro and heading from a single far tag"></canvas>
       <p class="hint">The robot turns slowly. Left: the gyro's heading, with a slow drift. Right: the heading from one tag about 5 m away, solved fresh every frame with realistic corner noise. Simulated with the same solver as chapter 12.</p>
     </div>
@@ -47,6 +55,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>The door on a hinge</h4></div>
+      <p class="todo">Move the sliders to change the distance and the angle error.</p>
       <canvas id="gy-lever" aria-label="Top-down: the robot's estimated position swinging around the tag as the angle error grows"></canvas>
       <div class="ctl" style="margin-top:12px"><label>Distance to the tag <output></output></label><input type="range" id="gy-l-d" min="1" max="8" step="0.1" value="5"></div>
       <div class="ctl"><label>Angle error <output></output></label><input type="range" id="gy-l-e" min="0" max="6" step="0.1" value="1"></div>
@@ -76,6 +85,7 @@
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>One tag: full PnP vs heading from the gyro</h4></div>
+    <p class="todo">Switch solvers or corners, and move the sliders. Each change solves 80 new frames.</p>
     <div class="lab-grid">
       <div>
         <canvas id="gy-mt2" aria-label="Top-down: clouds of solved robot positions from full PnP and from the heading-constrained solve"></canvas>

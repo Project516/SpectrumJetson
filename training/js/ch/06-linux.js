@@ -45,18 +45,21 @@ function layers(root) {
       [0, 'The result goes to the robot over NetworkTables, and a small preview to your browser.'],
     ],
   };
-  let trip = 'exp', i = 0, manual = null, last = 0;
+  // Auto-plays the chosen trip until you tap a layer; picking a trip plays it again.
   const show = (l, text) => {
     els.forEach((e, j) => e.classList.toggle('on', j === l));
     const e = els[l];
     pkt.style.top = e.offsetTop + e.offsetHeight / 2 - 7 + 'px';
     cap.innerHTML = `<h5>${INFO[l][0]}</h5>${text ? `<p><b>${text}</b></p>` : ''}<p>${INFO[l][1]}</p>`;
   };
-  Site.seg(root.querySelector('#l-os-seg'), (v) => { trip = v; i = 0; manual = null; last = -99; });
-  els.forEach((e, j) => e.addEventListener('click', () => { manual = performance.now(); show(j); }));
+  const st = root.querySelector('#l-os-st');
+  let trip = 'exp', i = 0, auto = true, last = -99;
+  const status = () => { st.textContent = auto ? 'Playing the trip. Tap any layer to stop and explore.' : 'Exploring. Pick a trip above to play it again.'; };
+  Site.seg(root.querySelector('#l-os-seg'), (v) => { trip = v; i = 0; auto = true; last = -99; status(); });
+  els.forEach((e, j) => e.addEventListener('click', () => { auto = false; status(); show(j); }));
+  status();
   Site.loop(stack, (t) => {
-    if (manual && performance.now() - manual < 9000) return;
-    manual = null;
+    if (!auto) return;
     if (t - last < (Site.reduced ? 6 : 3.4)) return;
     last = t;
     const steps = TRIPS[trip];
@@ -145,14 +148,15 @@ function bootReplay(root) {
     lab.querySelectorAll('.seg-b').forEach((e) => { const a = +e.dataset.a, b = +e.dataset.b; e.style.width = pct(Site.clamp(s - a, 0, b - a)) + '%'; });
     lab.querySelectorAll('.mark').forEach((e) => (e.style.opacity = s >= +e.dataset.s ? 1 : 0));
   };
-  root.querySelector('#l-boot-play').onclick = () => { t0 = null; done = false; };
+  const play = root.querySelector('#l-boot-play');
+  play.onclick = () => { t0 = null; done = false; render(0); play.textContent = '↺ Restart'; };
   render(0);
   Site.loop(lab, (t) => {
     if (done) return;
-    if (t0 === null) t0 = t;
+    if (t0 === null) { t0 = t; play.textContent = '↺ Restart'; }
     const s = Site.reduced ? 57 : Math.min(57, (t - t0) * 4);
     render(s);
-    if (s >= 57) done = true;
+    if (s >= 57) { done = true; play.textContent = '▶ Replay'; }
   });
 }
 

@@ -103,6 +103,7 @@ Site.chapter('photonvision', (root) => {
       [D + 'settings-top-crop.webp', 'The Settings page', 'Device Metrics on the right: CPU, <b>GPU usage</b> (our chart, patch 19: 16% here with 4 cameras), memory and temperature. On the left, the <b>CPU Throttling</b> row says why the Jetson would slow itself down (patch 20): "None".', ['photonvision-19', 'photonvision-20']],
     ];
     const img = $('#pv-tour-img'), txt = $('#pv-tour-txt');
+    T.forEach(([src]) => { const im = new Image(); im.src = src; }); // preload: tab switches are instant
     Site.seg($('#pv-tour'), (v) => {
       const [src, h, d, chips] = T[+v];
       img.src = src; img.alt = h + ' in our PhotonVision';
@@ -203,18 +204,20 @@ Site.chapter('photonvision', (root) => {
   {
     const svg = $('#pv-build');
     let t0 = -99, bad = false, now = 0;
-    $('#pv-build-go').onclick = () => { bad = false; t0 = now; };
-    $('#pv-build-bad').onclick = () => { bad = true; t0 = now; };
+    const mark = (b) => { $('#pv-build-go').classList.toggle('primary', b === 'go'); $('#pv-build-bad').classList.toggle('primary', b === 'bad'); };
+    $('#pv-build-go').onclick = () => { bad = false; t0 = now; mark('go'); };
+    $('#pv-build-bad').onclick = () => { bad = true; t0 = now; mark('bad'); };
     const pv = PATCHES.filter((p) => p[0].startsWith('photonvision'));
     Site.loop(svg, (t) => {
       now = t;
       const e = t - t0 < 0 ? 99 : t - t0;
       let s = '';
       // base
+      if (e >= 90) s += `<text x="30" y="40" font-size="14" font-weight="600" fill="#6b1199">Press a button to run the build.</text>`;
       s += `<rect x="30" y="248" width="280" height="36" rx="8" fill="#3c0060"/><text x="44" y="271" font-size="13" font-weight="700" fill="#fff">4143 fork @ d8c9e8e</text>`;
-      const n = Math.min(pv.length, Math.floor((e - 0.3) / 0.08));
+      const n = Math.min(pv.length, Math.floor(e / 0.08) + (e < 90 ? 1 : 0));
       for (let i = 0; i < n; i++) {
-        const y = 242 - i * 5.6, [id, g] = pv[i], drop = Site.clamp((e - 0.3 - i * 0.08) / 0.15, 0, 1);
+        const y = 242 - i * 5.6, [id, g] = pv[i], drop = Site.clamp((e - i * 0.08) / 0.15 + 0.3, 0, 1);
         s += `<rect x="30" y="${y - 5 - (1 - drop) * 40}" width="280" height="4.6" rx="2" fill="${GROUPS[g][1]}" opacity="${drop}"/>`;
       }
       if (n > 0) s += `<text x="320" y="${Math.max(50, 246 - n * 5.6)}" font-size="12" fill="#635a72">+ ${pv[n - 1][0].replace('photonvision-', 'patch ')}</text>`;

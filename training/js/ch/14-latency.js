@@ -89,7 +89,7 @@ Site.chapter('latency', (root) => {
     let t0 = 0; S.forEach((s) => { s.a = t0; t0 += s.ms; s.b = t0; });
     S[7].a = S[6].b; S[7].b = S[6].b + 20;
     const TOT = S[7].b + 1;
-    const cv = $('#l-tl'); cv.style.height = '300px';
+    const cv = $('#l-tl'); cv.style.height = (root.clientWidth < 560 ? 380 : 300) + 'px';
     const st = Site.canvas(cv);
     const card = $('#l-tl-card'), btn = $('#l-tl-play');
     let T = 0, playing = false, slow = 300, sel = -1;
@@ -100,7 +100,10 @@ Site.chapter('latency', (root) => {
       card.innerHTML = `<h5>${s.n}<span>${tag}</span></h5><p>${s.d}</p>`;
     };
     btn.onclick = () => { if (!playing && T >= TOT - 0.01) T = 0; playing = !playing; btn.textContent = playing ? '❚❚ Pause' : '▶ Play'; };
-    let geo = null;
+    let geo = null, hover = -1;
+    const rowAt = (e) => { if (!geo) return -1; const r = cv.getBoundingClientRect(), i = Math.floor((e.clientY - r.top - geo.top) / geo.rh); return i >= 0 && i < S.length ? i : -1; };
+    cv.addEventListener('mousemove', (e) => (hover = rowAt(e)));
+    cv.addEventListener('mouseleave', () => (hover = -1));
     cv.addEventListener('click', (e) => {
       if (!geo) return;
       const r = cv.getBoundingClientRect(), y = e.clientY - r.top;
@@ -130,6 +133,7 @@ Site.chapter('latency', (root) => {
         const y = top + i * rh, bh = Math.min(20, rh - 6), by = y + (rh - bh) / 2;
         ctx.textAlign = 'right'; ctx.font = font(narrow ? 10.5 : 12.5, 600);
         const on = T >= s.a && T < s.b;
+        if (i === sel || i === hover) { ctx.fillStyle = i === sel ? 'rgba(139,92,246,.22)' : 'rgba(255,255,255,.06)'; ctx.fillRect(4, y + 1, w - 8, rh - 2); }
         if (on) active = i;
         ctx.fillStyle = on || sel === i ? '#fff' : MUTED; ctx.fillText(s.n, lab, by + bh / 2 + 4);
         const xa = X(s.a), xb = X(s.b), fill = Site.clamp((T - s.a) / (s.b - s.a), 0, 1);
@@ -398,7 +402,8 @@ Site.chapter('latency', (root) => {
     const jet = () => performance.now() - base;
     const cj = $('#l-cj'), cr = $('#l-cr'), math = $('#l-math');
     let asym = 0.3, ping = null;
-    Site.range($('#l-asym'), (v) => (asym = v), (v) => v.toFixed(2) + ' ms');
+    let asymTouched = false;
+    Site.range($('#l-asym'), (v) => { asym = v; if (asymTouched && ping && ping.reported) math.innerHTML = `<span class="dim">Unevenness set to ${v.toFixed(2)} ms. Press "Send a ping" to see how it changes the error.</span>`; asymTouched = true; }, (v) => v.toFixed(2) + ' ms');
     const fmt = (ms) => (ms / 1000).toFixed(6) + ' s';
     const send = () => {
       const base = 0.15;

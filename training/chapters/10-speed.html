@@ -1,4 +1,10 @@
 <style>
+  #speed .do { font-size: .9rem; font-weight: 600; margin: -4px 0 12px; display: flex; gap: 8px; align-items: baseline; }
+  #speed .do::before { content: "👉"; }
+  #speed .lab .do { color: #ede4ff; }
+  #speed .fig .do { color: var(--p700); padding: 12px 16px 0; margin: 0; }
+  #speed .lab button, #speed .seg button { min-height: 36px; }
+  @media (max-width: 640px) { #speed .lab button, #speed .seg button, #speed .filters button, #speed .btn-sm { min-height: 42px; } }
   #speed figure { margin-left: 0; margin-right: 0; }
   #speed .split > *, #speed .lab-grid > *, #speed .scrolly > * { min-width: 0; }
   #speed pre, #speed code { font-variant-ligatures: none; }
@@ -126,6 +132,7 @@
 
   <div class="lab" id="sp-usblab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Fit the cameras on one USB 2.0 bus</h4></div>
+    <p class="do">Start with a preset, then change any port's camera or allocation and watch the budget bar.</p>
     <div class="presets" id="sp-presets">
       <button class="btn-sm" data-p="stock2">Stock driver, 2 cameras</button>
       <button class="btn-sm" data-p="stock3">Stock, add a 3rd</button>
@@ -187,6 +194,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Rebuild an 8×8 block</h4></div>
+      <p class="do">Drag the slider to add frequencies one at a time.</p>
       <canvas id="sp-idct" aria-label="An 8 by 8 block of a tag corner rebuilt from a growing number of JPEG frequencies"></canvas>
       <div class="ctl" style="margin-top:12px"><label>Frequencies used (of 64) <output></output></label><input type="range" id="sp-idct-n" min="1" max="64" value="6"></div>
     </div>
@@ -194,6 +202,7 @@
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Three ways to decode one frame</h4></div>
+    <p class="do">Just watch: the race replays every few seconds. Compare the bars and the CPU meters.</p>
     <canvas id="sp-race" aria-label="Three decode paths racing: cscore's color then gray at 8.9 ms, gray-only at 2.6 ms, and the NVJPG hardware at about 2.6 ms with little CPU"></canvas>
     <div class="meters" id="sp-meters"></div>
     <p class="hint">Times are our measurements for one 1280×800 frame. The split between steps inside each bar is illustrative. The CPU meters show decode CPU per camera at 122 fps; "1.09 cores" means one camera's thread can't keep up, which is why two cameras were stuck at 92 and 104 fps. NVJPG's CPU (about 1 ms a frame for hand-off and copying) is from our test harness.</p>
@@ -207,6 +216,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Spot the frozen frames</h4></div>
+      <p class="do">Press <b>Compare pixel by pixel</b>.</p>
       <canvas id="sp-frozen" aria-label="Two film strips: the CPU decoder's frames change as the tag moves, the wrong hardware call repeats frame 0 while saying success"></canvas>
       <div class="ctlrow" style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap"><button class="btn-sm primary" id="sp-compare">🔍 Compare pixel by pixel</button></div>
     </div>
@@ -221,6 +231,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Chart</span><h4>PhotonVision's memory</h4></div>
+      <p class="do">Switch between before and after the fix.</p>
       <canvas id="sp-leak" aria-label="Memory over 8 minutes: before the fix it climbs to 5.6 GB and is killed, after the fix it stays flat near 1.1 GB"></canvas>
       <div class="ctlrow" style="display:flex;gap:10px;margin-top:10px"><div class="seg" id="sp-leak-seg"><button data-v="before" class="on">Before</button><button data-v="after">With mjpeg_decode</button></div></div>
       <p class="hint">"Before" is an illustration from ~250 KB × 244 frames a second (2 cameras). "After" is our 8-minute measurement: 1.078 → 1.092 GB.</p>
@@ -240,6 +251,7 @@
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Six cores, many threads</h4></div>
+    <p class="do">Switch the OpenCV threads between spinning and sleeping, and watch the red hatching.</p>
     <canvas id="sp-sched" aria-label="Six CPU cores over time; colored blocks are threads doing work, red hatching is threads spinning"></canvas>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px">
       <div class="seg" id="sp-spin"><button data-v="spin" class="on">OpenCV threads spin</button><button data-v="sleep">OpenCV threads sleep</button></div>
@@ -252,6 +264,7 @@
   <p class="prose">A related trap. With Low Latency Mode on, PhotonVision's loop waited for a <em>new</em> frame after finishing each one. If the work takes even a little longer than the gap between frames, the frame that arrived during the work is thrown away, and the loop waits for the one after. Drag the processing time and watch the frame rate fall off a cliff.</p>
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Blocking wait vs grab the newest</h4></div>
+    <p class="do">Drag the processing time past 8.3 ms and watch the top row start skipping frames (✗).</p>
     <canvas id="sp-llm" aria-label="Two timelines of frames arriving every 8.3 ms: one waits for a new frame and skips frames, the other takes the newest frame right away"></canvas>
     <div class="ctl" style="margin-top:12px;max-width:520px"><label>Processing time per frame <output></output></label><input type="range" id="sp-llm-p" min="4" max="15" step="0.5" value="10"></div>
     <div class="readout"><div><small>Low Latency Mode on</small><b id="sp-llm-on">–</b></div><div><small>Off (non-blocking)</small><b id="sp-llm-off">–</b></div></div>

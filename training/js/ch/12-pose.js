@@ -399,13 +399,18 @@ Site.chapter('pose', (root) => {
     const pick = (e) => { const r = renderer.domElement.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, cam); };
     renderer.domElement.addEventListener('pointerdown', (e) => {
       pick(e);
-      if (ray.intersectObject(robot, true).length) { dragging = true; controls.enabled = false; renderer.domElement.setPointerCapture(e.pointerId); }
+      if (ray.intersectObject(robot, true).length) { dragging = true; controls.enabled = false; renderer.domElement.setPointerCapture(e.pointerId); renderer.domElement.style.cursor = 'grabbing'; }
+      else renderer.domElement.style.cursor = 'grabbing';
     }, true);
     renderer.domElement.addEventListener('pointermove', (e) => {
-      if (!dragging) return; pick(e);
+      if (!dragging) { // hover: the robot shows a move cursor, the rest of the scene a grab (orbit) cursor
+        if (e.buttons || e.pointerType !== 'mouse') return;
+        pick(e); renderer.domElement.style.cursor = ray.intersectObject(robot, true).length ? 'move' : 'grab'; return;
+      }
+      pick(e);
       if (ray.ray.intersectPlane(plane, hit)) { S.x = Site.clamp(hit.x, 0.7, 7.5); S.y = Site.clamp(-hit.z, -0.5, 7.5); update(); }
     });
-    const end = () => { if (dragging) { dragging = false; controls.enabled = true; } };
+    const end = () => { renderer.domElement.style.cursor = 'grab'; if (dragging) { dragging = false; controls.enabled = true; } };
     renderer.domElement.addEventListener('pointerup', end); renderer.domElement.addEventListener('pointercancel', end);
     controls.addEventListener('change', render);
     new ResizeObserver(resize).observe(wrap);
@@ -543,9 +548,16 @@ Site.chapter('pose', (root) => {
       const v = $('#po-a-verdict'), wrong = !cur.bestIsA && !same && apart > 0.3;
       v.className = 'verdict ' + (amb > 0.2 || wrong ? 'bad' : 'ok');
       v.textContent = amb > 0.2 ? `Ambiguity ${amb.toFixed(2)} > 0.2: reject this pose` + (wrong ? ' (good thing: B won and it\'s the flip)' : '') : wrong ? 'Passed the 0.2 check, but the flipped solution won!' : 'Ambiguity under 0.2: solution ' + (cur.bestIsA ? 'A' : 'B') + ' is trusted';
-      $('#po-a-stats').textContent = stats;
+      $('#po-a-stats').textContent = stats || `Frame ${nFrame}: fresh noise on the four corners.`;
     };
+    let nFrame = 0;
+    const runBtn = $('#po-a-run');
     const run = () => {
+      // show the button busy first, then run the 200 solves on the next frame
+      runBtn.setAttribute('aria-busy', 'true'); runBtn.textContent = 'Running…'; $('#po-a-stats').textContent = 'Solving 200 noisy frames…';
+      requestAnimationFrame(() => setTimeout(runNow, 0));
+    };
+    const runNow = () => {
       let flips = 0, rej = 0, caught = 0, N = 200;
       for (let i = 0; i < N; i++) {
         const truth = truthPose(), obs = observe(truth, [TG], P.n); if (!obs.length) continue;
@@ -554,12 +566,13 @@ Site.chapter('pose', (root) => {
         if (wrong) flips++; if (r.amb > 0.2) { rej++; if (wrong) caught++; }
       }
       stats = `Out of ${N} noisy frames: the flipped pose won ${flips} times (${Math.round(flips / N * 100)}%). The 0.2 rule rejected ${rej}${flips ? `, catching ${caught} of the ${flips} flips` : ''}.`;
+      runBtn.removeAttribute('aria-busy'); runBtn.textContent = 'Run 200 frames';
       frame();
     };
     s1 = Site.canvas(ctop, 0.8, later(draw)); s2 = Site.canvas(cimg, 0.8, later(draw));
     const inputs = [['po-a-d', 'd', (v) => v.toFixed(1) + ' m'], ['po-a-ang', 'ang', (v) => v + '°'], ['po-a-n', 'n', (v) => '±' + v.toFixed(2) + ' px']];
     inputs.forEach(([id, k, fmt]) => Site.range($('#' + id), (v) => { P[k] = v; stats = ''; frame(); }, fmt));
-    $('#po-a-new').onclick = frame; $('#po-a-run').onclick = run;
+    $('#po-a-new').onclick = () => { nFrame++; stats = ''; frame(); }; runBtn.onclick = run;
   }
 
   /* ── Multi-tag lab ──────────────────────────────────── */
@@ -570,8 +583,8 @@ Site.chapter('pose', (root) => {
     const P = { d: 4.5, n: 0.5, bad: false, ex: false };
     let cloud = [], stat = {};
     const tb = $('#po-mt-tags');
-    tb.innerHTML = LAYOUT.map((_, i) => `<button data-i="${i}" class="${on[i] ? 'on' : 'off'}">Tag ${i + 1}</button>`).join('');
-    tb.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; const i = +b.dataset.i; on[i] = !on[i]; b.className = on[i] ? 'on' : 'off'; compute(); });
+    tb.innerHTML = LAYOUT.map((_, i) => `<button data-i="${i}" class="${on[i] ? 'on' : 'off'}" aria-pressed="${on[i]}" title="Tap to ${on[i] ? 'remove' : 'add'}">Tag ${i + 1}</button>`).join('');
+    tb.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; const i = +b.dataset.i; on[i] = !on[i]; b.className = on[i] ? 'on' : 'off'; b.setAttribute('aria-pressed', on[i]); b.title = `Tap to ${on[i] ? 'remove' : 'add'}`; compute(); });
     const truthRobot = () => ({ x: P.d, y: 0.2, th: Math.PI + 0.05 });
     function compute() {
       const rt = truthRobot(), truth = camFromRobot(rt.x, rt.y, rt.th);

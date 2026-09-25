@@ -26,6 +26,9 @@ Site.chapter('failsafes', (root) => {
       const el = mode === 'boot' ? 0 : sim - lastPat;
       since.textContent = mode === 'boot' ? '—' : Math.min(el, LIMIT).toFixed(1) + ' s';
       state.textContent = { run: 'running', frozen: 'frozen!', panic: 'kernel panic', boot: 'rebooting' }[mode];
+      const busy = mode === 'boot' || mode === 'panic';
+      if (fb.disabled !== busy) { fb.disabled = pb.disabled = busy; fb.title = pb.title = busy ? 'Wait: the Jetson is rebooting' : ''; }
+      fb.classList.toggle('on', mode === 'frozen'); fb.setAttribute('aria-pressed', mode === 'frozen');
       state.style.color = mode === 'run' ? '#a3e635' : mode === 'boot' ? '#67e8f9' : '#fda4af';
       const frac = Site.clamp(el / LIMIT, 0, 1);
       ctx.fillStyle = '#0e0518'; ctx.fillRect(0, 0, w, h);
@@ -368,12 +371,16 @@ Site.chapter('failsafes', (root) => {
     const el = (k) => dash.querySelector(`[data-k="${k}"]`);
     const spark = { gpuLoadPct: [], tjTempC: [] };
     const S = { gpu: 12, temp: 43, fan: 5586, pw: 9.1, oc: 0, hb: 48200, sagT: -99, fanDead: false, deadT: 0 };
-    $('#f-sag').onclick = () => { S.sagT = 0; S.oc++; };
-    $('#f-fan').onclick = () => { S.fanDead = true; S.deadT = 0; };
-    $('#f-reset').onclick = () => { S.fanDead = false; S.temp = 43; S.sagT = -99; S.oc = 0; };
+    const fanB = $('#f-fan'), sagB = $('#f-sag');
     let acc = 1;
+    const now = () => (acc = 1); // redraw on the next frame, so every click shows at once
+    sagB.onclick = () => { S.sagT = 0; S.oc++; now(); };
+    fanB.onclick = () => { S.fanDead = !S.fanDead; S.deadT = 0; if (!S.fanDead) S.temp = 43; now(); };
+    $('#f-reset').onclick = () => { S.fanDead = false; S.temp = 43; S.sagT = -99; S.oc = 0; now(); };
     Site.loop(dash, (t, dt) => {
-      acc += dt; if (acc < 0.5) return; const step = acc; acc = 0;
+      acc += dt; if (acc < 0.5) return; const step = Math.min(acc, 0.6); acc = 0;
+      fanB.textContent = S.fanDead ? '🌀 Fan dead: press to fix' : '🌀 Fan dies'; fanB.classList.toggle('on', S.fanDead); fanB.setAttribute('aria-pressed', S.fanDead);
+      sagB.classList.toggle('on', S.sagT < 10); sagB.textContent = S.sagT < 10 ? '🔋 Battery sagging…' : '🔋 Battery sags';
       S.hb += 1; S.sagT += step;
       S.gpu = Site.clamp(12 + (Math.random() - 0.5) * 12 + (Math.random() < 0.08 ? 10 : 0), 8, 24);
       if (S.fanDead) {

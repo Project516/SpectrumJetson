@@ -12,7 +12,6 @@
   #calibration .sub { font-size: .74rem; color: var(--lab-muted); margin: 8px 0 4px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   #calibration .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--lab-muted); margin-top: 8px; }
   #calibration .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
-  #calibration canvas.touch { touch-action: none; cursor: crosshair; }
   #calibration .code { font-family: var(--mono); font-size: .78rem; background: #0e0518; border: 1px solid var(--lab-line); border-radius: 10px; padding: 10px 12px; color: var(--lab-ink); white-space: pre; overflow-x: auto; margin-top: 12px; }
   #calibration .code .c { color: var(--lab-muted); }
   #calibration .code .n { color: #a3e635; }
@@ -38,6 +37,13 @@
   #calibration .yt-play::after { content: "▶"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 72px; height: 50px; border-radius: 14px; background: var(--accent); color: #fff; font-size: 22px; display: grid; place-items: center; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
   #calibration .yt-play:hover::after, #calibration .yt-play:focus-visible::after { background: var(--p800); }
   #calibration .yt .video-embed { display: block; border-radius: 0; box-shadow: none; }
+  #calibration .todo { display: flex; gap: 8px; align-items: baseline; margin: -4px 0 14px; font: 600 .92rem/1.45 var(--font); color: #efe6ff; }
+  #calibration .todo::before { content: "\1F449"; flex: none; }
+  #calibration canvas.drag { cursor: grab; touch-action: none; }
+  #calibration canvas.drag:active, #calibration canvas.dragging { cursor: grabbing; }
+  #calibration canvas.tap { cursor: pointer; touch-action: manipulation; }
+  #calibration .btn-sm[aria-busy="true"] { opacity: .6; cursor: progress; }
+  @media (max-width: 600px) { #calibration .seg button, #calibration .btn-sm { min-height: 40px; } #calibration .lab input[type=range] { height: 40px; } #calibration .chk { min-height: 40px; } }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -76,11 +82,12 @@
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Project a point through a pinhole</h4></div>
+    <p class="todo">Drag the red dot in the image, turn the 3D view by dragging it, or move the sliders.</p>
     <div class="lab-grid">
       <div>
         <div class="duo">
-          <div><p class="cap">3D view (drag to turn)</p><canvas id="cal-pin3d" class="touch" aria-label="3D view of a pinhole camera, its image plane and a point in the world"></canvas></div>
-          <div><p class="cap">The image (drag the point)</p><canvas id="cal-pinimg" class="touch" aria-label="The 1280 by 800 image with the projected point"></canvas></div>
+          <div><p class="cap">3D view (drag to turn)</p><canvas id="cal-pin3d" class="drag" aria-label="3D view of a pinhole camera, its image plane and a point in the world"></canvas></div>
+          <div><p class="cap">The image (drag the point)</p><canvas id="cal-pinimg" class="drag" aria-label="The 1280 by 800 image with the projected point"></canvas></div>
         </div>
         <div class="eq" id="cal-eq"></div>
       </div>
@@ -133,6 +140,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Lens distortion</h4></div>
+    <p class="todo">Pick a lens or move the sliders, then press Undistorted to straighten the picture.</p>
     <div class="lab-grid">
       <div>
         <canvas id="cal-dist" aria-label="A wall of tiles and three AprilTags seen through a lens with adjustable distortion"></canvas>
@@ -179,9 +187,10 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Mount a camera on the robot</h4></div>
+    <p class="todo">Move the sliders to mount the camera. Drag the view to turn it.</p>
     <div class="lab-grid">
       <div>
-        <canvas id="cal-mount" class="touch" aria-label="A robot with a camera and its field of view"></canvas>
+        <canvas id="cal-mount" class="drag" aria-label="A robot with a camera and its field of view"></canvas>
         <p class="hint">Drag to turn the view. The purple wedge is what the camera can see; the patch on the floor is the part of the carpet in its view.</p>
       </div>
       <div>
@@ -209,7 +218,8 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Why the markers help</h4></div>
-      <canvas id="cal-board" class="touch" aria-label="The calibration board partly outside the camera's frame"></canvas>
+      <p class="todo">Drag the board (or the slider) out of the camera's view, then switch board types.</p>
+      <canvas id="cal-board" class="drag" aria-label="The calibration board partly outside the camera's frame"></canvas>
       <div class="row"><div class="seg" id="cal-btype"><button data-v="chess">Plain chessboard</button><button data-v="charuco" class="on">ChArUco</button></div></div>
       <div class="ctl"><label>Slide the board out of view <output></output></label><input type="range" id="cal-bslide" min="0" max="75" step="1" value="30"></div>
       <div class="readout"><div><small>Corners found</small><b id="cal-bfound">–</b></div><div><small>Markers read</small><b id="cal-bmark">–</b></div></div>
@@ -233,21 +243,22 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Calibrate a camera</h4></div>
+    <p class="todo">Tap the picture to take a snapshot there, or press Auto snapshots. Then switch to Lens error.</p>
     <div class="lab-grid">
       <div>
-        <canvas id="cal-cov" class="touch" aria-label="Camera image with board snapshots; tap to add one"></canvas>
+        <canvas id="cal-cov" class="tap" aria-label="Camera image with board snapshots; tap to add one"></canvas>
         <div class="row">
           <div class="seg" id="cal-view"><button data-v="cov" class="on">Coverage</button><button data-v="err">Errors</button><button data-v="model">Lens error</button></div>
         </div>
         <div class="legend" id="cal-legend"></div>
       </div>
       <div>
-        <p style="margin-top:0"><b>Tap the image</b> to hold the board there and take a snapshot.</p>
         <div class="sub">Distance</div>
         <div class="seg" id="cal-dist-seg"><button data-v="0.45">Close</button><button data-v="0.7" class="on">Medium</button><button data-v="1.05">Far</button></div>
         <div class="sub">Tilt</div>
         <div class="seg" id="cal-tilt-seg"><button data-v="0.15">Flat</button><button data-v="0.78" class="on">Up to 45°</button></div>
         <div class="row" style="margin-top:14px"><button class="btn-sm primary" id="cal-auto">Auto snapshots ×10</button><button class="btn-sm" id="cal-lazy">Lazy ×10 (center only)</button><button class="btn-sm" id="cal-reset">Reset</button></div>
+        <p class="hint" id="cal-status" aria-live="polite" style="margin:4px 0 0;color:#efe6ff">No snapshots yet.</p>
         <div class="readout">
           <div><small>Snapshots</small><b id="cal-n">0</b></div>
           <div><small>Corners</small><b id="cal-nc">0</b></div>
@@ -292,6 +303,7 @@
   </div>
   <div class="lab">
     <div class="lab-head"><span class="tag">Real data</span><h4>Three of TopLeft's calibration snapshots</h4></div>
+    <p class="todo">Pick a snapshot to see it with its corners.</p>
     <div class="lab-grid">
       <div>
         <canvas id="cal-real-snap" aria-label="A real calibration snapshot of the ChArUco board with the detected corners marked"></canvas>
@@ -313,9 +325,10 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Real data</span><h4>All 43 snapshots at once</h4></div>
+    <p class="todo">Switch views. In Board poses, drag to turn the 3D view.</p>
     <div class="lab-grid">
       <div>
-        <canvas id="cal-real" class="touch" aria-label="TopLeft's real calibration data: corner coverage, error vectors or board poses"></canvas>
+        <canvas id="cal-real" aria-label="TopLeft's real calibration data: corner coverage, error vectors or board poses"></canvas>
         <div class="row"><div class="seg" id="cal-real-view"><button data-v="cov" class="on">Where the corners landed</button><button data-v="err">Errors</button><button data-v="3d">Board poses</button></div></div>
         <div class="legend" id="cal-real-legend"></div>
       </div>

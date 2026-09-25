@@ -1,4 +1,8 @@
 <style>
+  #camera .how { margin: -4px 0 14px; font: 600 .9rem var(--font); color: #e9e2ff; display: flex; gap: 8px; align-items: baseline; }
+  #camera .how::before { content: "👆"; }
+  @media (max-width: 600px) { #camera .lab .btn-sm, #camera .seg button { min-height: 40px; } #camera .lab input[type=range] { height: 32px; } }
+  #camera .cam3d canvas { cursor: grab; } #camera .cam3d canvas:active { cursor: grabbing; }
   #camera .cam3d { position: relative; aspect-ratio: 4 / 3; border-radius: 12px; overflow: hidden; background: radial-gradient(ellipse at 50% 40%, #2a1542, #0e0518 75%); touch-action: none; }
   #camera .cam3d canvas { width: 100% !important; height: 100% !important; display: block; background: transparent; border-radius: 0; }
   #camera .cam3d .lbl { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); font: 600 .72rem var(--font); color: #fff; background: rgba(14,5,24,.78); border: 1px solid rgba(196,181,253,.45); padding: 3px 8px; border-radius: 999px; white-space: nowrap; pointer-events: none; transition: opacity .2s; }
@@ -68,9 +72,10 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Take the camera apart</h4></div>
+      <p class="how">Drag the camera to turn it, and slide Explode to take it apart.</p>
       <div class="cam3d" id="c-3d"><div class="msg">Loading the 3D model…</div></div>
       <div class="ctl" style="margin-top:14px"><label>Explode <output></output></label><input type="range" id="c-explode" min="0" max="1" step="0.01" value="0.65"></div>
-      <p class="hint">Drag to turn, scroll or pinch to zoom. Solid labels: real CAD parts. Dashed labels: simplified stand-ins.</p>
+      <p class="hint">Scroll or pinch to zoom. Solid labels: real CAD parts. Dashed labels: simplified stand-ins.</p>
     </div>
   </div>
 
@@ -103,6 +108,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Two ways to take a picture</h4></div>
+      <p class="how">Pick a scene, then watch the amber scan line build the rolling-shutter photo. Change the speed to see the bending grow.</p>
     <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       <div class="seg" id="c-rsmode"><button data-v="prop" class="on">Propeller</button><button data-v="tag">Tag on a spinning robot</button></div>
     </div>
@@ -134,6 +140,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Mono vs color sensor</h4></div>
+      <p class="how">Drag Light level down and compare the noise and the false colors.</p>
       <div class="tri">
         <figure><canvas class="px" id="c-by0" width="32" height="32"></canvas><figcaption>Mono sensor</figcaption></figure>
         <figure><canvas class="px" id="c-by1" width="32" height="32"></canvas><figcaption>Color sensor, raw (each pixel sees 1 color)</figcaption></figure>
@@ -148,6 +155,7 @@
   <p class="prose full">JPEG doesn't store pixels. It cuts the frame into 8 × 8 blocks and stores each block as a recipe: "this much average brightness, plus this much of a gentle left-to-right fade, plus a little of this stripe pattern..." Fine patterns get rounded off first. The <strong>quality</strong> setting decides how hard it rounds. Try it on a real frame.</p>
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>JPEG quality vs size</h4></div>
+      <p class="how">Drag JPEG quality down and watch the 8 × 8 blocks appear and the size shrink.</p>
     <div class="jpeg-views">
       <figure><canvas id="c-jpg" aria-label="A frame compressed with the chosen JPEG quality"></canvas><figcaption>The whole frame, compressed by this page</figcaption></figure>
       <figure><canvas id="c-jpgz" width="96" height="96" aria-label="Zoom on a tag with the 8 by 8 block grid"></canvas><figcaption>Zoom on a tag, with the 8 × 8 blocks outlined</figcaption></figure>
@@ -173,6 +181,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Field of view vs range</h4></div>
+      <p class="how">Drag the focal length: wider view, or longer reading range.</p>
       <div class="fovview"><canvas id="c-fov" aria-label="Top view of the camera's field of view, with the distance where tags stop being readable"></canvas></div>
       <div class="ctl" style="margin-top:12px"><label>Lens focal length <output></output></label><input type="range" id="c-f" min="1.4" max="8" step="0.01" value="2.21"></div>
       <div class="readout">
@@ -209,6 +218,7 @@
     </div>
     <div class="lab full" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>Focus the lens</h4></div>
+      <p class="how">Drag "Turn the lens" until the center cell reads 100%. Tick "Tilted lens" to see soft corners.</p>
       <canvas id="c-focus" aria-label="Camera image that gets sharper or blurrier as you turn the lens"></canvas>
       <div class="ctl" style="margin-top:12px"><label>Turn the lens <output></output></label><input type="range" id="c-lens" min="0" max="100" step="0.5" value="25"></div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">

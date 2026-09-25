@@ -1,4 +1,7 @@
 <style>
+  #settings .how { margin: -4px 0 14px; font: 600 .9rem var(--font); color: #e9e2ff; display: flex; gap: 8px; align-items: baseline; }
+  #settings .how::before { content: "👆"; }
+  @media (max-width: 600px) { #settings .lab .btn-sm, #settings .seg button { min-height: 40px; } #settings .lab input[type=range] { height: 32px; } }
   #settings .sim { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(250px, 1fr); gap: 22px; align-items: start; }
   @media (max-width: 900px) { #settings .sim { grid-template-columns: 1fr; } }
   #settings .sim canvas.view { width: 100%; border-radius: 12px; background: #000; }
@@ -52,6 +55,7 @@
   </div>
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Tune the camera</h4></div>
+      <p class="how">Pick a preset or drag any slider. Try raising Exposure while the robot spins, and watch the tag's badge.</p>
     <div class="seg presets" id="s-preset">
       <button data-v="ours" class="on">Our settings</button>
       <button data-v="auto">Auto exposure</button>
@@ -107,6 +111,7 @@
   </div>
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Exposure inside the frame</h4></div>
+      <p class="how">Drag the exposure setting or press a preset, and watch the frames spread out.</p>
     <div class="timeline"><canvas id="s-tl" aria-label="Timeline of frames: each frame's exposure window inside the 8.3 ms frame period"></canvas></div>
     <div class="ctl" style="margin-top:12px"><label>Exposure setting (UVC units) <output></output></label><input type="range" id="s-tlexp" min="10" max="400" step="1" value="50"></div>
     <div class="snap" id="s-tlsnap"><button class="btn-sm" data-v="50">50 (ours)</button><button class="btn-sm" data-v="83">83</button><button class="btn-sm" data-v="150">150 (calibration)</button><button class="btn-sm" data-v="295">295 (where we started)</button></div>
@@ -129,6 +134,7 @@
   </div>
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Exposure vs flicker</h4></div>
+      <p class="how">Drag Exposure, or press 8.3 ms, and watch the frame brightness bars go flat.</p>
     <div class="flick"><canvas id="s-fl" aria-label="Light brightness flickering over time, each frame's exposure window, and the brightness of each frame"></canvas></div>
     <div class="split" style="margin:12px 0 0;gap:24px;align-items:start">
       <div>

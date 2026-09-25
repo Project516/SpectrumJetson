@@ -1,4 +1,10 @@
 <style>
+  #cuda .do { font-size: .9rem; font-weight: 600; margin: -4px 0 12px; display: flex; gap: 8px; align-items: baseline; }
+  #cuda .do::before { content: "👉"; }
+  #cuda .lab .do { color: #ede4ff; }
+  #cuda .fig .do { color: var(--p700); padding: 12px 16px 0; margin: 0; }
+  #cuda .lab button, #cuda .seg button { min-height: 36px; }
+  @media (max-width: 640px) { #cuda .lab button, #cuda .seg button, #cuda .filters button, #cuda .btn-sm { min-height: 42px; } }
   #cuda figure { margin-left: 0; margin-right: 0; }
   #cuda .split > *, #cuda .lab-grid > *, #cuda .scrolly > * { min-width: 0; }
   #cuda pre, #cuda code, #cuda .status { font-variant-ligatures: none; }
@@ -65,6 +71,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>The painting race</h4></div>
+      <p class="do">Press <b>Race again</b>, then switch the job to "Each tile needs the last".</p>
       <canvas id="c-race" aria-label="Two murals being painted: on the left 6 fast CPU painters, on the right a crowd of GPU painters, one per tile"></canvas>
       <div class="ctlrow">
         <div class="seg" id="c-race-job"><button data-v="par" class="on">Every tile on its own</button><button data-v="ser">Each tile needs the last</button></div>
@@ -127,9 +134,10 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
 
   <div class="lab" id="c-gridlab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Launch the kernel: blocks, threads and the grid</h4></div>
+    <p class="do">Drag the sliders to change the block size. Tap any pixel to see which thread owns it.</p>
     <div class="lab-grid">
       <div>
-        <canvas id="c-grid" aria-label="A small gray image covered by a grid of thread blocks; each thread turns its pixel black or white"></canvas>
+        <canvas id="c-grid" style="cursor:crosshair;touch-action:none" aria-label="A small gray image covered by a grid of thread blocks; each thread turns its pixel black or white"></canvas>
         <p class="hint">Hover or tap a pixel to see which thread owns it. The image is a tiny 45×28 stand-in for a camera frame, so the edges show up.</p>
       </div>
       <div>
@@ -184,6 +192,7 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
   <p class="prose">A warp has only one instruction pointer. So what happens at an <code>if</code>, when some of its 32 pixels are bright and some are dark? The warp runs <em>both</em> branches, one after the other. While the bright lanes do the <code>if</code> part, the dark lanes sit switched off, and then they swap. That's called <span class="term" data-term="warp divergence" data-def="When threads in the same warp take different sides of an if/else. The warp runs both sides one after the other, with the threads that didn't take a side switched off, so it takes longer.">warp divergence</span>, and it's why GPU code tries to keep neighboring threads doing the same thing.</p>
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>One warp, 32 lanes, one if/else</h4></div>
+    <p class="do">Pick what the warp's 32 pixels look like, and watch which lanes sit idle.</p>
     <div class="lab-grid">
       <div>
         <canvas id="c-div" aria-label="32 lanes of a warp; the program runs line by line and lanes that took the other branch go dark"></canvas>
@@ -322,6 +331,7 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
   <div class="mini">
     <div class="lab">
       <div class="lab-head"><span class="tag">Lab</span><h4>Zero blocks: the blank-frame bug</h4></div>
+      <p class="do">Drag the slider all the way to 0, then switch between before and after.</p>
       <p>The line-fitting kernel launches one block of 128 threads for every 240 boundary points. Point the camera at a plain wall, and there are <b>no</b> boundary points.</p>
       <div class="ctl"><label>Boundary points found <output></output></label><input type="range" id="c-zb" min="0" max="1500" value="480" step="10"></div>
       <canvas id="c-zbc" aria-label="The blocks launched for the line-fit kernel"></canvas>
@@ -330,6 +340,7 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
     </div>
     <div class="lab">
       <div class="lab-head"><span class="tag">Lab</span><h4>Ten slots, never reused</h4></div>
+      <p class="do">Press <b>Change pipeline</b> 11 times with the old code.</p>
       <p>The old detector's C++ kept 10 detector slots. Every pipeline or resolution change made a new detector and <b>never freed</b> the old one's slot.</p>
       <div class="slots" id="c-slots"></div>
       <div class="ctlrow">
@@ -358,6 +369,7 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>The GPU checkout line</h4></div>
+      <p class="do">Change the number of cameras, then drag the GPU work up.</p>
       <canvas id="c-q" aria-label="Timeline: each camera's frames arrive and queue for the GPU; the GPU lane shows which camera it's working on"></canvas>
       <div class="ctlrow"><span>Cameras:</span><div class="seg" id="c-q-n"><button data-v="1">1</button><button data-v="2">2</button><button data-v="4" class="on">4</button></div></div>
       <div class="ctl" style="margin-top:10px"><label>GPU work per frame <output></output></label><input type="range" id="c-q-g" min="0.4" max="2.4" step="0.1" value="0.9"></div>
@@ -370,6 +382,7 @@ threshold<span class="k">&lt;&lt;&lt;</span>grid, block<span class="k">&gt;&gt;&
 
   <div class="lab runs">
     <div class="lab-head"><span class="tag">Real data</span><h4>One run, or eleven?</h4></div>
+    <p class="do">Switch to <b>All 11 runs</b> and see what happens to the "big win".</p>
     <div class="seg" id="c-runs-mode"><button data-v="first" class="on">First run only</button><button data-v="all">All 11 runs</button></div>
     <canvas id="c-runs" aria-label="Dot plot of the typical worst detect time for each run, 8 queues versus 32 queues"></canvas>
     <p class="hint" id="c-runs-note"></p>

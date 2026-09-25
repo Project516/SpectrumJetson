@@ -210,7 +210,8 @@ function explodedView(root) {
     freeBtn.textContent = free ? '↺ Back to tour' : '🖐 Explore';
     stage.classList.toggle('free', free);
     controls.enabled = free;
-    hint.textContent = free ? 'Drag to turn · right-drag to move · wheel or pinch to zoom · click a part' : '';
+    hint.textContent = '';
+    root.querySelector('#j-do').innerHTML = free ? '<b>Drag</b> to turn · <b>pinch or scroll</b> to zoom · <b>tap a label or part</b> · ↺ Back to tour' : '<b>Scroll</b> to take it apart. Press <b>🖐 Explore</b> to turn it yourself and tap parts.';
     if (free) {
       controls.target.copy(cam.t);
       controls.update();
@@ -552,7 +553,8 @@ function thermalLab(root) {
   const peakEl = root.querySelector('#j-t-peak');
   let W = 10, R = 6.2;
   Site.range(wait, (v) => { W = v; draw(); }, (v) => v + ' min');
-  Site.range(rr, (v) => { R = v; draw(); }, (v) => v.toFixed(1) + ' °C/W');
+  const presets = [...root.querySelectorAll('#j-t-seg button')];
+  Site.range(rr, (v) => { R = v; draw(); presets.forEach((b) => b.classList.toggle('on', Math.abs(+b.dataset.v - v) < .05)); }, (v) => v.toFixed(1) + ' °C/W');
   Site.seg(root.querySelector('#j-t-seg'), (v) => { rr.value = v; rr.dispatchEvent(new Event('input')); });
 
   function temp(t) {

@@ -6,6 +6,7 @@
   #linux .os { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 26px; align-items: start; }
   @media (max-width: 860px) { #linux .os { grid-template-columns: 1fr; } }
   #linux .stack { position: relative; display: grid; gap: 8px; }
+  #linux .layer:hover { border-color: var(--accent-soft); }
   #linux .layer { position: relative; display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--lab-line); background: rgba(255,255,255,.04); cursor: pointer; transition: background .25s, border-color .25s, transform .25s; }
   #linux .layer .ic { font-size: 1.4rem; width: 34px; text-align: center; }
   #linux .layer b { display: block; font: 700 1rem var(--font-heading); color: #fff; }
@@ -97,6 +98,9 @@
   #linux .lab figure.tout figcaption { color: var(--lab-muted); }
   #linux .termsplit { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 22px; align-items: start; margin: 26px 0; }
   @media (max-width: 860px) { #linux .termsplit { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) { #linux .seg button { padding: 11px 13px; } #linux .btn-sm { padding: 11px 15px; } }
+  #linux .do { font-size: .86rem; color: var(--lab-muted); margin: -6px 0 12px; }
+  #linux .do b { color: #fff; }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -115,6 +119,7 @@
     </div>
     <div class="lab" style="margin:0" id="l-os">
       <div class="lab-head"><span class="tag">Lab</span><h4>The layers of a computer</h4></div>
+      <p class="do"><b>Watch</b> a message travel through the layers, or <b>tap any layer</b> to explore it.</p>
       <div class="seg" id="l-os-seg" style="margin-bottom:14px"><button data-v="exp" class="on">You change the exposure</button><button data-v="frame">A frame arrives</button></div>
       <div class="stack" id="l-stack">
         <div class="layer" data-l="0"><span class="ic">🧑‍💻</span><div><b>You</b><small>a web browser on a laptop</small></div></div>
@@ -126,6 +131,7 @@
         <div class="pkt" id="l-pkt"></div>
       </div>
       <div class="os-cap" id="l-os-cap" style="margin-top:14px"></div>
+      <p class="hint" id="l-os-st" style="margin-top:8px"></p>
     </div>
   </div>
 
@@ -307,6 +313,7 @@ cat /sys/module/uvcvideo/parameters/payload_cap</pre>
     </div>
     <div class="lab" style="margin:0" id="l-svc">
       <div class="lab-head"><span class="tag">Try it</span><h4>Crash PhotonVision</h4></div>
+      <p class="do">Press <b>💥 Crash it</b> and watch systemd bring it back. Then pick <b>no restart</b> and crash it again.</p>
       <div class="svc"><div><span class="dot" id="l-dot"></span><b style="color:#fff">photonvision.service</b></div><div id="l-state">Active: <span style="color:#4ade80">active (running)</span></div><div class="log" id="l-log"></div></div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn-sm primary" id="l-crash">💥 Crash it</button><div class="seg" id="l-rs"><button data-v="always" class="on">Restart=always</button><button data-v="no">no restart</button></div></div>
       <p class="hint">A simplified replay. On our Jetson a crash used to mean ~62 s without vision: Ubuntu's crash reporter spent 28 s writing a 156 MB file first. We made PhotonVision exit cleanly instead; now the worst case is about 8 s.</p>
@@ -320,6 +327,7 @@ cat /sys/module/uvcvideo/parameters/payload_cap</pre>
   <p class="prose">A robot is switched on moments before a match, so the Jetson has to boot fast. <code>systemd-analyze</code> told us where the time went: <strong>45 seconds</strong> of every boot was <code>snapd.seeded</code>, a service preparing "snap" packages. We don't use any snaps. So we switched snapd off (masked it) and booted without the desktop.</p>
   <div class="lab reveal" id="l-boot">
     <div class="lab-head"><span class="tag">Replay</span><h4>Two boots, side by side</h4><button class="btn-sm primary" id="l-boot-play" style="margin-left:auto">▶ Replay</button></div>
+    <p class="do">Press <b>▶ Replay</b> to race the two boots again (4× speed).</p>
     <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="clock" id="l-clock">0.0 s</span><span class="hint" style="margin:0">4× speed · seconds since the kernel started</span></div>
     <div class="boot" id="l-boot-tracks">
       <div class="track"><h5>Before <span>56.9 s</span></h5><div class="lane" data-t="before"></div></div>

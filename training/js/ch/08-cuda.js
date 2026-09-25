@@ -3,6 +3,10 @@ Object.assign(Site.glossary, {
 });
 
 Site.chapter('cuda', (root) => {
+  // ponytail: on phones the sticky visual is see-through (background: inherit from a transparent parent), so the
+  // progress rail sat over the step text; give it the section's real background.
+  { let e = root, bg = ''; while (e && (!(bg = getComputedStyle(e).backgroundColor) || bg === 'rgba(0, 0, 0, 0)')) e = e.parentElement;
+    root.querySelectorAll('.scrolly .vis').forEach((v) => (v.style.backgroundColor = bg || '#fff')); }
   // Click-to-play video: no YouTube iframe loads until the student asks for it.
   root.addEventListener('click', (e) => {
     const b = e.target.closest('.yt-play');
@@ -592,7 +596,7 @@ Site.chapter('cuda', (root) => {
       used.forEach((i) => cells[i + 1].classList.add('used'));
       if (cur >= 0) cells[cur + 1].classList.add(fixed ? 'free' : 'used');
     };
-    const reset = () => { used = []; cur = -2; created = 0; broke = false; stEl.textContent = 'Each pipeline or resolution change creates a detector.'; draw(); };
+    const reset = () => { used = []; cur = -2; created = 0; broke = false; stEl.textContent = 'Each pipeline or resolution change creates a detector.'; draw(); $('#c-slot-add').textContent = 'Change pipeline'; };
     Site.seg($('#c-slot-fix'), (v) => { fixed = v === 'new'; reset(); });
     $('#c-slot-add').onclick = () => {
       if (broke) return reset();
@@ -601,6 +605,7 @@ Site.chapter('cuda', (root) => {
       else if (created <= 10) { if (cur >= 0) used.push(cur); cur = created - 1; stEl.innerHTML = `Change ${created}: new detector in slot ${cur}. The old one is never freed.`; }
       else { if (cur >= 0) used.push(cur); cur = -2; broke = true; stEl.innerHTML = '<b class="err">Change 11: no free slot → handle −1 → reads detectors[−1], memory before the array.</b> Undefined behavior. (Click to reset.)'; }
       draw();
+      $('#c-slot-add').textContent = broke ? '↺ Reset' : 'Change pipeline';
     };
     reset();
   }
@@ -650,7 +655,7 @@ Site.chapter('cuda', (root) => {
       els.max.textContent = d.length ? `${d[Math.floor(d.length * 0.99)].toFixed(1)} ms` : '–';
     };
     let mt = 0;
-    const restart = () => { sim = makeSim(ncam, g, 5); clearTimeout(mt); mt = setTimeout(measure, 120); };
+    const restart = () => { sim = makeSim(ncam, g, 5); clearTimeout(mt); Object.values(els).forEach((e) => (e.textContent = '…')); mt = setTimeout(measure, 120); };
     Site.seg($('#c-q-n'), (v) => { ncam = +v; restart(); });
     Site.range($('#c-q-g'), (v) => { g = v; restart(); }, (v) => `${v.toFixed(1)} ms`);
     Site.loop(cv, (t, dt) => {

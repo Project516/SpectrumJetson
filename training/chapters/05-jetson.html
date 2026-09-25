@@ -3,7 +3,7 @@
   @media (max-width: 700px) { #jetson .flow .node { flex: none; } }
   #jetson .j-intro-photo img { aspect-ratio: 4/3; object-fit: cover; object-position: 20% 82%; }
   /* 3D exploded view */
-  @media (min-width: 901px) { #jetson #j-scrolly { grid-template-columns: minmax(0, 1.35fr) minmax(0, .85fr); gap: 36px; } }
+  @media (min-width: 901px) { #jetson #j-scrolly { grid-template-columns: minmax(0, 1.35fr) minmax(0, .85fr); gap: 60px; } #jetson #j-scrolly .sc-prog.right { right: -50px; } }
   #jetson .scrolly .vis .lab { margin: 0; padding: 18px; }
   #jetson .j-stage { position: relative; aspect-ratio: 4/3.3; max-height: calc(100vh - var(--nav-h) - 8vh - 150px); width: 100%; border-radius: 12px; overflow: hidden; background: radial-gradient(ellipse at 50% 40%, #2a1342, #0e0518 75%); }
   #jetson .j-stage canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; background: transparent; border-radius: 0; touch-action: pan-y; }
@@ -15,6 +15,10 @@
   #jetson .j-hot i { font-style: normal; font: 700 .66rem var(--mono); width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; }
   #jetson .j-hot.on { background: var(--accent); border-color: #fff; }
   #jetson .j-hot.on i { background: #fff; color: var(--p700); }
+  @media (pointer: coarse) { #jetson .j-hot { padding: 6px 12px 6px 6px; } #jetson .j-stage.narrow .j-hot:not(.on), #jetson .j-stage.free .j-hot:not(.on):not(:hover) { padding: 6px; } }
+  #jetson .j-hot:hover { background: rgba(139,92,246,.6); }
+  #jetson .j-do { font-size: .8rem; color: var(--lab-muted); margin: -6px 0 10px; }
+  #jetson .j-do b { color: #fff; }
   #jetson .j-hot.hide { opacity: 0; visibility: hidden; pointer-events: none; }
   #jetson .j-stage.narrow .j-hot:not(.on) span, #jetson .j-stage.free .j-hot:not(.on):not(:hover) span { display: none; }
   #jetson .j-stage.free .j-hot:not(.on):not(:hover) { padding: 3px; }
@@ -98,6 +102,9 @@
   #jetson .usbnotes li { position: relative; padding-left: 30px; margin-bottom: 9px; font-size: .9rem; }
   #jetson .usbnotes li::before { counter-increment: u; content: counter(u); position: absolute; left: 0; top: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fbbf24; color: #1a0a2b; display: grid; place-items: center; font: 700 .7rem var(--font); }
   #jetson .tb .n { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: #fbbf24; color: #1a0a2b; font: 700 .64rem var(--font); }
+  @media (max-width: 640px) { #jetson .seg button { padding: 11px 13px; } #jetson .btn-sm { padding: 11px 15px; } }
+  #jetson .do { font-size: .86rem; color: var(--lab-muted); margin: -6px 0 12px; }
+  #jetson .do b { color: #fff; }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -140,6 +147,7 @@
         <div class="lab-head"><span class="tag">3D</span><h4>Jetson Orin Nano devkit</h4>
           <div class="j-tools"><button class="btn-sm" id="j-free" aria-pressed="false">🖐 Explore</button></div>
         </div>
+        <p class="j-do" id="j-do"><b>Scroll</b> to take it apart. Press <b>🖐 Explore</b> to turn it yourself and tap parts.</p>
         <div class="j-stage" id="j-stage">
           <canvas id="j-cv" aria-label="3D model of the Jetson Orin Nano developer kit"></canvas>
           <div class="j-labels" id="j-labels"></div>
@@ -236,7 +244,7 @@
   <div class="full">
   <div class="lab reveal" id="j-bus">
     <div class="lab-head"><span class="tag">Lab</span><h4>Who talks to whom</h4></div>
-    <p style="margin-top:-6px">Every part of the Jetson connects through a few shared roads. Pick a road to light it up, or click any box.</p>
+    <p class="do">Every part connects through a few shared roads. <b>Pick a road</b> to light it up, or <b>tap any box</b> to see what it does.</p>
     <div class="seg" id="j-bus-seg" style="margin-bottom:14px">
       <button data-v="all" class="on">Everything</button><button data-v="mem">Memory</button><button data-v="pcie">PCIe</button><button data-v="usb2">USB 2.0 bus</button><button data-v="usb3">USB 3 bus</button><button data-v="eng">Engines</button>
     </div>
@@ -328,6 +336,7 @@ NV Power Mode: MAXN_SUPER
   <p class="prose">Fast mode doesn't mean it burns 25 W all the time. NVIDIA's <code>tegrastats</code> tool prints what the chip is doing, once a second. Here's one real line from our Jetson with <strong>four cameras</strong> running at full speed: under 10 W, about as much as a phone charger. Hover a part of the line, or tap a card, to see what it means.</p>
   <div class="lab reveal" id="j-tegra">
     <div class="lab-head"><span class="tag">Real data</span><h4>A live readout, decoded</h4></div>
+    <p class="do"><b>Hover or tap</b> any colored part of the line, or a card, to match them up.</p>
     <figure class="tout"><pre class="tb tg"><span class="dm">09-25-2026 07:53:14</span> <span data-f="ram" data-n="1" style="--c:#a3e635">RAM 2338/7607MB</span> <span class="dm">(lfb 5x4MB)</span> <span data-f="swap" data-n="2" style="--c:#86efac">SWAP 0/3804MB</span> <span class="dm">(cached 0MB)</span> <span data-f="cpu" data-n="3" style="--c:#c4b5fd">CPU [8%@1728,19%@1728,14%@1728,17%@1728,15%@1728,12%@1728]</span> <span data-f="gpu" data-n="4" style="--c:#22d3ee">GR3D_FREQ 19%</span> <span data-f="temp" data-n="5" style="--c:#fbbf24">cpu@54.062C soc2@52.656C soc0@53.593C gpu@54.781C tj@55.031C soc1@53.718C</span> <span data-f="in" data-n="6" style="--c:#f9a8d4">VDD_IN 9650mW/9650mW</span> <span data-f="cg" data-n="7" style="--c:#fda4af">VDD_CPU_GPU_CV 2838mW/2838mW</span> <span data-f="soc" data-n="8" style="--c:#fdba74">VDD_SOC 3080mW/3080mW</span></pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running, JPEG hardware decode on).</figcaption></figure>
     <div class="tfields">
       <div data-f="ram" style="--c:#a3e635"><b>1 · Memory: 2.3 of 7.6 GB</b>RAM in use, out of what Linux can use (a little of the 8 GB is set aside for the hardware). Plenty to spare.</div>
@@ -343,6 +352,7 @@ NV Power Mode: MAXN_SUPER
 
   <div class="lab reveal" id="j-therm">
     <div class="lab-head"><span class="tag">Lab</span><h4>Could it survive a match without the fan?</h4></div>
+    <p class="do"><b>Drag the sliders</b> or pick a heatsink, and watch the peak temperature.</p>
     <div class="lab-grid">
       <div>
         <canvas id="j-therm-cv" aria-label="Chart of chip temperature over time: robot on and disabled, then a match at full power"></canvas>

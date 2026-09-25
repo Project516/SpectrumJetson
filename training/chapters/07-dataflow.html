@@ -25,7 +25,7 @@
   #dataflow .jv-clock { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; gap: 10px; flex-wrap: wrap; }
   #dataflow .jv-clock b { font: 800 1.9rem var(--font-heading); color: #fff; font-variant-numeric: tabular-nums; }
   #dataflow .jv-clock span { color: var(--lab-muted); font-size: .82rem; }
-  @media (min-width: 901px) { #dataflow #d-scrolly { grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); } }
+  @media (min-width: 901px) { #dataflow #d-scrolly { grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 60px; } #dataflow #d-scrolly .sc-prog.right { right: -50px; } }
   #dataflow .scrolly .vis .lab { margin: 0; padding: 18px; }
   #dataflow .step .kicker { font: 700 .7rem var(--font); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
   #dataflow .step .t { display: inline-block; font: 600 .74rem var(--mono); background: var(--accent-low); color: var(--p700); padding: 1px 7px; border-radius: 6px; margin-left: 6px; }
@@ -67,6 +67,9 @@
   #dataflow .realframe img { width: 100%; height: auto; border-radius: 10px; }
   #dataflow .szbar { margin: 10px 0; font-size: .85rem; }
   #dataflow .szbar i { display: flex; align-items: center; height: 26px; border-radius: 6px; padding-left: 8px; font: 700 .76rem var(--mono); font-style: normal; color: #1a0a2b; white-space: nowrap; margin-top: 4px; }
+  @media (max-width: 640px) { #dataflow .seg button { padding: 11px 13px; } #dataflow .btn-sm { padding: 11px 15px; } }
+  #dataflow .do { font-size: .86rem; color: var(--lab-muted); margin: -6px 0 12px; }
+  #dataflow .do b { color: #fff; }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -140,6 +143,7 @@
   <div class="full">
   <div class="lab reveal" id="d-lat">
     <div class="lab-head"><span class="tag">Lab</span><h4>Where the 15 ms go</h4></div>
+    <p class="do"><b>Tap any block</b> to see what it is and how we know its size. Switch drivers to see the USB time change.</p>
     <div class="seg" id="d-lat-seg" style="margin-bottom:12px"><button data-v="ours" class="on">Our capped USB driver</button><button data-v="stock">Stock driver</button></div>
     <div class="lat" id="d-latbar"></div>
     <div class="lat-axis" id="d-lataxis"></div>

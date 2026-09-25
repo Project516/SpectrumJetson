@@ -3,6 +3,10 @@ Object.assign(Site.glossary, {
 });
 
 Site.chapter('speed', (root) => {
+  // ponytail: on phones the sticky visual is see-through (background: inherit from a transparent parent), so the
+  // progress rail sat over the step text; give it the section's real background.
+  { let e = root, bg = ''; while (e && (!(bg = getComputedStyle(e).backgroundColor) || bg === 'rgba(0, 0, 0, 0)')) e = e.parentElement;
+    root.querySelectorAll('.scrolly .vis').forEach((v) => (v.style.backgroundColor = bg || '#fff')); }
   const $ = (s) => root.querySelector(s);
   const BG = '#0e0518', INK = '#f4efff', MUTED = '#b8a9d4', ACC = '#8b5cf6', SOFT = '#c4b5fd', LIME = '#a3e635', RED = '#f43f5e', AMBER = '#f59e0b', CYAN = '#22d3ee';
   const F = (px, w = 600) => `${w} ${px}px "Plus Jakarta Sans", sans-serif`;
@@ -284,7 +288,7 @@ Site.chapter('speed', (root) => {
   {
     const cv = $('#sp-frozen'), st = Site.canvas(cv, root.clientWidth < 640 ? 0.62 : 0.5);
     let cmpAt = -1, now = 0;
-    $('#sp-compare').onclick = () => (cmpAt = now);
+    $('#sp-compare').onclick = () => { cmpAt = now; $('#sp-compare').textContent = '↺ Compare again'; };
     const frame = (ctx, x, y, s, k) => {
       ctx.fillStyle = '#777'; ctx.fillRect(x, y, s, s * .7);
       const ts = s * .32, tx = x + s * .1 + k * s * .09, ty = y + s * .18 + Math.sin(k) * s * .04;

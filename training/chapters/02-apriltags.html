@@ -1,6 +1,11 @@
 <style>
+  #apriltags .how { margin: -4px 0 14px; font: 600 .9rem var(--font); color: #e9e2ff; display: flex; gap: 8px; align-items: baseline; }
+  #apriltags .how::before { content: "👆"; }
+  @media (max-width: 600px) { #apriltags .lab .btn-sm, #apriltags .seg button { min-height: 40px; } #apriltags .lab input[type=range] { height: 32px; } }
+  #apriltags .fm-how { font: 600 .9rem var(--font); color: var(--p700); padding: 12px 16px 0; margin: 0; }
+  #apriltags .bits span:hover { outline: 2px solid #f59e0b; }
   #apriltags .fieldmap svg { width: 100%; height: auto; display: block; }
-  #apriltags .fieldmap .tg { cursor: pointer; }
+  #apriltags .fieldmap svg { cursor: pointer; touch-action: manipulation; }
   #apriltags .fieldmap .tg rect { transition: fill .15s; }
   #apriltags .fieldmap .tg:hover rect, #apriltags .fieldmap .tg.on rect { fill: var(--accent); }
   #apriltags .fieldmap .tg.on path { stroke: var(--accent); }
@@ -114,6 +119,7 @@
   </div>
   </div>
     <figure class="fig fieldmap reveal" style="margin:30px 0">
+      <p class="fm-how">👆 Hover or tap a tag to see its entry in the field layout file.</p>
       <svg id="a-field" viewBox="0 0 2059 980" role="img" aria-label="Top-down view of the 2026 FRC field, REBUILT, with its hubs, bumps, trenches, towers, depots and outposts, and the 32 AprilTag positions; tap a tag to see its layout entry"></svg>
       <div class="fm-foot"><pre class="json" id="a-json"></pre><figcaption>The 2026 FRC field, REBUILT, seen from above: a render of <em>FIRST</em>'s official field CAD (the welded field; the AndyMark field our robot uses differs by a few cm). The 32 tags are drawn at their AndyMark layout positions, in meters from the blue corner; the amber arrow shows which way each tag faces. Tap one.</figcaption></div>
     </figure>
@@ -139,6 +145,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Anatomy of a tag</h4></div>
+      <p class="how">Hover or tap any square of the tag to see what it does. Use ◀ ▶ to change the ID.</p>
     <div class="anat">
       <div>
         <svg class="bigtag" id="a-big" viewBox="-0.1 -0.1 10.2 10.2" shape-rendering="crispEdges" role="img" aria-label="A tag36h11 AprilTag. Hover or tap a square to learn what it is."></svg>
@@ -170,6 +177,7 @@
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>The distance test: AprilTag vs QR code</h4></div>
+      <p class="how">Drag the distance slider and watch both codes turn into fewer, bigger pixels.</p>
     <div class="ctl"><label>Distance from camera <output id="a-dout"></output></label><input type="range" id="a-d" min="0.5" max="12" step="0.05" value="3"></div>
     <div class="dist-views">
       <figure><canvas id="a-dtag" width="180" height="180"></canvas><figcaption>AprilTag, as pixels <br><span class="verdict" id="a-vt"></span></figcaption></figure>
@@ -205,6 +213,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Flip the bits: how wrong can a tag be?</h4></div>
+      <p class="how">Click squares in the middle of the tag to flip them, or use the buttons. The readout shows the closest real tag.</p>
     <div class="ham">
       <div>
         <div class="hgrid" id="a-hgrid" role="group" aria-label="Tag bit grid. Click data squares to flip them."></div>
@@ -215,7 +224,7 @@
           <button class="btn-sm" id="a-hrand">Random pattern</button>
           <button class="btn-sm primary" id="a-hreset">Next clean tag</button>
         </div>
-        <p class="hint center">Click squares in the middle to flip them. Orange outline = you flipped it.</p>
+        <p class="hint center">Orange outline = a square you flipped.</p>
       </div>
       <div>
         <div class="readout" style="margin-top:0">
@@ -287,6 +296,7 @@
     </div>
     <div class="lab full">
       <div class="lab-head"><span class="tag">Lab</span><h4>Decision margin</h4></div>
+      <p class="how">Drag Exposure down (less light) or Noise up, and watch the margin and the two cutoffs.</p>
       <div class="mrow">
         <canvas class="mt" id="a-mtag" width="180" height="180"></canvas>
         <canvas id="a-mplot" style="height:190px" aria-label="Each square's brightness against the threshold"></canvas>

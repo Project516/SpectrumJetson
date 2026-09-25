@@ -175,9 +175,10 @@ Site.chapter('calibration', (root) => {
   };
   const orbit = (cv, st, onChange) => {
     let drag = null;
-    cv.addEventListener('pointerdown', (e) => { drag = [e.clientX, e.clientY, st.az, st.el]; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointerdown', (e) => { drag = [e.clientX, e.clientY, st.az, st.el]; cv.setPointerCapture(e.pointerId); cv.classList.add('dragging'); });
     cv.addEventListener('pointermove', (e) => { if (!drag) return; st.az = drag[2] - (e.clientX - drag[0]) * 0.01; st.el = Site.clamp(drag[3] + (e.clientY - drag[1]) * 0.01, -0.2, 1.4); onChange(); });
-    cv.addEventListener('pointerup', () => (drag = null));
+    const end = () => { drag = null; cv.classList.remove('dragging'); };
+    cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
   };
   const line = (ctx, a, b) => { ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); };
   const poly = (ctx, pts, fill, stroke) => { ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.strokeStyle = stroke; ctx.stroke(); } };
@@ -229,9 +230,10 @@ Site.chapter('calibration', (root) => {
       const r = ci.getBoundingClientRect(), u = ((e.clientX - r.left) / r.width) * 1280, v = ((e.clientY - r.top) / r.height) * 800;
       set({ X: Site.clamp(((u - P.cx) * P.Z) / P.fx, -1.2, 1.2), Y: Site.clamp(((v - P.cy) * P.Z) / P.fy, -0.8, 0.8) });
     };
-    ci.addEventListener('pointerdown', (e) => { dragI = true; ci.setPointerCapture(e.pointerId); fromImg(e); });
+    ci.addEventListener('pointerdown', (e) => { dragI = true; ci.setPointerCapture(e.pointerId); ci.classList.add('dragging'); fromImg(e); });
     ci.addEventListener('pointermove', (e) => dragI && fromImg(e));
-    ci.addEventListener('pointerup', () => (dragI = false));
+    const endI = () => { dragI = false; ci.classList.remove('dragging'); };
+    ci.addEventListener('pointerup', endI); ci.addEventListener('pointercancel', endI);
 
     function draw() {
       if (!s3.w || !si.w) return;
@@ -495,9 +497,10 @@ Site.chapter('calibration', (root) => {
     Site.seg($('#cal-btype'), (v) => { type = v; draw(); });
     Site.range($('#cal-bslide'), (v) => { slide = v; draw(); }, (v) => v + '%');
     let drag = null;
-    cv.addEventListener('pointerdown', (e) => { drag = [e.clientX, slide]; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointerdown', (e) => { drag = [e.clientX, slide]; cv.setPointerCapture(e.pointerId); cv.classList.add('dragging'); });
     cv.addEventListener('pointermove', (e) => { if (!drag) return; const el = $('#cal-bslide'); el.value = Site.clamp(drag[1] + ((e.clientX - drag[0]) / cv.clientWidth) * 140, 0, 75); el.dispatchEvent(new Event('input')); });
-    cv.addEventListener('pointerup', () => (drag = null));
+    const endB = () => { drag = null; cv.classList.remove('dragging'); };
+    cv.addEventListener('pointerup', endB); cv.addEventListener('pointercancel', endB);
     function draw() {
       if (!st.w) return;
       const { ctx, w, h } = st;
@@ -560,19 +563,28 @@ Site.chapter('calibration', (root) => {
       if (s.obs.length < 10) { flash('Board not found there (too little of it in view)'); return false; }
       snaps.push(s); return true;
     };
-    const flash = (m) => { msg = m; msgT = performance.now(); draw(); setTimeout(draw, 1700); };
+    const flash = (m) => { msg = m; msgT = performance.now(); status.textContent = m; draw(); setTimeout(draw, 1700); };
+    const status = $('#cal-status'), busyBtns = ['#cal-auto', '#cal-lazy'].map((q) => $(q));
     const recal = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => {
-        result = snaps.length >= 4 ? CAL.calibrate(snaps) : null;
+      draw(); // the new board outline appears at once
+      if (snaps.length < 4) { result = null; heat = null; status.textContent = `${snaps.length} snapshot${snaps.length === 1 ? '' : 's'}: take at least 4 to calibrate.`; draw(); return; }
+      status.textContent = `Solving ${snaps.length} snapshots…`;
+      busyBtns.forEach((b) => b.setAttribute('aria-busy', 'true'));
+      // two frames later, so the "Solving" line paints before the solver blocks the page
+      timer = setTimeout(() => requestAnimationFrame(() => setTimeout(() => {
+        const t0 = performance.now();
+        result = CAL.calibrate(snaps);
         heat = null;
         if (result) {
           heat = []; let worst = 0;
           for (let j = 0; j < 20; j++) for (let i = 0; i < 32; i++) { const e = CAL.modelErr(result.p, (i + 0.5) * 40, (j + 0.5) * 40); heat.push(e); if (e != null) worst = Math.max(worst, e); }
           heat.worst = worst;
         }
+        busyBtns.forEach((b) => b.removeAttribute('aria-busy'));
+        status.textContent = `Solved ${snaps.length} snapshots in ${((performance.now() - t0) / 1000).toFixed(1)} s. Tap to add more.`;
         draw();
-      }, 30);
+      }, 0)), 0);
     };
     cv.addEventListener('click', (e) => {
       const r = cv.getBoundingClientRect();
@@ -580,7 +592,7 @@ Site.chapter('calibration', (root) => {
     });
     $('#cal-auto').onclick = () => { for (let i = 0; i < 10; i++) add(60 + CAL.rnd() * 1160, 50 + CAL.rnd() * 700, 0.42 + CAL.rnd() * 0.65, 0.78); recal(); };
     $('#cal-lazy').onclick = () => { for (let i = 0; i < 10; i++) add(640 + (CAL.rnd() - 0.5) * 240, 400 + (CAL.rnd() - 0.5) * 180, 0.75 + CAL.rnd() * 0.2, 0.15); recal(); };
-    $('#cal-reset').onclick = () => { snaps = []; result = null; heat = null; draw(); };
+    $('#cal-reset').onclick = () => { clearTimeout(timer); snaps = []; result = null; heat = null; busyBtns.forEach((b) => b.removeAttribute('aria-busy')); status.textContent = 'Cleared. Tap the picture to start again.'; draw(); };
 
     function draw() {
       if (!st.w) return;
@@ -769,7 +781,7 @@ Site.chapter('calibration', (root) => {
       if (!imgs[v]) { imgs[v] = new Image(); imgs[v].onload = drawSnap; imgs[v].src = `assets/from-jetson/calibration-snapshots/calibration-snapshot-${files[v]}.webp`; }
       drawSnap();
     });
-    Site.seg($('#cal-real-view'), (v) => { view = v; cr.style.cursor = v === '3d' ? 'grab' : ''; drawAll(); });
+    Site.seg($('#cal-real-view'), (v) => { view = v; cr.classList.toggle('drag', v === '3d'); drawAll(); });
     fetch('assets/from-jetson/calibration/TopLeft-compact.json').then((r) => r.json()).then((j) => {
       data = j;
       let kept = 0, all = 0, sum = 0;

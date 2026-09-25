@@ -25,6 +25,10 @@
   #latency pre.code .c { color: #8f84a3; }
   #latency pre.code .k { color: #c4b5fd; }
   @media (max-width: 560px) { #latency .clock b { font-size: 1rem; } }
+  #latency .lab-do { margin: -6px 0 14px; font: 600 .9rem var(--font); color: #ede4ff; }
+  #latency .lab-do::before { content: "→ "; color: var(--accent-soft); }
+  #latency #l-tl { cursor: pointer; }
+  @media (max-width: 640px) { #latency .lab .btn-sm, #latency .lab .seg button { min-height: 42px; } }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -60,11 +64,11 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>A frame's timeline</h4></div>
+    <p class="lab-do">Press ▶ Play to watch one frame 300× slower, or tap any bar to read about that step.</p>
     <div class="tl-wrap"><canvas id="l-tl" aria-label="Timeline bar chart of one frame's latency: exposure, camera delay, USB, decode, GPU detect, pose solve, NetworkTables, robot loop"></canvas></div>
     <div class="row">
       <button class="btn-sm primary" id="l-tl-play">▶ Play</button>
       <div class="seg" id="l-tl-speed"><button data-v="300" class="on">300× slower</button><button data-v="1000">1000× slower</button></div>
-      <span class="hint" style="margin:0">Tap a bar to read about it.</span>
     </div>
     <div class="stage-card" id="l-tl-card"><h5>Press play</h5><p>The clock starts when the camera begins collecting light for a frame.</p></div>
     <div class="tl-legend">
@@ -95,6 +99,7 @@
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Stale answers on a fast robot</h4></div>
+    <p class="lab-do">Drag the sliders, then switch between the two buttons and watch the magnifier: red is the error.</p>
     <div class="lab-grid">
       <div>
         <canvas id="l-bot" aria-label="Top-down field with a moving robot and a 25x magnifier comparing where the robot is now with where it was when the frame was captured"></canvas>
@@ -129,6 +134,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Moving the timestamp to mid-exposure</h4></div>
+    <p class="lab-do">Drag the exposure slider: the green timestamp always lands in the middle of the exposure.</p>
     <div class="lab-grid">
       <canvas id="l-mid" aria-label="A tag smearing across the exposure window, then a timeline of exposure, camera delay, and USB packets, with the driver's timestamp moved back to mid-exposure"></canvas>
       <div>
@@ -165,6 +171,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Ping-pong time sync</h4></div>
+    <p class="lab-do">Press “Send a ping” and watch it go down and back; the math below updates when it returns.</p>
     <div class="clock-row">
       <div class="clock jet"><small>Jetson clock (client)</small><b id="l-cj">0.000 ms</b></div>
       <div class="clock robot"><small>SystemCore clock (server)</small><b id="l-cr">0.000 ms</b></div>
@@ -242,6 +249,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Look up the past</h4></div>
+    <p class="lab-do">Drag the sliders: the red bar is the heading error you'd get by using the heading “now”.</p>
     <div class="lab-grid">
       <div>
         <canvas id="l-gy-time" aria-label="Timeline of heading samples, the frame's capture time, and when its result arrives"></canvas>
@@ -281,6 +289,7 @@
     </div>
     <div class="lab" style="margin:0">
       <div class="lab-head"><span class="tag">Lab</span><h4>How old is the newest answer?</h4></div>
+    <p class="lab-do">Tap a frame rate and watch how old the robot's newest answer gets between frames.</p>
       <canvas id="l-fps" aria-label="Sawtooth graph of the age of the robot's newest vision measurement over time"></canvas>
       <div class="row"><div class="seg" id="l-fps-seg"><button data-v="30">30 fps</button><button data-v="60">60 fps</button><button data-v="120" class="on">120 fps</button></div></div>
       <div class="readout">

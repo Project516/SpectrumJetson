@@ -65,7 +65,7 @@ Site.chapter('apriltags', (root) => {
       ${lb(-0.78, 6.3, 'Blue driver stations', { rot: -90, cls: 'minor', fill: '#1d4ed8' })}${lb(FL + 0.78, 1.75, 'Red driver stations', { rot: 90, cls: 'minor', fill: '#b91c1c' })}
       <g transform="translate(${X(0)},${Y(0)})"><circle r="9" fill="#3c0060"/><path d="M0 0 H90 M78 -9 L90 0 L78 9" stroke="#3c0060" stroke-width="6" fill="none"/><path d="M0 0 V-90 M-9 -78 L0 -90 L9 -78" stroke="#3c0060" stroke-width="6" fill="none"/><text class="lb minor" x="96" y="16" text-anchor="start" style="fill:#3c0060">x</text><text class="lb minor" x="14" y="-80" text-anchor="start" style="fill:#3c0060">y</text></g>`;
     for (const [id, x, y, z, yaw] of TAGS) {
-      h += `<g class="tg" data-id="${id}" transform="translate(${X(x)},${Y(y)}) rotate(${-yaw})"><circle r="34" fill="transparent"/><path d="M8 0 H40 M29 -11 L40 0 L29 11" stroke="#f59e0b" stroke-width="7" fill="none" stroke-linecap="round"/><rect x="-9" y="-17" width="16" height="34" rx="3" fill="#1f1b23" stroke="#fff" stroke-width="3"/></g>`;
+      h += `<g class="tg" data-id="${id}" transform="translate(${X(x)},${Y(y)}) rotate(${-yaw})"><path d="M8 0 H40 M29 -11 L40 0 L29 11" stroke="#f59e0b" stroke-width="7" fill="none" stroke-linecap="round"/><rect x="-9" y="-17" width="16" height="34" rx="3" fill="#1f1b23" stroke="#fff" stroke-width="3"/></g>`;
     }
     svg.innerHTML = h;
     const json = $('#a-json');
@@ -76,8 +76,15 @@ Site.chapter('apriltags', (root) => {
       json.innerHTML = `{ ${k('ID')}: ${n(id)},\n  ${k('pose')}: {\n    ${k('translation')}: { ${k('x')}: ${n(x.toFixed(3))}, ${k('y')}: ${n(y.toFixed(3))}, ${k('z')}: ${n(z.toFixed(3))} },\n    ${k('rotation')}: { ${k('quaternion')}: { ${k('W')}: ${n(Math.cos(r).toFixed(3))}, ${k('Z')}: ${n(Math.sin(r).toFixed(3))} } }\n  } }   <span style="color:#b8a9d4">// faces ${yaw}°, ${Math.round(z * 100)} cm up</span>`;
       svg.querySelectorAll('.tg').forEach((g) => g.classList.toggle('on', +g.dataset.id === id));
     };
-    svg.addEventListener('click', (e) => { const g = e.target.closest('.tg'); if (g) show(+g.dataset.id); });
-    svg.addEventListener('mouseover', (e) => { const g = e.target.closest('.tg'); if (g) show(+g.dataset.id); });
+    // pick the nearest tag to the pointer, so small tags are easy to hit (especially on phones)
+    const pick = (e, maxD) => {
+      const r = svg.getBoundingClientRect(), k = 2059 / r.width, px = (e.clientX - r.left) * k, py = (e.clientY - r.top) * k;
+      let best = null, bd = maxD;
+      for (const [id, x, y] of TAGS) { const d = Math.hypot(X(x) - px, Y(y) - py); if (d < bd) { bd = d; best = id; } }
+      if (best != null) show(best);
+    };
+    svg.addEventListener('click', (e) => pick(e, 260));
+    svg.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') pick(e, 60); });
     show(26);
   }
 
@@ -134,6 +141,7 @@ Site.chapter('apriltags', (root) => {
     svg.addEventListener('mouseover', (e) => { const c = e.target.closest('.c'); if (c) hi(+c.dataset.x, +c.dataset.y); });
     svg.addEventListener('click', (e) => { const c = e.target.closest('.c'); if (c) hi(+c.dataset.x, +c.dataset.y); });
     bitsEl.addEventListener('mouseover', (e) => { const s = e.target.closest('span'); if (!s) return; const i = +s.dataset.i; for (let y = 2; y < 8; y++) for (let x = 2; x < 8; x++) if (Site.tagBitIndex(x, y) === i) hi(x, y); });
+    bitsEl.addEventListener('click', (e) => { const s = e.target.closest('span'); if (!s) return; const i = +s.dataset.i; for (let y = 2; y < 8; y++) for (let x = 2; x < 8; x++) if (Site.tagBitIndex(x, y) === i) hi(x, y); });
     $('#a-prev').onclick = () => setId(id - 1);
     $('#a-next').onclick = () => setId(id + 1);
     inp.addEventListener('change', () => setId(Site.clamp(Math.round(+inp.value || 0), 0, 47)));

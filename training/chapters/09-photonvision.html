@@ -1,4 +1,10 @@
 <style>
+  #photonvision .do { font-size: .9rem; font-weight: 600; margin: -4px 0 12px; display: flex; gap: 8px; align-items: baseline; }
+  #photonvision .do::before { content: "👉"; }
+  #photonvision .lab .do { color: #ede4ff; }
+  #photonvision .fig .do { color: var(--p700); padding: 12px 16px 0; margin: 0; }
+  #photonvision .lab button, #photonvision .seg button { min-height: 36px; }
+  @media (max-width: 640px) { #photonvision .lab button, #photonvision .seg button, #photonvision .filters button, #photonvision .btn-sm { min-height: 42px; } }
   #photonvision figure { margin-left: 0; margin-right: 0; }
   #photonvision .split > *, #photonvision .lab-grid > *, #photonvision .scrolly > * { min-width: 0; }
   #photonvision pre, #photonvision code { font-variant-ligatures: none; }
@@ -132,6 +138,7 @@
   <h3>A tour of our dashboard</h3>
   <p class="prose">This is our PhotonVision's real web dashboard, captured on the Jetson. Click through the tabs. Several of these screens exist only because of our patches (the gallery below has them all).</p>
   <figure class="fig tour">
+    <p class="do">Click a tab to see that screen.</p>
     <div class="tourbar"><div class="seg light" id="pv-tour"><button data-v="0" class="on">AprilCudaTag tab</button><button data-v="1">Output tab</button><button data-v="2">Targets tab</button><button data-v="3">Copy settings</button><button data-v="4">Settings page</button></div></div>
     <div class="tourbody">
       <div class="tourimg"><img id="pv-tour-img" src="assets/from-jetson/screenshots/dashboard-aprilcudatag-tab-crop.webp" alt="" loading="lazy"></div>
@@ -146,6 +153,7 @@
   <h3>Inside PhotonVision: one frame's path</h3>
   <p class="prose">Every camera gets its own <strong>VisionModule</strong>, and inside it a <strong>VisionRunner</strong>: a <span class="term">thread</span> that loops forever, grabbing the next frame, running the pipeline on it, and handing the result on. Click any box to see what it does. The dots are frames.</p>
   <figure class="fig pad flowfig">
+    <p class="do" style="padding:0 0 10px">Click any box to see what it does. Switch "Someone watching" to see the stream branch light up.</p>
     <svg id="pv-flow" viewBox="0 0 1100 350" role="img" aria-label="PhotonVision's data flow: camera, cscore, frame provider, VisionRunner, detection, pose, result, then NetworkTables to the robot and an MJPEG stream to the dashboard"></svg>
     <div class="flowctl"><span>Dashboard open in a browser?</span><div class="seg light" id="pv-view"><button data-v="no" class="on">No one watching</button><button data-v="yes">Someone watching</button></div><span id="pv-view-note"></span></div>
     <div class="flowinfo" id="pv-info"><b>Click a box.</b> Purple-edged boxes live inside each camera's VisionModule.</div>
@@ -178,6 +186,7 @@
   <p class="prose">The robot runs 2027 alpha code, but the CUDA PhotonVision only exists for 2026. Porting it was rejected: 2027's libraries need a newer compiler and Ubuntu than JetPack 6 has. So we checked the source to make sure the two versions speak the same language. The key test: PhotonLib computes a <span class="term" data-term="hash" data-def="A short fingerprint computed from some data. Change the data even slightly and the fingerprint changes completely. PhotonLib hashes its message layout to spot mismatches.">hash</span> of the result message's layout and refuses results whose hash doesn't match.</p>
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>Will the robot understand the Jetson?</h4></div>
+    <p class="do">Drag the slider to upgrade the robot's PhotonLib.</p>
     <div class="ctl"><label>Robot's PhotonLib version <output></output></label><input type="range" id="pv-ver" min="0" max="2" step="1" value="0"></div>
     <div class="hashbox">
       <div class="side"><b>Jetson: our PhotonVision</b>2026 fork + v2026.3.4<br><code>4b2ff16a…</code></div>
@@ -193,6 +202,7 @@
   <p class="prose">Our build script (<code>scripts/host/03-build-photonvision-fork.sh</code>) runs on a laptop: it downloads 4143's fork at one exact commit, applies every <code>photonvision-*.patch</code> in order (what a patch is: <a href="#linux">chapter 06</a>), and builds a single 76 MB <span class="term" data-term="jar" data-def="Java ARchive: one zip file holding a whole Java program. PhotonVision ships as one jar, about 76 MB.">jar</span> in about 30 seconds. If a patch no longer fits, the build stops instead of guessing.</p>
 
   <figure class="fig buildfig full">
+    <p class="do">Press <b>Build and install</b>, then try a truncated jar.</p>
     <svg id="pv-build" viewBox="0 0 1000 300" role="img" aria-label="Animation: the 4143 fork at a pinned commit, patches stacking on top, the jar being built, and the install script checking it"></svg>
     <div class="btns"><button class="btn-sm light" id="pv-build-go">▶ Build and install</button><button class="btn-sm light" id="pv-build-bad">💥 Try a truncated jar</button></div>
   </figure>
@@ -202,6 +212,7 @@
   <h3>Every change we made</h3>
   <div class="full">
   <p class="prose">Here are all of our patches: 35 to PhotonVision (00–34), 5 to the detectors, and one to Linux's camera driver. Filter by what they're for. Cards with a <strong>story</strong> link have a closer look below.</p>
+  <p class="do">Click a group to filter the cards.</p>
   <div class="filters" id="pv-filters"></div>
   <div class="gallery" id="pv-gallery"></div>
   </div>
@@ -219,7 +230,7 @@
 
     <article class="story" id="pv-s15">
       <div class="vis"><canvas id="pv-c15" aria-label="Frames flowing to the pipeline always, and to the stream only while a browser watches"></canvas>
-        <div class="ctlmini"><span>Browser:</span><div class="seg" id="pv-s15-seg"><button data-v="0" class="on">Closed</button><button data-v="1">Watching</button></div></div></div>
+        <div class="ctlmini"><span>👉 Open the browser:</span><div class="seg" id="pv-s15-seg"><button data-v="0" class="on">Closed</button><button data-v="1">Watching</button></div></div></div>
       <div class="txt"><span class="pn">photonvision-15 · speed</span><h4>Stream only when watched</h4><p>For the dashboard video, PhotonVision shrank, color-converted and drew boxes on <b>every frame</b>, 122 a second, even with no browser open. Now the stream thread gets a frame only while someone is watching, and at most 30 a second. Snapshots still work. With no viewer: <b>0.49 → 0.43 cores</b>; with one: 0.52 → 0.47.</p></div>
     </article>
 
@@ -239,7 +250,7 @@
     </article>
 
     <article class="story" id="pv-s22">
-      <div class="vis"><div class="tagchips" id="pv-tags"></div><div class="ctlmini"><span id="pv-tags-note"></span></div></div>
+      <div class="vis"><p class="do" style="margin:0 0 8px">Tap a tag to leave it out or bring it back.</p><div class="tagchips" id="pv-tags"></div><div class="ctlmini"><span id="pv-tags-note"></span></div></div>
       <div class="txt"><span class="pn">photonvision-22 · calibration &amp; field</span><h4>Leaving out a bad tag</h4><p>If a tag is mounted wrong at an event, one bad tag can drag every multi-tag pose off. Type its number on the Settings page (say <code>7, 12</code>), or have robot code add it, and every camera's multi-tag solve ignores it. It's still reported as a target, dimmed. You list the bad tags, not the good ones. Click tags above to try it.</p></div>
     </article>
 

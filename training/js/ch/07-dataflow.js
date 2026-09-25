@@ -126,7 +126,7 @@ function latency(root) {
     marks += `<span style="left:100%;transform:translateX(-100%)">≈ ${known.toFixed(1)} ms known + ?</span>`;
     axis.innerHTML = marks;
     const s = segs.find((q) => q[0] === sel);
-    desc.innerHTML = s ? s[5] : `Total of the known parts: <b>≈ ${known.toFixed(1)} ms</b> from mid-exposure to a result ready to send. Tap a block for details.`;
+    desc.innerHTML = s ? s[5] : `Total of the known parts: <b>≈ ${known.toFixed(1)} ms</b> from mid-exposure to a result ready to send. The blocks are tappable.`;
   };
   bar.addEventListener('click', (e) => { const d = e.target.closest('[data-id]'); sel = d && d.dataset.id !== sel ? d.dataset.id : null; draw(); });
   Site.seg(root.querySelector('#d-lat-seg'), (v) => { usb = v; draw(); });

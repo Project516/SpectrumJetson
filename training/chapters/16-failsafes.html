@@ -52,6 +52,13 @@
   #failsafes .check li.done::before { content: "✓"; background: #dcfce7; color: #15803d; }
   #failsafes .check li.todo::before { content: ""; border: 2px solid var(--border-strong); background: #fff; width: 16px; height: 16px; }
   #failsafes .check li.todo { color: var(--ink); font-weight: 600; }
+  #failsafes .lab-do { margin: -6px 0 14px; font: 600 .9rem var(--font); color: #ede4ff; }
+  #failsafes .lab-do::before { content: "→ "; color: var(--accent-soft); }
+  #failsafes .lab-do .swipe { display: none; font-weight: 500; color: var(--lab-muted); }
+  @media (max-width: 640px) { #failsafes .lab-do .swipe { display: inline; } }
+  #failsafes .btn-sm:disabled { opacity: .45; cursor: not-allowed; }
+  #failsafes .btn-sm.on { background: #f59e0b; border-color: #f59e0b; color: #1f1b23; }
+  @media (max-width: 640px) { #failsafes .lab .btn-sm, #failsafes .faults button { min-height: 42px; } }
 </style>
 <div class="shell">
   <div class="ch-head">
@@ -96,6 +103,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>Don't stop petting the dog</h4></div>
+    <p class="lab-do">Press “Freeze Linux” or “Kernel panic” and watch the watchdog timer run out.</p>
     <div class="dog-lab">
       <canvas id="f-dog" aria-label="A cartoon watchdog being petted regularly by systemd, with a 30-second timer that fills when the computer freezes"></canvas>
       <div>
@@ -120,6 +128,7 @@
 
   <div class="lab">
     <div class="lab-head"><span class="tag">Lab</span><h4>What can go wrong, and what catches it</h4></div>
+    <p class="lab-do">Pick a fault: the diagram lights up what breaks, what notices, and the way back, step by step. <span class="swipe">Swipe the row for more faults.</span></p>
     <div class="faults" id="f-faults" role="group" aria-label="Faults"></div>
     <div class="fl-grid">
       <div>
@@ -157,6 +166,7 @@
 
   <div class="lab full">
     <div class="lab-head"><span class="tag">Lab</span><h4>The Jetson's vital signs, on NetworkTables</h4></div>
+    <p class="lab-do">Press a button to cause a problem and watch the topics react; Reset puts it back.</p>
     <div class="dash" id="f-dash"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
       <button class="btn-sm" id="f-sag">🔋 Battery sags</button>
