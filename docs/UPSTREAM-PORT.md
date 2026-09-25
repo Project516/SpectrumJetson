@@ -93,6 +93,17 @@ Plus two that upstream still has:
 Skipped: the lifecycle refactor, the calibration rework (tangled with 2027 changes) and pipelines
 we don't use.
 
+## WPILib 2027 alpha-7 migration
+
+The current fork and robot pins stay on their tested 2026-era combination.
+PhotonVision `v2027.0.0-alpha-2` pins WPILib 2027.0.0-alpha-6. The current
+PhotonVision `main` commit pins 2027.0.0-alpha-7. Alpha-7 changed the native
+headers, timestamp handling, and the PhotonLib message layout. The CUDA port is
+a separate PR, and it needs a real Jetson and robot-network test.
+
+See [WPILIB-2027-ALPHA-7.md](WPILIB-2027-ALPHA-7.md) for the migration order and
+compatibility limits.
+
 ## Patch 21: Thriftiest Cam support (#2478)
 
 Upstream [#2478](https://github.com/PhotonVision/photonvision/pull/2478) (merged 2026-09-13, after

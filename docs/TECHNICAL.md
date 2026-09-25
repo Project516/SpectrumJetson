@@ -105,10 +105,17 @@ Settings shared by the scripts live in [config.env](../config.env).
 (WPILib 2027.0.0-alpha-6 on a **SystemCore**, vendordep `photonlib v2027.0.0-alpha-2`).
 The field is the **2026 Rebuilt AndyMark** layout, on the Jetson and in robot code.
 
-**Decision:** the Jetson runs the **unmodified 2026** `FRC-Team-4143/photonvision` fork
-(`d8c9e8e`, WPILib 2026.2.1) with 971's CUDA detector. The robot uses **stock**
-photonlib alpha-2. This works because everything on the wire is identical between the
-fork's base and the alpha-6 era (checked in source on 2026-09-23, not yet on hardware):
+**Current compatibility limit.** Keep the robot on WPILib 2027.0.0-alpha-6 and
+PhotonLib v2027.0.0-alpha-2 while the CUDA fork and robot-network test remain on
+the 2026-era native bridge. WPILib 2027.0.0-alpha-7 is the next target, but no
+matching stable PhotonLib alpha-7 release was found. The release notes also say
+alpha-6 and earlier vendordeps do not work with alpha-7. The full order is in
+[WPILIB-2027-ALPHA-7.md](WPILIB-2027-ALPHA-7.md).
+
+The current Jetson build runs the `FRC-Team-4143/photonvision` fork
+(`d8c9e8e`, WPILib 2026.2.1) with 971's CUDA detector. The robot uses stock
+PhotonLib alpha-2. The source comparison in this section is the evidence for
+the current setup, not a claim that the old bridge works with alpha-7:
 
 - **Serde hashes match** (`PhotonPipelineResult` = `4b2ff16a964b5e2bf04be0c1454d91c4`,
   and all sub-messages). PhotonLib only throws on a hash mismatch; a different
@@ -121,8 +128,10 @@ fork's base and the alpha-6 era (checked in source on 2026-09-23, not yet on har
 > after alpha-7 (`a6167b0`, 2026-09-17) renamed the timestamp fields, which changed the
 > hashes, and the robot would throw against this Jetson.
 
-Porting CUDA to 2027 PhotonVision was rejected. 2027 allwpilib needs JDK 25, C++23
-and GCC 13 (Ubuntu 24.04), while JetPack 6 has GCC 11.
+Porting CUDA to PhotonVision source that uses WPILib 2027.0.0-alpha-7 is a
+separate PR. It needs a rebase of the PhotonVision patches, updated JNI headers,
+and a real ARM64 Jetson build. It must not be combined with the robot-only pin
+change.
 
 | Piece | Version | Built on | Script |
 |---|---|---|---|
