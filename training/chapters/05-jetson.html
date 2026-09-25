@@ -1,0 +1,435 @@
+<style>
+  #jetson .split > * { min-width: 0; }
+  @media (max-width: 700px) { #jetson .flow .node { flex: none; } }
+  #jetson .j-intro-photo img { aspect-ratio: 4/3; object-fit: cover; object-position: 20% 82%; }
+  /* 3D exploded view */
+  @media (min-width: 901px) { #jetson #j-scrolly { grid-template-columns: minmax(0, 1.35fr) minmax(0, .85fr); gap: 60px; } #jetson #j-scrolly .sc-prog.right { right: -50px; } }
+  #jetson .scrolly .vis .lab { margin: 0; padding: 18px; }
+  #jetson .j-stage { position: relative; aspect-ratio: 4/3.3; max-height: calc(100vh - var(--nav-h) - 8vh - 150px); width: 100%; border-radius: 12px; overflow: hidden; background: radial-gradient(ellipse at 50% 40%, #2a1342, #0e0518 75%); }
+  #jetson .j-stage canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; background: transparent; border-radius: 0; touch-action: pan-y; }
+  #jetson .j-stage.free canvas { touch-action: none; cursor: grab; }
+  #jetson .j-stage.free canvas:active { cursor: grabbing; }
+  #jetson .j-labels { position: absolute; inset: 0; pointer-events: none; }
+  #jetson .j-hot { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); pointer-events: auto; cursor: pointer; border: 1px solid rgba(196,181,253,.5); background: rgba(26,10,43,.82); color: #f4efff; font: 600 .74rem var(--font); padding: 3px 9px 3px 5px; border-radius: 999px; white-space: nowrap; display: flex; align-items: center; gap: 6px; transition: opacity .25s, background .2s; backdrop-filter: blur(4px); }
+  #jetson .j-hot::after { content: ""; position: absolute; left: 50%; top: 100%; width: 1px; height: 12px; background: rgba(196,181,253,.6); }
+  #jetson .j-hot i { font-style: normal; font: 700 .66rem var(--mono); width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; }
+  #jetson .j-hot.on { background: var(--accent); border-color: #fff; }
+  #jetson .j-hot.on i { background: #fff; color: var(--p700); }
+  @media (pointer: coarse) { #jetson .j-hot { padding: 6px 12px 6px 6px; } #jetson .j-stage.narrow .j-hot:not(.on), #jetson .j-stage.free .j-hot:not(.on):not(:hover) { padding: 6px; } }
+  #jetson .j-hot:hover { background: rgba(139,92,246,.6); }
+  #jetson .j-do { font-size: .8rem; color: var(--lab-muted); margin: -6px 0 10px; }
+  #jetson .j-do b { color: #fff; }
+  #jetson .j-hot.hide { opacity: 0; visibility: hidden; pointer-events: none; }
+  #jetson .j-stage.narrow .j-hot:not(.on) span, #jetson .j-stage.free .j-hot:not(.on):not(:hover) span { display: none; }
+  #jetson .j-stage.free .j-hot:not(.on):not(:hover) { padding: 3px; }
+  #jetson .j-stage.narrow .j-hot:not(.on) { padding: 3px; }
+  #jetson .j-load { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--lab-muted); font-size: .9rem; padding: 20px; }
+  #jetson .j-load b { display: block; font: 700 1.6rem var(--font-heading); color: #fff; }
+  #jetson .j-load .bar { width: 160px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.1); margin: 10px auto 0; overflow: hidden; }
+  #jetson .j-load .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #jetson .j-info { margin-top: 12px; min-height: 3.4em; font-size: .9rem; color: var(--lab-muted); line-height: 1.45; }
+  #jetson .j-info b { color: #fff; font-family: var(--font-heading); font-size: 1rem; margin-right: 6px; }
+  #jetson .j-tools { margin-left: auto; display: flex; gap: 6px; }
+  #jetson .j-hint { position: absolute; left: 10px; bottom: 8px; font-size: .72rem; color: var(--lab-muted); pointer-events: none; }
+  #jetson .step .box ul { margin: 0 0 .6em; padding-left: 1.2em; }
+  #jetson .step .box li { margin: .2em 0; }
+  #jetson .step .kicker { font: 700 .7rem var(--font); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  @media (max-width: 900px) {
+    #jetson .scrolly .vis .lab { padding: 10px; border-radius: 14px; }
+    #jetson .scrolly .vis .lab-head { margin-bottom: 8px; }
+    #jetson .scrolly .vis .lab-head h4 { font-size: 1rem; }
+    #jetson .j-stage { aspect-ratio: auto; height: 38vh; min-height: 220px; }
+    #jetson .j-info { min-height: 0; font-size: .8rem; margin-top: 6px; }
+    #jetson .j-info span { display: none; }
+  }
+  /* block diagram */
+  #jetson .bus-svg { width: 100%; height: auto; display: block; }
+  #jetson .bus-svg .blk rect { fill: #221236; stroke: rgba(196,181,253,.35); stroke-width: 1.4; transition: fill .25s, stroke .25s, opacity .25s; }
+  #jetson .bus-svg .blk { cursor: pointer; transition: opacity .25s; }
+  #jetson .bus-svg .blk text { fill: #f4efff; font: 600 14px var(--font); pointer-events: none; }
+  #jetson .bus-svg .blk text.s { fill: #b8a9d4; font: 500 11.5px var(--font); }
+  #jetson .bus-svg .blk.core rect { fill: #3b1d5c; }
+  #jetson .bus-svg .blk.none rect { fill: transparent; stroke-dasharray: 4 4; }
+  #jetson .bus-svg .blk.none text { fill: #8a7aa6; }
+  #jetson .bus-svg .blk:hover rect, #jetson .bus-svg .blk.sel rect { stroke: #fff; }
+  #jetson .bus-svg .frame { fill: none; stroke: rgba(196,181,253,.35); stroke-dasharray: 6 6; stroke-width: 1.4; }
+  #jetson .bus-svg .frame-l { fill: #c4b5fd; font: 700 11px var(--font); letter-spacing: .12em; text-transform: uppercase; }
+  #jetson .bus-svg .soc { fill: rgba(139,92,246,.08); stroke: #8b5cf6; stroke-width: 2; }
+  #jetson .bus-svg .ln { fill: none; stroke-width: 3; stroke-linecap: round; transition: opacity .25s; }
+  #jetson .bus-svg .ln.mem { stroke: #c4b5fd; stroke-width: 7; }
+  #jetson .bus-svg .ln.pcie { stroke: #22d3ee; }
+  #jetson .bus-svg .ln.usb2 { stroke: #f59e0b; }
+  #jetson .bus-svg .ln.usb3 { stroke: #3b82f6; }
+  #jetson .bus-svg .ln.io { stroke: #94a3b8; }
+  #jetson .bus-svg .ln.flow { stroke-dasharray: 2 10; animation: jflow 1s linear infinite; }
+  #jetson .bus-svg .lnl { font: 600 11px var(--mono); pointer-events: none; }
+  @keyframes jflow { to { stroke-dashoffset: -24; } }
+  #jetson .bus-svg.dim .blk:not(.hl), #jetson .bus-svg.dim .ln:not(.hl), #jetson .bus-svg.dim .lnl:not(.hl) { opacity: .16; }
+  #jetson .bus-desc { margin-top: 14px; font-size: .92rem; color: var(--lab-muted); min-height: 4.2em; }
+  #jetson .bus-desc b { color: #fff; }
+  #jetson .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: .8rem; color: var(--lab-muted); margin-top: 10px; }
+  #jetson .legend i { display: inline-block; width: 20px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  @media (prefers-reduced-motion: reduce) { #jetson .bus-svg .ln.flow { animation: none; } }
+  /* thermal + comparison */
+  #jetson .cmp { display: grid; gap: 14px; margin-top: 8px; }
+  #jetson .cmp-row { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: center; background: rgba(255,255,255,.04); border: 1px solid var(--lab-line); border-radius: 12px; padding: 12px 14px; }
+  #jetson .cmp-row h5 { margin: 0; font: 700 1rem var(--font-heading); color: #fff; }
+  #jetson .cmp-row small { display: block; color: var(--lab-muted); font-size: .76rem; line-height: 1.35; margin-top: 2px; }
+  #jetson .cmp-row canvas { background: transparent; border-radius: 0; }
+  @media (max-width: 640px) { #jetson .cmp-row { grid-template-columns: 1fr; gap: 6px; } }
+  #jetson .spec td:first-child { font-weight: 600; white-space: nowrap; }
+  #jetson .soc-cards .card .icon { font-family: var(--font-heading); font-weight: 800; font-size: 1.35rem; color: var(--p600); }
+  /* real terminal output */
+  #jetson .tb { background: #0e0518; border-radius: 12px; padding: 14px 16px; font: 500 .8rem/1.65 var(--mono); color: #d6ccf0; overflow-x: auto; white-space: pre; margin: 0; font-feature-settings: "calt" 0, "liga" 0; }
+  @media (max-width: 560px) { #jetson .tb:not(.tg) { font-size: .64rem; padding: 12px; } }
+  #jetson .tb .pr { color: #a3e635; }
+  #jetson .tb .cm { color: #fbbf24; }
+  #jetson .tb .dm { color: #6f6388; }
+  #jetson figure.tout { margin: 0; min-width: 0; }
+  #jetson figure.tout figcaption { font-size: .8rem; color: var(--muted); padding: 8px 2px 0; }
+  #jetson .lab figure.tout figcaption { color: var(--lab-muted); }
+  #jetson .tg { white-space: pre-wrap; word-break: break-all; font-size: .84rem; line-height: 1.9; }
+  #jetson .tg [data-f] { border-bottom: 3px solid var(--c); padding-bottom: 1px; cursor: help; border-radius: 2px; transition: background .2s; }
+  #jetson .tg [data-f]::before { content: attr(data-n); font: 700 .6rem var(--font); background: var(--c); color: #1a0a2b; border-radius: 50%; width: 15px; height: 15px; display: inline-grid; place-items: center; margin-right: 4px; vertical-align: 2px; }
+  #jetson .tg [data-f].on { background: rgba(255,255,255,.12); }
+  #jetson .tfields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-top: 14px; }
+  #jetson .tfields div { background: rgba(255,255,255,.04); border: 1px solid var(--lab-line); border-left: 4px solid var(--c); border-radius: 10px; padding: 9px 12px; font-size: .84rem; color: var(--lab-muted); line-height: 1.4; transition: background .2s; cursor: pointer; }
+  #jetson .tfields div.on { background: rgba(255,255,255,.1); }
+  #jetson .tfields b { display: block; color: #fff; font: 700 .95rem var(--font-heading); margin-bottom: 2px; }
+  #jetson .usbtree { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; align-items: start; margin: 26px 0; }
+  @media (max-width: 860px) { #jetson .usbtree { grid-template-columns: 1fr; } }
+  #jetson .usbnotes { list-style: none; padding: 0; margin: 0; counter-reset: u; }
+  #jetson .usbnotes li { position: relative; padding-left: 30px; margin-bottom: 9px; font-size: .9rem; }
+  #jetson .usbnotes li::before { counter-increment: u; content: counter(u); position: absolute; left: 0; top: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fbbf24; color: #1a0a2b; display: grid; place-items: center; font: 700 .7rem var(--font); }
+  #jetson .tb .n { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: #fbbf24; color: #1a0a2b; font: 700 .64rem var(--font); }
+  @media (max-width: 640px) { #jetson .seg button { padding: 11px 13px; } #jetson .btn-sm { padding: 11px 15px; } }
+  #jetson .do { font-size: .86rem; color: var(--lab-muted); margin: -6px 0 12px; }
+  #jetson .do b { color: #fff; }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">05</span> · The computer</span>
+    <h2>A supercomputer the size of a <em>sandwich.</em></h2>
+    <p class="lede">The Jetson Orin Nano Super fits in your hand and runs on about 10 watts, yet it can do 67 trillion AI math operations a second. Let's take one apart and see what's inside.</p>
+  </div>
+
+  <div class="full">
+  <div class="split">
+    <div class="prose">
+      <h3 style="margin-top:0">What is a single-board computer?</h3>
+      <p>Your laptop has a <span class="term">CPU</span>, memory (<span class="term">RAM</span>), storage, a graphics chip and a pile of ports. A <span class="term">SBC</span> squeezes all of that onto one small board, with no screen, keyboard or case. You talk to it over a network cable or a USB cable.</p>
+      <p>NVIDIA's <strong>Jetson</strong> line is built for robots and cameras. Its special skill is a big <span class="term">GPU</span>: the same kind of chip that draws video games, which is also brilliant at looking at pictures. That's exactly what finding AprilTags needs.</p>
+      <p>Ours is the <strong>Jetson Orin Nano Super Developer Kit</strong>: NVIDIA's small computer <em>module</em> plugged into a <em>carrier board</em> full of ports, with a heatsink and fan on top. The kit costs $249.</p>
+    </div>
+    <figure class="photo j-intro-photo"><img src="assets/photos/bench-setup.jpg" alt="The Jetson devkit on a desk, a black board with a square black fan on top, cables plugged into its ports, next to a Thriftiest Cam and a laptop" loading="lazy"><figcaption>Our Jetson on its first day (Sept 23, 2026): the black board with the fan, bottom left. The small puck is a Thriftiest Cam.</figcaption></figure>
+  </div>
+
+  <div class="stats reveal">
+    <div class="stat"><b>6</b><span>CPU cores (Arm Cortex-A78AE), all locked at 1728 MHz on our robot</span></div>
+    <div class="stat"><b>1,024</b><span>GPU cores (NVIDIA Ampere), plus 32 <span class="term" data-term="Tensor Core">Tensor Cores</span></span></div>
+    <div class="stat"><b>8<small>GB</small></b><span>of <span class="term">LPDDR5</span> memory, shared by the CPU and GPU</span></div>
+    <div class="stat"><b>102<small>GB/s</small></b><span>memory <span class="term">bandwidth</span>: how fast data moves to and from RAM</span></div>
+    <div class="stat"><b>67<small>TOPS</small></b><span>AI performance in <span class="term">TOPS</span> (trillions of 8-bit operations a second, sparse)</span></div>
+  </div>
+
+  </div>
+
+  <div class="short prose">
+    <p>A single-board computer squeezes a whole computer onto one small board. NVIDIA's Jetson adds a big <span class="term">GPU</span> with 1,024 cores, which is brilliant at looking at pictures. Ours is a small computer <em>module</em> on a <em>carrier board</em> full of ports, with a fan on top. It costs $249 and uses under 10 W.</p>
+  </div>
+
+  <h3>Take it apart</h3>
+  <p class="prose full">This is NVIDIA's own 3D CAD model of the developer kit. Scroll, and it comes apart one layer at a time, from the fan on top to the cards hidden underneath. When you get to the end, you can spin it around yourself.</p>
+
+  <div class="scrolly" id="j-scrolly">
+    <div class="vis">
+      <div class="lab">
+        <div class="lab-head"><span class="tag">3D</span><h4>Jetson Orin Nano devkit</h4>
+          <div class="j-tools"><button class="btn-sm" id="j-free" aria-pressed="false">🖐 Explore</button></div>
+        </div>
+        <p class="j-do" id="j-do"><b>Scroll</b> to take it apart. Press <b>🖐 Explore</b> to turn it yourself and tap parts.</p>
+        <div class="j-stage" id="j-stage">
+          <canvas id="j-cv" aria-label="3D model of the Jetson Orin Nano developer kit"></canvas>
+          <div class="j-labels" id="j-labels"></div>
+          <div class="j-load" id="j-load"><div><b>Loading 3D model…</b>NVIDIA's CAD, 6 MB<div class="bar"><i></i></div></div></div>
+          <div class="j-hint" id="j-hint"></div>
+        </div>
+        <div class="j-info" id="j-info"><b>The whole kit</b><span>Scroll to take it apart.</span></div>
+      </div>
+    </div>
+    <div class="steps">
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 1 · The whole kit</span>
+        <h4>About 10 × 8 cm</h4><p class="short">Fan on top, ports along the front.</p>
+        <p class="full">From the top you see the black fan and heatsink. Along the front edge are the ports: power, DisplayPort, four USB, Ethernet and USB-C. Everything sits on a plastic stand.</p>
+        <p class="full">It's a <em>developer kit</em>: a board for trying things out. Many robots use it as is, and so do we.</p>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 2 · Cooling</span>
+        <h4>Heatsink and fan</h4><p class="short">They carry the chip's heat away. Our fan runs at full speed.</p>
+        <p class="full">Every computer turns its electricity into heat. The metal <strong>heatsink</strong> soaks up the chip's heat and spreads it into thin fins, and the <strong>fan</strong> blows air through them. A leaf spring presses the heatsink onto the chip.</p>
+        <p class="full">The chip slows itself down at 99 °C to protect itself (<em>throttling</em>). We run the fan at full speed all the time: it took our bench Jetson from 56 °C to <strong>43 °C</strong>.</p>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 3 · The brain</span>
+        <h4>The Orin Nano module</h4><p class="short">The actual computer: the SoC chip and 8 GB of memory.</p>
+        <p class="full">This small board, 69.6 × 45 mm, is the actual computer. It holds the <span class="term">SoC</span> (one chip with the CPU, GPU and more) and 8 GB of memory. Everything else in the kit just feeds it power and connects it to the world.</p>
+        <p class="full">NVIDIA's CAD shows it as a simple block, so you don't see the chips. We'll look inside the SoC after the tour.</p>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 4 · The socket</span>
+        <h4>Plugs in like laptop RAM</h4><p class="short">It plugs in like a laptop's memory stick.</p>
+        <p class="full">The module's gold edge has 260 contacts, and it slides into a 260-pin <span class="term">SO-DIMM</span> socket, the same shape laptops use for memory sticks. Two screws hold it down.</p>
+        <p class="full">That makes the module swappable: the same carrier could take a faster Orin NX module. Power, PCIe lanes, USB, Ethernet and camera signals all pass through those contacts.</p>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 5 · The carrier board</span>
+        <h4>Power and ports (P3768)</h4><p class="short">It feeds the module power and wires it to real ports.</p>
+        <p class="full">The big board underneath is the <span class="term">carrier board</span>. It turns the power from the barrel jack into the voltages the module needs, and wires the module's signals out to real connectors. The tiny parts scattered across it are power regulators, the USB hub chip, LEDs and support chips.</p>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 6 · Ports</span>
+        <h4>What plugs in where</h4>
+        <p class="short">USB-A for cameras, Ethernet to the robot, USB-C, DisplayPort, power.</p>
+        <ul class="full">
+          <li><b>4× USB 3.2 Type-A</b> (10 Gbps): our cameras. All four hang off one hub.</li>
+          <li><b>Gigabit Ethernet</b>: the cable to the robot, static IP <code>10.85.15.15</code>.</li>
+          <li><b>USB-C</b> (data only): flashing and backups from a laptop.</li>
+          <li><b>DisplayPort</b>: the only video output. On the robot, nothing's plugged in.</li>
+          <li><b>DC jack</b> (5.5 × 2.5 mm): power in.</li>
+        </ul>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 7 · For tinkering</span>
+        <h4>Camera connectors and GPIO pins</h4><p class="short">Ribbon-camera connectors and a 40-pin header for sensors.</p>
+        <p class="full">On the left edge are two <strong>MIPI CSI-2</strong> connectors for ribbon-cable cameras. We use USB cameras instead, so they're empty.</p>
+        <p class="full">On the right is the <strong>40-pin header</strong>: general-purpose pins, laid out like a Raspberry Pi's, for LEDs, sensors and buttons. A smaller 12-pin <strong>button header</strong> hides under the module; jumping two of its pins puts the Jetson in recovery mode for flashing (chapter 06).</p>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 8 · Underneath</span>
+        <h4>The SSD: where Linux lives</h4><p class="short">Underneath, a 256 GB SSD holds Linux.</p>
+        <p class="full">Flip the board over. The small card is an <span class="term">NVMe</span> <span class="term">SSD</span>, plugged into an <span class="term">M.2</span> Key M slot. Ours holds 256 GB, and the Jetson boots Linux from it. We don't use an SD card at all: the SSD is much faster and tougher.</p>
+        <p class="full">There are two Key M slots: a long one (2280) with 4 <span class="term">PCIe</span> lanes, where our SSD goes, and a short one (2230) with 2 lanes, which is empty. (The CAD draws a short 2230 drive.)</p>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 9 · Underneath</span>
+        <h4>Wi-Fi and Bluetooth</h4><p class="short">Wi-Fi and Bluetooth, off at events.</p>
+        <p class="full">The second card is Wi-Fi and Bluetooth, in the <strong>M.2 Key E</strong> slot, with two flat antennas. We use Wi-Fi in the shop and switch it off for events.</p>
+        <p class="full">A surprise we measured: the card's Bluetooth talks over <strong>USB 2.0</strong>, on the same USB 2.0 bus as all our cameras (<a href="#speed">chapter 10</a> explains why that matters).</p>
+      </div></div>
+      <div class="step"><div class="box">
+        <span class="kicker full">Step 10 · Your turn</span>
+        <h4>Back together</h4><p class="short">Press 🖐 Explore to spin it yourself.</p>
+        <p class="full">That's the whole kit: a module that thinks, a carrier board that connects, a heatsink that cools, and storage underneath.</p>
+        <p class="full">Press <b>🖐 Explore</b> to drag it around, zoom in, and click any label.</p>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="full">
+  <h3>Inside the SoC: one chip, many workers</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>A desktop PC spreads its brains over several chips: a CPU, a separate graphics card with its own memory, and more. The Jetson puts almost all of it on <strong>one chip</strong>, a System on a Chip. That saves space and power, and it lets every part share the same memory.</p>
+      <div class="callout analogy"><h5>Think of a workshop</h5><p>The <b>CPU</b> is 6 skilled machinists who can do any job, one step at a time. The <b>GPU</b> is 1,024 helpers who can only do simple jobs, but all at once. <b>NVJPG</b> is a machine that only unpacks JPEGs. They all share one big workbench: the <b>RAM</b>.</p></div>
+    </div>
+    <div class="cards soc-cards" style="margin:0">
+      <div class="card"><div class="icon">CPU</div><h4>6 Arm cores, 1.7 GHz</h4><p>Cortex-A78AE cores run Linux, Java and PhotonVision. In MAXN SUPER mode we lock all six at 1728 MHz, so timing never wobbles.</p><span class="chip">1.5 MB L2 + 4 MB L3 cache</span></div>
+      <div class="card"><div class="icon">GPU</div><h4>1,024 CUDA cores</h4><p>NVIDIA Ampere, at 1020 MHz. It runs our AprilTag detector in about 2 ms a frame. The 32 Tensor Cores speed up neural networks (game pieces).</p><span class="chip">8 groups of 128 cores</span></div>
+      <div class="card"><div class="icon">RAM</div><h4>8 GB LPDDR5</h4><p>A 128-bit-wide path moving up to 102 GB a second. The CPU and GPU share it: <span class="term">unified memory</span>, the star of chapter 07.</p><span class="chip">102 GB/s</span></div>
+      <div class="card"><div class="icon">JPG</div><h4>Special engines</h4><p>Two NVJPG JPEG decoders (we use them, chapter 10) and an NVDEC video decoder. There's <b>no</b> hardware video encoder on the Orin Nano.</p><span class="chip">2× NVJPG · NVDEC</span></div>
+    </div>
+  </div>
+
+  <div class="full">
+  <div class="lab reveal" id="j-bus">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Who talks to whom</h4></div>
+    <p class="do">Every part connects through a few shared roads. <b>Pick a road</b> to light it up, or <b>tap any box</b> to see what it does.</p>
+    <div class="seg" id="j-bus-seg" style="margin-bottom:14px">
+      <button data-v="all" class="on">Everything</button><button data-v="mem">Memory</button><button data-v="pcie">PCIe</button><button data-v="usb2">USB 2.0 bus</button><button data-v="usb3">USB 3 bus</button><button data-v="eng">Engines</button>
+    </div>
+    <svg class="bus-svg" id="j-bus-svg" role="img" aria-label="Block diagram of the Jetson: SoC with CPU, GPU, memory controller and engines, connected to LPDDR5 memory, PCIe M.2 slots, and a USB controller with one USB 2.0 bus and one USB 3 bus"></svg>
+    <div class="legend">
+      <span><i style="background:#c4b5fd"></i>memory (102 GB/s)</span>
+      <span><i style="background:#22d3ee"></i>PCIe Gen3</span>
+      <span><i style="background:#f59e0b"></i>USB 2.0 bus (480 Mbps, shared)</span>
+      <span><i style="background:#3b82f6"></i>USB 3 bus (10 Gbps)</span>
+      <span><i style="background:#94a3b8"></i>other I/O</span>
+    </div>
+    <div class="bus-desc" id="j-bus-desc"></div>
+    <p class="hint">Simplified: real chips have more blocks and links. The USB wiring (one controller, one USB 2.0 bus with three branches) is what we measured on our Jetson.</p>
+  </div>
+
+  </div>
+
+  <div class="callout spectrum"><h5>What we found: there is only one USB 2.0 bus</h5><p>The four USB-A ports, the USB-C port and the Wi-Fi card's Bluetooth all share <strong>one USB 2.0 bus</strong>, so every camera shares one bandwidth budget. That decides how many cameras fit: <a href="#speed">chapter 10</a> tells that story.</p></div>
+
+  <div class="full">
+  <div class="usbtree reveal">
+    <figure class="tout"><pre class="tb"><span class="pr">$</span> lsusb -t   <span class="cm"># the USB tree (each camera's 2nd line, "If 1", hidden)</span>
+/:  Bus 02.Port 1: Dev 1, Class=root_hub, Driver=tegra-xusb/4p, 10000M <span class="n">1</span>
+    |__ Port 1: Dev 2, If 0, Class=Hub, Driver=hub/4p, 10000M
+/:  Bus 01.Port 1: Dev 1, Class=root_hub, Driver=tegra-xusb/4p, 480M <span class="n">2</span>
+    |__ Port 2: Dev 2, If 0, Class=Hub, Driver=hub/4p, 480M <span class="n">3</span>
+        |__ Port 1: Dev 4, If 0, Class=Video, Driver=uvcvideo, 480M <span class="n">4</span>
+        |__ Port 4: Dev 7, If 0, Class=Video, Driver=uvcvideo, 480M
+        |__ Port 2: Dev 5, If 0, Class=Video, Driver=uvcvideo, 480M
+        |__ Port 3: Dev 6, If 0, Class=Video, Driver=uvcvideo, 480M
+    |__ Port 3: Dev 3, If 0, Class=Wireless, Driver=rtk_btusb, 12M <span class="n">5</span></pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running).</figcaption></figure>
+    <div class="prose">
+      <p style="margin-top:0">You can see the one-bus rule in Linux's own list of USB devices:</p>
+      <ol class="usbnotes">
+        <li><b>Bus 02</b> is the USB 3 bus (10000M = 10 Gbps). Only the hub's USB 3 half is on it, and none of our cameras.</li>
+        <li><b>Bus 01</b> is the USB 2.0 bus (480M = 480 Mbps). Everything under it shares one budget.</li>
+        <li>Its port 2 is the carrier board's hub: the four USB-A ports (<code>1-2</code>).</li>
+        <li>Our four cameras, each run by the <code>uvcvideo</code> driver: TopLeft on hub port 1, TopRight on 3, the two global-shutter cameras on 2 and 4.</li>
+        <li>Port 3 is the Wi-Fi card's Bluetooth (<code>rtk_btusb</code>), on the very same bus. The USB-C port (port 1) has nothing plugged in.</li>
+      </ol>
+    </div>
+  </div>
+
+  </div>
+
+  <details class="deep"><summary>The full spec sheet, checked against NVIDIA</summary><div>
+    <div class="table-wrap"><table class="data spec">
+      <tr><th>Part</th><th>Jetson Orin Nano Super Developer Kit (8 GB)</th></tr>
+      <tr><td>AI performance</td><td>67 TOPS sparse INT8 (33 dense)</td></tr>
+      <tr><td>GPU</td><td>NVIDIA Ampere, 1,024 CUDA cores, 32 Tensor Cores, up to 1020 MHz</td></tr>
+      <tr><td>CPU</td><td>6-core Arm Cortex-A78AE v8.2 64-bit, 1.5 MB L2 + 4 MB L3, up to 1.7 GHz</td></tr>
+      <tr><td>Memory</td><td>8 GB 128-bit LPDDR5, 102 GB/s</td></tr>
+      <tr><td>AI / vision accelerators</td><td>None (no DLA, no PVA on the Orin Nano); everything AI runs on the GPU</td></tr>
+      <tr><td>Video decode</td><td>NVDEC: 1× 4K60, 2× 4K30, 5× 1080p60 or 11× 1080p30 (H.265)</td></tr>
+      <tr><td>Video encode</td><td>No hardware encoder: "1080p30 supported by 1–2 CPU cores"</td></tr>
+      <tr><td>JPEG decode</td><td>2 NVJPG engines at up to 499.2 MHz (our measurement and the clock tables; the datasheet's summary doesn't list them)</td></tr>
+      <tr><td>Module</td><td>69.6 × 45 mm, 260-pin SO-DIMM connector</td></tr>
+      <tr><td>Storage</td><td>microSD slot on the module; 2× M.2 Key M on the carrier (2280 PCIe 3.0 x4, 2230 PCIe 3.0 x2)</td></tr>
+      <tr><td>Wireless</td><td>M.2 Key E 2230 slot, fitted with a Wi-Fi/Bluetooth card</td></tr>
+      <tr><td>USB</td><td>4× USB 3.2 Gen2 Type-A (10 Gbps), 1× USB-C (data only)</td></tr>
+      <tr><td>Other I/O</td><td>Gigabit Ethernet, DisplayPort, 2× MIPI CSI-2 (22-pin), 40-pin header, 12-pin button header, DC jack 5.5 × 2.5 mm</td></tr>
+      <tr><td>Power modes</td><td>15 W, 25 W, MAXN SUPER (<code>nvpmodel -m 0 / 1 / 2</code>)</td></tr>
+    </table></div>
+    <div class="deeper">
+      <a href="https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/">NVIDIA Jetson Orin specs table</a>
+      <a href="https://developer.nvidia.com/blog/nvidia-jetson-orin-nano-developer-kit-gets-a-super-boost/">"Gets a Super boost" (NVIDIA blog)</a>
+      <a href="https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/latest/hardware_layout.html">Devkit hardware layout</a>
+    </div>
+  </div></details>
+
+  <div class="full">
+  <h3>Power modes: what "Super" means</h3>
+  <div class="split">
+    <div class="prose">
+      <p>The same board can run cool and slow or hot and fast. NVIDIA calls these <strong>power modes</strong>, and you switch with one command, <code>nvpmodel</code>. The "Super" in the name comes from a 2024 software update that unlocked a faster mode on the same hardware: GPU 635 → 1020 MHz, CPU 1.5 → 1.7 GHz, memory 68 → 102 GB/s.</p>
+      <p>We use the fastest, <strong>MAXN SUPER</strong> (<code>sudo nvpmodel -m 2</code>), and then lock every clock at its maximum with <code>jetson_clocks</code> at every boot. A locked clock means the detector takes the same time on every frame, instead of waiting for the chip to speed up.</p>
+      <figure class="tout"><pre class="tb"><span class="pr">$</span> nvpmodel -q     <span class="cm"># "query": which mode are we in?</span>
+NV Power Mode: MAXN_SUPER
+2                <span class="cm"># its number: mode 2</span></pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running).</figcaption></figure>
+    </div>
+    <div class="flow" style="margin:0">
+      <div class="node"><b>15 W</b>mode 0<br><span class="small muted">cooler, slower</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>25 W</b>mode 1<br><span class="small muted">NVIDIA's default</span></div>
+      <div class="arrow">→</div>
+      <div class="node" style="border-color:var(--accent);background:var(--accent-low)"><b>MAXN SUPER</b>mode 2<br><span class="small muted">ours: CPU 1728 MHz, GPU 1020 MHz</span></div>
+    </div>
+  </div>
+  <p class="prose">Fast mode doesn't mean it burns 25 W all the time. NVIDIA's <code>tegrastats</code> tool prints what the chip is doing, once a second. Here's one real line from our Jetson with <strong>four cameras</strong> running at full speed: under 10 W, about as much as a phone charger. Hover a part of the line, or tap a card, to see what it means.</p>
+  <div class="lab reveal" id="j-tegra">
+    <div class="lab-head"><span class="tag">Real data</span><h4>A live readout, decoded</h4></div>
+    <p class="do"><b>Hover or tap</b> any colored part of the line, or a card, to match them up.</p>
+    <figure class="tout"><pre class="tb tg"><span class="dm">09-25-2026 07:53:14</span> <span data-f="ram" data-n="1" style="--c:#a3e635">RAM 2338/7607MB</span> <span class="dm">(lfb 5x4MB)</span> <span data-f="swap" data-n="2" style="--c:#86efac">SWAP 0/3804MB</span> <span class="dm">(cached 0MB)</span> <span data-f="cpu" data-n="3" style="--c:#c4b5fd">CPU [8%@1728,19%@1728,14%@1728,17%@1728,15%@1728,12%@1728]</span> <span data-f="gpu" data-n="4" style="--c:#22d3ee">GR3D_FREQ 19%</span> <span data-f="temp" data-n="5" style="--c:#fbbf24">cpu@54.062C soc2@52.656C soc0@53.593C gpu@54.781C tj@55.031C soc1@53.718C</span> <span data-f="in" data-n="6" style="--c:#f9a8d4">VDD_IN 9650mW/9650mW</span> <span data-f="cg" data-n="7" style="--c:#fda4af">VDD_CPU_GPU_CV 2838mW/2838mW</span> <span data-f="soc" data-n="8" style="--c:#fdba74">VDD_SOC 3080mW/3080mW</span></pre><figcaption>From our Jetson, Sept 25, 2026 (4 cameras running, JPEG hardware decode on).</figcaption></figure>
+    <div class="tfields">
+      <div data-f="ram" style="--c:#a3e635"><b>1 · Memory: 2.3 of 7.6 GB</b>RAM in use, out of what Linux can use (a little of the 8 GB is set aside for the hardware). Plenty to spare.</div>
+      <div data-f="swap" style="--c:#86efac"><b>2 · Swap: 0 MB</b>Overflow space on the SSD for when RAM runs out. None used, which is what you want: swap is slow.</div>
+      <div data-f="cpu" style="--c:#c4b5fd"><b>3 · Six CPU cores</b>One entry per core: how busy it is, @ its clock in MHz. All six are locked at 1728 MHz and only 8–19% busy.</div>
+      <div data-f="gpu" style="--c:#22d3ee"><b>4 · GPU: 19% busy</b>"GR3D" is the GPU. Over this 10-second capture it read 16–19%, with four cameras' detectors sharing it.</div>
+      <div data-f="temp" style="--c:#fbbf24"><b>5 · Temperatures: ~53–55 °C</b>Sensors around the chip; <code>tj</code> is the hottest spot. Throttling starts at 99 °C.</div>
+      <div data-f="in" style="--c:#f9a8d4"><b>6 · Total power: 9.65 W</b>Everything the board takes in (now / average). Well under the 25 W mode's budget.</div>
+      <div data-f="cg" style="--c:#fda4af"><b>7 · CPU + GPU: 2.8 W</b>The power rail that feeds the CPU cores and the GPU (plus the "CV" vision blocks).</div>
+      <div data-f="soc" style="--c:#fdba74"><b>8 · Rest of the chip: 3.1 W</b>The rail for the rest of the SoC: memory controller, JPEG engines and more.</div>
+    </div>
+  </div>
+
+  <div class="lab reveal" id="j-therm">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Could it survive a match without the fan?</h4></div>
+    <p class="do"><b>Drag the sliders</b> or pick a heatsink, and watch the peak temperature.</p>
+    <div class="lab-grid">
+      <div>
+        <canvas id="j-therm-cv" aria-label="Chart of chip temperature over time: robot on and disabled, then a match at full power"></canvas>
+        <div class="readout"><div><small>Peak temperature</small><b id="j-t-peak">–</b></div><div><small>Throttles at</small><b>99 °C</b></div><div><small>With the fan</small><b>43 °C</b></div></div>
+      </div>
+      <div>
+        <div class="ctl"><label>Robot on before the match <output></output></label><input type="range" id="j-t-wait" min="0" max="30" step="1" value="10"><div class="note">disabled, PhotonVision stopped, 7.2 W</div></div>
+        <div class="ctl"><label>Heatsink <output></output></label><input type="range" id="j-t-r" min="2" max="8" step="0.1" value="6.2"><div class="note">thermal resistance: lower is a better heatsink. Stock is 6.2 °C/W.</div></div>
+        <div class="seg" id="j-t-seg"><button data-v="6.2" class="on">Stock, fan off</button><button data-v="4">4 °C/W design</button></div>
+        <p class="hint">The match is 4 minutes at full power (9.5 W). A simplified model fitted to our two fan-off tests; it matched them within 0.8 °C. Real enclosures and event halls differ, so test the real thing.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout spectrum"><h5>What we measured: going fanless</h5><p>A sealed Jetson would be nice on a robot (no dust, no fan to fail). So we switched the fan off and watched. At full power the stock heatsink climbed from 42 to 85 °C in under 10 minutes and was still rising: its steady state is right at the 99 °C throttle point. Our conclusion (TECHNICAL.md, "Fanless"): a fanless design needs a heatsink of about <strong>4 °C/W or better</strong>, tested through a real match cycle. Until then, the fan stays on, at full speed. The good news: a dead fan isn't fatal. The chip slowly climbs to its throttle point and slows down, instead of shutting off.</p></div>
+
+  <h3>Power from the robot</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>A robot battery starts around 12–13 V and sags when motors pull hard, sometimes well below 10 V. Computers hate that. So the Jetson doesn't take battery power directly: a <strong>15 V boost regulator</strong> turns whatever the battery gives into a steady 15 V for the DC jack.</p>
+      <p>On 2026-09-25 we tested it by lowering the input voltage on a bench supply: the Jetson <strong>kept running down to a 5 V input</strong>. That's far below any <span class="term">brownout</span> the robot will see.</p>
+      <p>If the supply does sag, the Jetson reports it: PhotonVision publishes a throttle reason (<code>OVER-CURRENT</code>, <code>HIGH TEMP</code>) on <span class="term">NetworkTables</span> so robot code can raise an alert (chapter 16).</p>
+    </div>
+    <div class="flow" style="margin:0;flex-direction:column">
+      <div class="node"><b>Robot battery</b>12–13 V, sags under load</div>
+      <div class="arrow" style="transform:rotate(90deg);height:30px">→</div>
+      <div class="node"><b>15 V boost regulator</b>steady output from 5 V and up (tested)</div>
+      <div class="arrow" style="transform:rotate(90deg);height:30px">→</div>
+      <div class="node"><b>Jetson DC jack</b>about 9 W with 2 cameras</div>
+    </div>
+  </div>
+
+  <h3>Jetson vs. a Raspberry Pi</h3>
+  <p class="prose">Many FRC teams run PhotonVision on an Orange Pi 5 or a Raspberry Pi. They're cheaper, and they work well. The difference is <em>where</em> the work happens. Each dot below is one processing core, drawn to scale by count.</p>
+  <div class="lab reveal" id="j-cmp">
+    <div class="lab-head"><span class="tag">Compare</span><h4>Cores, counted</h4></div>
+    <div class="cmp">
+      <div class="cmp-row"><div><h5>Raspberry Pi 5</h5><small>4 CPU cores, 2.4 GHz. GPU (VideoCore VII) not used for AprilTags.</small></div><canvas data-cmp="pi5"></canvas></div>
+      <div class="cmp-row"><div><h5>Orange Pi 5</h5><small>8 CPU cores (4 fast + 4 efficient). 6 TOPS NPU used for game pieces, not AprilTags.</small></div><canvas data-cmp="opi5"></canvas></div>
+      <div class="cmp-row"><div><h5>Jetson Orin Nano Super</h5><small>6 CPU cores, 1.7 GHz, plus 1,024 CUDA cores that our detector uses.</small></div><canvas data-cmp="jetson"></canvas></div>
+    </div>
+    <div class="legend"><span><i style="background:#c4b5fd"></i>CPU core (big, fast, flexible)</span><span><i style="background:#a3e635"></i>GPU core used for AprilTags</span><span><i style="background:#64748b"></i>other accelerator, not used for AprilTags</span></div>
+  </div>
+  <div class="prose">
+    <p>Being fair about it:</p>
+    <ul>
+      <li><strong>One Pi CPU core is not slower</strong> than one Jetson CPU core; it runs at a higher clock (2.4 GHz vs 1.7 GHz). A single GPU core is much weaker than either. The GPU wins only on jobs it can split into thousands of identical pieces, and finding tags in a million pixels is one of those (chapter 07 shows why).</li>
+      <li><strong>Stock PhotonVision finds AprilTags on the CPU</strong> on every coprocessor. Ours is a special version that sends that work to the Jetson's GPU (chapters 08–09).</li>
+      <li><strong>The Jetson costs more and draws more power.</strong> A Pi is a great choice for one or two cameras at moderate frame rates. We wanted four cameras at 120 fps each at full resolution, with CPU to spare.</li>
+    </ul>
+  </div>
+  <div class="deeper">
+    <a href="https://www.raspberrypi.com/products/raspberry-pi-5/">Raspberry Pi 5 specs</a>
+    <a href="https://www.cnx-software.com/2022/11/11/orange-pi-5-most-affordable-rockchip-rk3588s-sbc/">Orange Pi 5 (RK3588S) specs</a>
+    <a href="https://docs.photonvision.org/en/latest/docs/objectDetection/about-object-detection.html">PhotonVision object detection hardware</a>
+    <a class="video" href="https://www.youtube.com/watch?v=S9L2WGf1KrM" target="_blank" rel="noopener">NVIDIA: Introducing Jetson Orin Nano Super (2:04)</a>
+  </div>
+
+  </div>
+
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Recap</h5>
+    <ul>
+      <li>A small <b>module</b> (the computer) plugs into a <b>carrier board</b> (power and ports).</li>
+      <li>Its <b>SoC</b> puts 6 CPU cores, a 1,024-core GPU and JPEG engines on one chip, sharing 8 GB of RAM.</li>
+      <li>It boots Linux from an SSD and uses under 10 W with four cameras.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
+    <h5>Chapter 5 recap</h5>
+    <ul>
+      <li>The devkit is a small <b>module</b> (the computer) plugged into a <b>carrier board</b> (power and ports), with a heatsink and fan on top and an NVMe SSD and Wi-Fi card underneath.</li>
+      <li>The <b>SoC</b> puts 6 CPU cores, a 1,024-core GPU, JPEG decoders and the memory controller on one chip. CPU and GPU share 8 GB of RAM at 102 GB/s.</li>
+      <li>We run <b>MAXN SUPER</b> with clocks locked and the fan at full speed: under 10 W with four cameras.</li>
+      <li>All USB 2.0 ports share <b>one bus</b>: four USB-A, USB-C and the Bluetooth. That shapes how many cameras fit.</li>
+    </ul>
+  </div>
+</div>

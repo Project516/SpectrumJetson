@@ -1,0 +1,89 @@
+<style>
+  #mission .pipeline { margin: 30px 0; }
+  #mission .pipeline svg { width: 100%; height: auto; }
+  #mission .pipeline .nd rect { fill: #fff; stroke: var(--border-strong); stroke-width: 1.5; rx: 12; transition: fill .2s; }
+  #mission .pipeline .nd:hover rect { fill: var(--accent-low); stroke: var(--accent); }
+  #mission .pipeline .nd text { font-family: var(--font); font-size: 13px; fill: var(--muted); }
+  #mission .pipeline .nd text.t { font-family: var(--font-heading); font-weight: 700; font-size: 15px; fill: var(--p700); }
+  #mission .pipeline .nd text.n { font-family: var(--mono); font-size: 11px; fill: var(--accent); }
+  #mission .pipeline .grp { fill: none; stroke: var(--accent-soft); stroke-dasharray: 5 5; stroke-width: 1.5; }
+  #mission .pipeline .grpl { font: 700 11px var(--font); letter-spacing: .14em; fill: var(--p600); text-transform: uppercase; }
+  #mission .pipeline .cap { font: 12px var(--mono); fill: var(--muted); }
+  #mission .pipeline path.wire { fill: none; stroke: var(--border-strong); stroke-width: 2; }
+  #mission .photo-row { display: grid; grid-template-columns: 1.1fr 1fr; gap: 20px; margin: 30px 0; }
+  #mission .photo-row figure { margin: 0; }
+  #mission .photo-row img, #mission .photo-row video { width: 100%; border-radius: var(--radius); box-shadow: var(--shadow-lg); aspect-ratio: 3/4; object-fit: cover; background: #000; }
+  @media (max-width: 760px) { #mission .photo-row { grid-template-columns: 1fr; } }
+  #mission .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: .85rem; margin-top: 10px; }
+  #mission .legend i { display: inline-block; width: 22px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">01</span> · The big picture</span>
+    <h2>Why robots need <em>vision.</em></h2>
+    <p class="lede">A robot that knows exactly where it is on the field can drive itself, aim at a goal and line up in a fraction of a second. Its wheels can tell it roughly where it is. A camera tells it for sure.</p>
+  </div>
+
+  <div class="split">
+    <div class="prose">
+      <h3 style="margin-top:0">Wheels slowly lie</h3>
+      <p>Every FRC robot keeps a running guess of its position called <span class="term">odometry</span>: it counts how far each wheel turned and which way the <span class="term">gyro</span> says it's facing, then adds it all up.</p>
+      <p>The trouble is that wheels slip. Push against another robot, bump over a field element, or spin quickly, and the wheel counts stop matching how far the robot really moved. Each small error adds to the last one. After a minute of hard driving, odometry can be off by more than a robot length.</p>
+      <p><strong>Vision fixes the drift.</strong> Around the field are <span class="term">AprilTag</span>s, markers at known positions. When a camera sees one, the robot can work out exactly where it must be standing to see the tag that way, and correct its guess.</p>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Odometry drift</h4></div>
+      <p class="hint" style="margin:-6px 0 10px">Watch the orange guess drift away from the real robot. Press <b>Bump the robot</b>, or turn <b>Vision off</b>, and see what tag sightings do.</p>
+      <canvas id="m-drift" aria-label="Top-down field: the robot's true path, its odometry guess drifting away, and vision corrections pulling it back"></canvas>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
+        <div class="seg" id="m-vision"><button data-v="off">Vision off</button><button data-v="on" class="on">Vision on</button></div>
+        <button class="btn-sm" id="m-bump">💥 Bump the robot</button>
+      </div>
+      <div class="legend">
+        <span><i style="background:#fff"></i>Where it really is</span>
+        <span><i style="background:#f59e0b"></i>What odometry thinks</span>
+        <span><i style="background:#a3e635"></i>Tag sighting</span>
+      </div>
+      <div class="readout"><div><small>Position error</small><b id="m-err">0 cm</b></div><div><small>Tag fixes</small><b id="m-fix">0</b></div></div>
+    </div>
+  </div>
+
+  <h3 class="full">The whole system on one page</h3>
+  <p class="prose full">This course follows a single camera <span class="term">frame</span> from start to finish. Here's the route. Every box is a chapter, so click one to jump ahead, or just keep scrolling. The whole trip takes about <strong>15 milliseconds</strong>, less time than a single frame of a movie stays on screen.</p>
+  <div class="pipeline fig reveal full" style="padding:14px"><svg id="m-pipe" viewBox="0 0 1100 330" role="img" aria-label="Pipeline: light, camera sensor, JPEG over USB, Jetson decode, GPU detection, pose solve, NetworkTables, SystemCore"></svg></div>
+
+  <div class="stats reveal full">
+    <div class="stat"><b>120<small>fps</small></b><span>frames per second, per camera, at full 1280×800 resolution</span></div>
+    <div class="stat"><b>~2<small>ms</small></b><span>for the GPU to find every tag in a frame</span></div>
+    <div class="stat"><b>~15<small>ms</small></b><span>from light hitting the sensor to an answer ready for the robot</span></div>
+    <div class="stat"><b>4–5</b><span>cameras on one Jetson, sharing a single <span class="term">USB</span> 2.0 budget</span></div>
+    <div class="stat"><b>$50</b><span>per camera: Thrifty Bot's Thriftiest Cam</span></div>
+  </div>
+
+  <h3>Meet the hardware</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>The robot's main computer is the <span class="term">SystemCore</span>, which runs our robot code. Finding AprilTags 120 times a second on several cameras is too much work to add on top, so we give it to a second computer, a <span class="term">coprocessor</span>: an <strong>NVIDIA Jetson Orin Nano Super</strong>.</p>
+      <p class="full">The Jetson runs <span class="term">PhotonVision</span>, free vision software many FRC teams use. Ours is a special version that sends the hardest work to the Jetson's <span class="term">GPU</span>, using a detector written by Austin Schuh of FRC 971. We fixed bugs, made it faster and added match-day safety features, all covered later.</p>
+      <p class="full">The photo on the right is our first bench test: the Jetson (the black board with the fan), one Thriftiest Cam, and a laptop running PhotonVision's web dashboard. The video shows the system tracking a tag at 121–123 frames per second. The colored lines are its guess of the tag's 3D position and angle, updated every frame.</p>
+      <div class="callout spectrum full"><h5>What we built</h5><p>Everything here is scripted in our <a href="https://github.com/Spectrum3847/SpectrumJetson">SpectrumJetson</a> repo, so another Jetson can be set up the same way. The README explains what we did and why, including the mistakes.</p></div>
+    </div>
+    <div class="photo-row" style="margin:0">
+      <figure><img src="assets/photos/bench-setup.jpg" alt="Jetson Orin Nano with a fan, a Thriftiest Cam and a laptop on a classroom desk" loading="lazy"><figcaption class="caption">First bench test, Sept 23, 2026.</figcaption></figure>
+      <figure><video src="assets/photos/live-tracking-123fps.mp4" autoplay muted loop playsinline preload="metadata" aria-label="PhotonVision tracking AprilTag 3 at 123 FPS"></video><figcaption class="caption">Tracking tag 3 at 121–123 FPS, 13–18 ms latency.</figcaption></figure>
+    </div>
+  </div>
+
+  <div class="deeper">
+    <a class="video" href="https://www.youtube.com/watch?v=mwn8xhgNpFY" target="_blank" rel="noopener">MATLAB: Why use Kalman filters? (6:47)</a>
+  </div>
+
+  <div class="recap reveal">
+    <h5>Chapter 1 recap</h5>
+    <ul>
+      <li>Odometry (wheels + gyro) drifts. Vision gives the robot a true position fix.</li>
+      <li>AprilTags sit at known spots on the field, so seeing one tells the robot where it is.</li>
+      <li>A Jetson coprocessor does the vision, and sends results to the SystemCore.</li>
+    </ul>
+  </div>
+</div>

@@ -1,0 +1,23 @@
+[
+ {
+  "file": "calibration-snapshot-nearest_img22.png",
+  "board_distance_m": 0.27,
+  "board_tilt_deg": 2,
+  "corners_used": 83,
+  "of_corners": 88
+ },
+ {
+  "file": "calibration-snapshot-farthest_img15.png",
+  "board_distance_m": 0.55,
+  "board_tilt_deg": 39,
+  "corners_used": 88,
+  "of_corners": 88
+ },
+ {
+  "file": "calibration-snapshot-most-tilted_img23.png",
+  "board_distance_m": 0.5,
+  "board_tilt_deg": 45,
+  "corners_used": 78,
+  "of_corners": 88
+ }
+]

@@ -1,0 +1,203 @@
+<style>
+  #settings .how { margin: -4px 0 14px; font: 600 .9rem var(--font); color: #e9e2ff; display: flex; gap: 8px; align-items: baseline; }
+  #settings .how::before { content: "👆"; }
+  @media (max-width: 600px) { #settings .lab .btn-sm, #settings .seg button { min-height: 40px; } #settings .lab input[type=range] { height: 32px; } }
+  #settings .sim { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(250px, 1fr); gap: 22px; align-items: start; }
+  @media (max-width: 900px) { #settings .sim { grid-template-columns: 1fr; } }
+  #settings .sim canvas.view { width: 100%; border-radius: 12px; background: #000; }
+  #settings .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  #settings .badge { font: 700 .78rem var(--font); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--lab-line); background: rgba(255,255,255,.05); color: #fff; }
+  #settings .badge.ok { border-color: rgba(163,230,53,.5); color: #a3e635; }
+  #settings .badge.bad { border-color: rgba(244,63,94,.5); color: #fb7185; }
+  #settings .badge.warn { border-color: rgba(245,158,11,.5); color: #f59e0b; }
+  #settings canvas.hist { width: 100%; height: 70px; margin-top: 10px; }
+  #settings .ctl .note { font-size: .74rem; }
+  #settings .presets { margin-bottom: 14px; }
+  #settings .sim .ctl { margin-bottom: 10px; }
+  #settings .timeline canvas, #settings .flick canvas { width: 100%; }
+  #settings #s-tl { aspect-ratio: 5; } #settings #s-fl { aspect-ratio: 2.9; }
+  @media (max-width: 600px) { #settings #s-tl { aspect-ratio: 2.4; } #settings #s-fl { aspect-ratio: 1.5; }
+    #settings table.data tr { display: grid; grid-template-columns: 1fr 1fr; } #settings table.data th:last-child { display: none; }
+    #settings table.data td:last-child { grid-column: 1 / -1; border-top: 0; padding-top: 0; color: var(--muted); } }
+  #settings .setcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 26px 0; }
+  @media (max-width: 760px) { #settings .setcards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  #settings .setcards .card h4 { display: flex; gap: 8px; align-items: center; }
+  #settings .setcards .card h4 i { font-style: normal; font-size: 1.2rem; }
+  #settings table.data td:first-child { font-weight: 600; white-space: nowrap; }
+  #settings .snap { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">04</span> · Capturing light</span>
+    <h2>Camera settings: exposure, brightness, contrast, gain and <em>friends.</em></h2>
+    <p class="lede">A camera has a handful of knobs that decide what every frame looks like. Most of them trade one problem for another. The most important one, by far, is exposure, and the lesson of this chapter fits in four words: <strong>short exposure on a robot.</strong></p>
+  </div>
+
+  <div class="prose short">
+    <p>Exposure is how long each pixel collects light. On a moving robot, everything smears while the shutter is open: spinning at 3 rad/s smears a tag about <strong>11 px at 5 ms</strong> but <strong>44 px at 20 ms</strong>. Shorter exposure is darker, which lowers the <span class="term">decision margin</span> (how confidently each tag is read), so we run <strong>5 ms</strong> with a decision margin cutoff of <strong>15</strong>.</p>
+    <p>USB cameras set exposure in units of 100 µs, so our setting of 50 means 5 ms. Exposure also limits the frame rate: at 120 fps a new frame starts every 8.3 ms, so the exposure has to fit inside that. Try it in the simulator: raise the exposure while the robot spins.</p>
+  </div>
+
+  <div class="full">
+
+  <div class="setcards full">
+    <div class="card"><h4><i>⏱️</i>Exposure</h4><p>How long each pixel collects light per frame. Longer is brighter, but anything moving smears.</p><span class="chip">we use 5 ms</span></div>
+    <div class="card"><h4><i>📶</i>Gain</h4><p>Electronic amplification after the light is collected. Brighter, but it amplifies the noise too.</p><span class="chip">probably does nothing on ours</span></div>
+    <div class="card"><h4><i>☀️</i>Brightness</h4><p>Adds a fixed amount to every pixel: lifts the blacks and the whites together.</p><span class="chip">we use 100</span></div>
+    <div class="card"><h4><i>◐</i>Contrast</h4><p>Stretches or squeezes brightness around the middle gray.</p><span class="chip">camera default</span></div>
+    <div class="card"><h4><i>〰️</i>Gamma</h4><p>Bends the curve: brightens or darkens the middle tones without moving pure black or white.</p><span class="chip">camera default</span></div>
+    <div class="card"><h4><i>🔪</i>Sharpness</h4><p>Exaggerates edges after the fact. A little looks crisp; too much draws halos around tag edges.</p><span class="chip">camera default</span></div>
+  </div>
+
+  <h3>The camera simulator</h3>
+  <p class="prose">This starts from a real frame from our own TopLeft Thriftiest Cam, with a camera model layered on top. Drag the sliders and watch the tags. The robot spin slider moves the camera while the shutter is open, like a robot turning in place. The tag's badge shows whether a detector would accept it, using the real decision-margin formula from chapter 02 on these pixels.</p>
+
+  </div>
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Tune the camera</h4></div>
+      <p class="how">Pick a preset or drag any slider. Try raising Exposure while the robot spins, and watch the tag's badge.</p>
+    <div class="seg presets" id="s-preset">
+      <button data-v="ours" class="on">Our settings</button>
+      <button data-v="auto">Auto exposure</button>
+      <button data-v="cal">Calibration settings</button>
+      <button data-v="dark">Too dark</button>
+      <button data-v="wash">Washed out</button>
+      <button data-v="sharp">Over-sharpened</button>
+    </div>
+    <div class="sim">
+      <div>
+        <canvas class="view" id="s-view" aria-label="Simulated camera frame with tag 3, changing with the settings"></canvas>
+        <div class="badges" id="s-badges"></div>
+        <canvas class="hist" id="s-hist" aria-label="Brightness histogram"></canvas>
+        <div class="readout">
+          <div><small>UVC exposure value</small><b id="s-uvc"></b></div>
+          <div><small>Max frame rate</small><b id="s-fps"></b></div>
+          <div><small>Motion blur</small><b id="s-blur"></b></div>
+          <div><small>Clipped pixels</small><b id="s-clip"></b></div>
+        </div>
+      </div>
+      <div>
+        <div class="ctl"><label>Exposure <output></output></label><input type="range" id="s-exp" min="0.5" max="30" step="0.1" value="5"></div>
+        <div class="ctl"><label>Gain <output></output></label><input type="range" id="s-gain" min="1" max="8" step="0.1" value="1"></div>
+        <div class="ctl"><label>Brightness (black level) <output></output></label><input type="range" id="s-bri" min="-60" max="60" step="1" value="0"></div>
+        <div class="ctl"><label>Contrast <output></output></label><input type="range" id="s-con" min="0.5" max="2" step="0.05" value="1"></div>
+        <div class="ctl"><label>Gamma <output></output></label><input type="range" id="s-gam" min="0.5" max="2.5" step="0.05" value="1"></div>
+        <div class="ctl"><label>Sharpness <output></output></label><input type="range" id="s-sharp" min="0" max="10" step="1" value="5"></div>
+        <div class="ctl"><label>Robot spin <output></output></label><input type="range" id="s-spin" min="0" max="6" step="0.1" value="3"><div class="note">3 rad/s ≈ 170°/s, a quick turn in place</div></div>
+      </div>
+    </div>
+    <p class="hint">Simplified model on a real frame from our TopLeft Thriftiest Cam (Sept 24, 2026).<span class="full"> Its exposure wasn't recorded; it was most likely our 5 ms, so at 5 ms with no spin the simulator shows the frame as shot, and our detector really did read this tag with a margin of 90. The badge uses our detector's scale: this page's copy of the AprilTag library formula reads about 43 on the same pixels, so it's multiplied by 2.1. Other settings scale its light, then add blur, noise, gain and the curves in that order, like a real camera. The blur uses the formula below.</span></p>
+  </div>
+
+  <div class="full">
+  <div class="split top">
+    <div class="prose">
+      <h3 style="margin-top:0">Why short exposure wins</h3>
+      <p>While the shutter is open, a moving robot keeps moving, so every point of the tag gets smeared along its path. How far? For a robot turning in place:</p>
+      <p class="center" style="font:600 1.05rem var(--mono);color:var(--p700)">smear (px) ≈ 737 px × spin (rad/s) × exposure (s)</p>
+      <p>At 3 rad/s that's about <strong>11 px at 5 ms</strong> but <strong>44 px at 20 ms</strong>. A tag square at a few meters is only 5–10 px wide, so 44 px of smear wipes out the pattern completely, and even when the tag is still found, its corners are fuzzy and the pose jitters.</p>
+      <p>The catch: shorter exposure means less light, a darker image, and a lower decision margin. That's the trade we tuned: 5 ms is short enough to keep blur small, bright enough for good margins under typical field lights, and we lowered the decision margin cutoff to 15 to match.</p>
+    </div>
+    <div class="callout pitfall" style="margin-top:0"><h5>The standing-still trap</h5><p>Auto exposure, or tuning by eye with the robot sitting still, always picks a long exposure: the picture looks bright and clean. It falls apart the moment the robot moves. <strong>Tune for the moving robot, not the pretty picture.</strong></p><p>Calibration is the one exception. The board is held still, so a long exposure (about 15 ms) is fine there. Just don't copy it into the vision pipelines.</p></div>
+  </div>
+
+  <h3>The exposure units trap</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>USB cameras follow the <span class="term">UVC</span> standard, which counts exposure in units of <strong>100 microseconds</strong>. So an exposure setting of 295 means 29.5 milliseconds, not 0.3 ms. Stock PhotonVision didn't say so, and 295 looked like a small number.</p>
+      <p>A frame can't be shorter than its own exposure, so the exposure caps the frame rate: at most 1000 ÷ exposure-in-ms frames per second. At 120 fps, a new frame starts every 8.3 ms. An exposure of 29.5 ms means at most 34 frames a second, no matter how fast everything else is.</p>
+    </div>
+    <div class="callout spectrum" style="margin-top:0"><h5>What we found</h5><p>Our starting point was exposure <strong>295</strong>: <strong>33 fps</strong> and 44 ms latency, while the GPU sat idle. We only found the cause by reading the camera's controls directly with <code>v4l2-ctl</code>. Dropping to 83 (8.3 ms) let the camera deliver 120 fps; after that, PhotonVision itself was the limit (chapter 10). Our build now shows milliseconds on the slider, e.g. "Exposure (5.0 ms)" (<code>photonvision-10</code>).</p></div>
+  </div>
+  <div class="lab full">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Exposure inside the frame</h4></div>
+      <p class="how">Drag the exposure setting or press a preset, and watch the frames spread out.</p>
+    <div class="timeline"><canvas id="s-tl" aria-label="Timeline of frames: each frame's exposure window inside the 8.3 ms frame period"></canvas></div>
+    <div class="ctl" style="margin-top:12px"><label>Exposure setting (UVC units) <output></output></label><input type="range" id="s-tlexp" min="10" max="400" step="1" value="50"></div>
+    <div class="snap" id="s-tlsnap"><button class="btn-sm" data-v="50">50 (ours)</button><button class="btn-sm" data-v="83">83</button><button class="btn-sm" data-v="150">150 (calibration)</button><button class="btn-sm" data-v="295">295 (where we started)</button></div>
+    <div class="readout">
+      <div><small>Exposure</small><b id="s-tlms"></b></div>
+      <div><small>Max frame rate</small><b id="s-tlfps"></b></div>
+      <div><small>Frame period</small><b id="s-tlper"></b></div>
+    </div>
+    <p class="hint">Purple: the shutter is open. The frame can't finish before its exposure does, so long exposures push the next frame back. Simplified: readout overlaps the next exposure, as on global shutter sensors like ours.</p>
+  </div>
+
+  <h3>Flickering lights</h3>
+  <div class="split top full">
+    <div class="prose">
+      <p>Most indoor lights run on mains power, which alternates 60 times a second. Many lights get brighter and dimmer on every half of the cycle: <strong>120 times a second</strong>, once every 8.3 ms. Your eyes average it out. A camera with a short exposure doesn't.</p>
+      <p>If the exposure is a whole number of <span class="term">flicker</span> cycles (8.3 ms, 16.7 ms…), every frame collects exactly the same amount of light. Otherwise, each frame catches a different slice of the flicker and the brightness pulses from frame to frame. Tags near the decision margin cutoff then flicker in and out of detection.</p>
+      <p>Our cameras run at about 122 fps, just off the lights' 120 Hz. So neighboring frames catch almost the same slice of the flicker, and the brightness drifts slowly up and down, a couple of times a second, instead of jumping from frame to frame. That's why it's worth looking at the total range over a few seconds, not only the change between neighboring frames; <code>flicker-check</code> reports both.</p>
+    </div>
+    <div class="callout spectrum" style="margin-top:0"><h5>What we measured</h5><p>We wrote <code>tests/flicker-check</code>: it records 10 s of video and reports each camera's frame-to-frame brightness change. In our shop, at 5 ms, it measured <strong>0.6% on average, 1% at most</strong>: no flicker under our shop LEDs.</p><p><strong>Event lights are different, so run it again there.</strong> If frames pulse by several percent, go back to 83 (8.3 ms).</p></div>
+  </div>
+  <div class="lab full">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Exposure vs flicker</h4></div>
+      <p class="how">Drag Exposure, or press 8.3 ms, and watch the frame brightness bars go flat.</p>
+    <div class="flick"><canvas id="s-fl" aria-label="Light brightness flickering over time, each frame's exposure window, and the brightness of each frame"></canvas></div>
+    <div class="split" style="margin:12px 0 0;gap:24px;align-items:start">
+      <div>
+        <div class="ctl"><label>Exposure <output></output></label><input type="range" id="s-flexp" min="1" max="20" step="0.1" value="5"></div>
+        <div class="snap" id="s-flsnap"><button class="btn-sm" data-v="5">5 ms</button><button class="btn-sm" data-v="8.33">8.3 ms</button><button class="btn-sm" data-v="16.67">16.7 ms</button></div>
+      </div>
+      <div>
+        <div class="ctl"><label>How much the lights flicker <output></output></label><input type="range" id="s-fldepth" min="0" max="100" step="1" value="40"></div>
+        <div class="readout" style="margin-top:6px"><div><small>Frame to frame</small><b id="s-flchg"></b></div><div><small>Total range (2 s)</small><b id="s-flrng"></b></div><div><small>Verdict</small><b id="s-flv"></b></div></div>
+      </div>
+    </div>
+    <p class="hint">Illustration: the light's brightness dips once every 8.3 ms by the amount you choose (real lights vary a lot, which is why we measure). Frames arrive at 122 fps; time is slowed down so you can see the windows slide.</p>
+  </div>
+
+  <h3>Our settings, and why</h3>
+  <figure class="photo reveal full" style="margin:10px 0 26px"><img src="assets/from-jetson/screenshots/dashboard-topleft-3d-input-tab-crop.webp" alt="PhotonVision's Input tab for our TopLeft camera: auto exposure off, exposure 50 (5.0 ms), brightness 100, contrast 32, gamma 150, sharpness 5, backlight compensation on, camera gain 75" loading="lazy" width="1320" height="590"><figcaption>Our PhotonVision's Input tab for TopLeft, Sept 25, 2026: exposure 50 shown as 5.0 ms, brightness 100 (at the top of its slider), and the extra controls from <code>photonvision-28</code> at the camera's defaults. The Camera Gain slider shows 75, but our cameras report no gain control, so it probably does nothing.</figcaption></figure>
+  <p class="prose">Every AprilTag camera on our robot uses the same settings. New cameras get them automatically: a camera PhotonVision has never seen starts with our team defaults (<code>photonvision-06</code>), so nobody has to remember them.</p>
+  <div class="table-wrap full"><table class="data">
+    <tr><th>Setting</th><th>Value</th><th>Why</th></tr>
+    <tr><td>Pipeline type</td><td>AprilTagCuda</td><td>Finds tags on the GPU (chapter 08)</td></tr>
+    <tr><td>Resolution</td><td>1280 × 800 at 120 fps, MJPEG</td><td>Full sensor, full speed. YUYV (uncompressed) only manages 5 fps at this size over USB 2.0</td></tr>
+    <tr class="hl"><td>Exposure</td><td>Auto off, 50 (5 ms)</td><td>Little motion blur, still bright enough</td></tr>
+    <tr><td>Brightness</td><td>100</td><td>Our team default, set with the exposure</td></tr>
+    <tr class="hl"><td>Decision margin cutoff</td><td>15</td><td>Short exposure lowers margins (chapter 02); tag36h11 with 0 wrong bits almost never gives false tags</td></tr>
+    <tr><td>Low Latency Mode</td><td>Off</td><td>With it on, PhotonVision waited for each frame and missed every other one</td></tr>
+    <tr><td>Processing</td><td>3D, <span class="term">multi-tag</span> on</td><td>The robot's pose code needs both (once the camera is calibrated)</td></tr>
+    <tr><td>Stream resolution</td><td>Small</td><td>Only affects the video you watch in the browser; saves CPU</td></tr>
+  </table></div>
+
+  <details class="deep"><summary>Our built-in tuning guide, as it appears in PhotonVision</summary><div>
+    <img src="assets/from-jetson/screenshots/dashboard-input-tuning-guide.webp" alt="The Tuning guide on PhotonVision's Input tab: nine steps from resolution and exposure to checking on the field" loading="lazy" width="1296" height="641" style="width:100%;height:auto;border-radius:10px;margin:4px 0 10px">
+    <p class="small muted">The Input tab's Tuning guide in our PhotonVision, Sept 25, 2026 (<code>photonvision-26</code>).</p>
+  </div></details>
+
+  <div class="cards full">
+    <div class="card"><div class="icon">🧭</div><h4>Tuning guide, built in</h4><p>The camera's Input tab has a "Tuning guide: what to set, in order" (<code>photonvision-26</code>) with the settings above and the reasons, and each control's tooltip starts with its recommended value.</p><span class="chip">photonvision-26</span></div>
+    <div class="card"><div class="icon">🎚️</div><h4>The hidden controls</h4><p>Stock PhotonVision doesn't show contrast, gamma, sharpness or backlight compensation. Ours does (<code>photonvision-28</code>), with the camera's own ranges: contrast 0–95 (default 32), gamma 100–300 (150), sharpness 1–10 (5). Leave them at the defaults unless you're testing; sharpness is the one worth trying lower, because sharpening can halo tag edges.</p><span class="chip">photonvision-28</span></div>
+    <div class="card"><div class="icon">❓</div><h4>The gain slider that may do nothing</h4><p>Upstream PhotonVision's Thriftiest Cam support added a Camera Gain slider (<code>photonvision-21</code>). But our cameras' firmware reports no gain control at all, so setting it is probably ignored. Test it before relying on it.</p><span class="chip">photonvision-21</span></div>
+    <div class="card"><div class="icon">🎯</div><h4>Auto-tune on the field</h4><p>The Field Calibration page (<code>photonvision-30</code>) can tune each camera under the event's own lights: it steps through exposure, gain, brightness, contrast, gamma and sharpness, and recommends the <strong>shortest exposure that still finds every tag</strong>, changing the others only if they clearly help.</p><span class="chip">photonvision-30</span></div>
+  </div>
+
+  <div class="deeper full">
+    <a class="video" href="https://www.youtube.com/watch?v=0kAuDuV9K9U" target="_blank" rel="noopener">PhotoJoseph: Understanding light flicker in video (13:06)</a>
+  </div>
+
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Chapter 4 recap</h5>
+    <ul>
+      <li><strong>Short exposure on a robot:</strong> 5 ms, with a decision margin cutoff of 15.</li>
+      <li>Exposure is set in 100 µs units (50 = 5 ms) and must fit inside the 8.3 ms frame to keep 120 fps.</li>
+      <li>Tune for the moving robot, not the pretty picture of a still one.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
+    <h5>Chapter 4 recap</h5>
+    <ul>
+      <li><strong>Short exposure on a robot.</strong> Smear ≈ 737 px × spin × exposure: 11 px at 5 ms, 44 px at 20 ms (3 rad/s).</li>
+      <li>Short exposure costs light and decision margin, so we pair 5 ms with a cutoff of 15.</li>
+      <li>UVC exposure is in 100 µs units: 50 = 5 ms, 295 = 29.5 ms, which capped us at 33 fps.</li>
+      <li>Lights flicker 120 times a second. Measure with <code>tests/flicker-check</code> at every venue; fall back to 8.3 ms if frames pulse.</li>
+      <li>Gain and brightness brighten without blur but add noise or lift the blacks. Leave contrast, gamma and sharpness at their defaults.</li>
+    </ul>
+  </div>
+</div>

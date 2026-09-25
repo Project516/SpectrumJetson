@@ -1,0 +1,194 @@
+<style>
+  #gyro .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  #gyro .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--lab-muted); margin-top: 8px; }
+  #gyro .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  #gyro .unk { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 26px 0; }
+  @media (max-width: 700px) { #gyro .unk { grid-template-columns: 1fr; } }
+  #gyro .unk .card h4 { margin-bottom: 10px; }
+  #gyro .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  #gyro .pills span { font: 600 .8rem var(--mono); padding: 4px 10px; border-radius: 8px; background: var(--accent-low); color: var(--p700); border: 1px solid var(--border-strong); }
+  #gyro .pills span.known { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; text-decoration: line-through; text-decoration-color: rgba(21,128,61,.5); }
+  #gyro .pills span.known::after { content: " ✓"; text-decoration: none; }
+  #gyro .code { font-family: var(--mono); font-size: .78rem; background: #1f1b23; border-radius: 10px; padding: 12px 14px; color: #f4efff; white-space: pre; overflow-x: auto; margin: 12px 0; }
+  #gyro .code .c { color: #9d8fb8; }
+  #gyro .code .k { color: #c4b5fd; }
+  #gyro .dials { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #gyro .lab-grid > *, #gyro .split > * { min-width: 0; }
+  #gyro .todo { display: flex; gap: 8px; align-items: baseline; margin: -4px 0 14px; font: 600 .92rem/1.45 var(--font); color: #efe6ff; }
+  #gyro .todo::before { content: "\1F449"; flex: none; }
+  #gyro canvas.drag { cursor: grab; touch-action: none; }
+  #gyro canvas.drag:active, #gyro canvas.dragging { cursor: grabbing; }
+  #gyro canvas.tap { cursor: pointer; touch-action: manipulation; }
+  #gyro .btn-sm[aria-busy="true"] { opacity: .6; cursor: progress; }
+  @media (max-width: 600px) { #gyro .seg button, #gyro .btn-sm { min-height: 40px; } #gyro .lab input[type=range] { height: 40px; } #gyro .chk { min-height: 40px; } }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">13</span> · The math of seeing</span>
+    <h2>Why the <em>gyro</em> helps.</h2>
+    <p class="lede">Vision is great at "how far" and "which direction", and shakiest at "which way am I facing". The robot already has a sensor that nails exactly that. Put the two together and one tag becomes enough.</p>
+  </div>
+
+  <div class="full">
+
+  <div class="split">
+    <div class="prose">
+      <h3 style="margin-top:0">The gyro knows which way you face</h3>
+      <p class="full">A <span class="term">gyro</span> (part of the robot's IMU) measures how fast the robot is turning, hundreds of times a second. Add up all those little turns and you get the robot's <strong>heading</strong>: which way it's pointing on the field.</p>
+      <p class="full">It isn't perfect. Tiny errors add up, so a gyro slowly drifts. But the drift is small and slow, and it doesn't care about lighting, distance or how many tags are in view. Over a match, a good gyro's heading is steadier than any single-tag vision heading.</p>
+      <p class="full">Vision is the opposite. From chapter 12: a single tag's distance and direction are fairly solid, but its <em>angle</em> comes from the tiny squash of a small square. That's the weakest clue, and when it's wrong, the ambiguity flip can turn it into a disaster.</p>
+    </div>
+    <div class="lab full" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Two headings</h4></div>
+      <p class="todo">Just watch: the robot turns by itself.</p>
+      <canvas id="gy-dials" aria-label="Two dials: heading from the gyro and heading from a single far tag"></canvas>
+      <p class="hint">The robot turns slowly. Left: the gyro's heading, with a slow drift. Right: the heading from one tag about 5 m away, solved fresh every frame with realistic corner noise. Simulated with the same solver as chapter 12.</p>
+    </div>
+  </div>
+
+  <h3>Small angle, big miss: the lever arm</h3>
+  <div class="split top">
+    <div class="prose">
+      <p>Why does a small heading error matter so much? Vision finds the robot by walking back from the tag. If the angle is off, that whole walk swings around the tag like a door on a hinge, and the farther the tag, the longer the door. The sideways miss is about <code>distance × angle (in radians)</code>:</p>
+      <p style="font-size:1.1rem;color:var(--p700)"><strong>1° at 5 m ≈ 8.7 cm sideways.</strong> 3° at 5 m is 26 cm, a third of a robot.</p>
+      <p class="full">The same goes for a 1° pitch error in a camera mount (chapter 11).</p>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>The door on a hinge</h4></div>
+      <p class="todo">Move the sliders to change the distance and the angle error.</p>
+      <canvas id="gy-lever" aria-label="Top-down: the robot's estimated position swinging around the tag as the angle error grows"></canvas>
+      <div class="ctl" style="margin-top:12px"><label>Distance to the tag <output></output></label><input type="range" id="gy-l-d" min="1" max="8" step="0.1" value="5"></div>
+      <div class="ctl"><label>Angle error <output></output></label><input type="range" id="gy-l-e" min="0" max="6" step="0.1" value="1"></div>
+      <div class="readout"><div><small>Sideways miss</small><b id="gy-l-out">–</b></div><div><small>In robot lengths</small><b id="gy-l-rl">–</b></div></div>
+    </div>
+  </div>
+
+  <h3>Heading-constrained solves</h3>
+  <div class="prose">
+    <p>Full PnP solves for 6 unknowns: x, y, z, roll, pitch and yaw. But on a flat field, the robot already knows most of them:</p>
+  </div>
+  <div class="unk reveal">
+    <div class="card"><h4>Full PnP: 6 unknowns</h4><div class="pills"><span>x</span><span>y</span><span>z</span><span>roll</span><span>pitch</span><span>yaw</span></div><p style="margin-top:10px">Everything comes from the corners, including the weak angle clue. One tag can give two answers.</p></div>
+    <div class="card"><h4>Heading from the gyro: 2 unknowns</h4><div class="pills"><span>x</span><span>y</span><span class="known">z</span><span class="known">roll</span><span class="known">pitch</span><span class="known">yaw</span></div><p style="margin-top:10px">Height, roll and pitch are fixed: the robot sits on the floor and the camera mount is known. Yaw comes from the gyro. Only the position is left.</p></div>
+  </div>
+  <div class="prose">
+    <p class="full">With just x and y to find, the four corners of one tag give 8 measurements for 2 unknowns: plenty. Even a single pair of corners is enough. The tag's direction in the image fixes the line the robot is on, and its size fixes how far along that line. <strong>And the flip can't happen</strong>: the flipped answer needs the robot to face a different way, and the gyro says it doesn't.</p>
+    <p class="full">Limelight calls this <strong>MegaTag2</strong>. In PhotonLib it's <code>estimateConstrainedSolvepnpPose</code> (all tags, heading held to the gyro) or <code>estimatePnpDistanceTrigSolvePose</code> (the best single tag).</p>
+  </div>
+
+  </div>
+
+  <div class="prose short">
+    <p>The robot's <span class="term">gyro</span> knows its heading very accurately. Heading is exactly what vision is worst at from one tag, and far away a small angle error becomes a big miss: 1° at 5 m is about 8.7 cm sideways.</p>
+    <p>So let the gyro supply the heading. Then vision only has to find x and y: one tag, even two of its corners, gives a steady position, and the ambiguity flip can't happen, because it needs the robot to face a different way. The heading has to be the one from when the frame was captured, which PhotonLib looks up for you (<a href="#latency">chapter 14</a>). Compare it with solving all six numbers from the corners (full PnP):</p>
+  </div>
+
+  <div class="lab">
+    <div class="lab-head"><span class="tag">Lab</span><h4>One tag: full PnP vs heading from the gyro</h4></div>
+    <p class="todo">Switch solvers or corners, and move the sliders. Each change solves 80 new frames.</p>
+    <div class="lab-grid">
+      <div>
+        <canvas id="gy-mt2" aria-label="Top-down: clouds of solved robot positions from full PnP and from the heading-constrained solve"></canvas>
+        <div class="legend"><span><i style="background:#c4b5fd"></i>full PnP</span><span><i style="background:#f59e0b"></i>full PnP, flipped</span><span><i style="background:#a3e635"></i>heading from the gyro</span><span><i style="background:#fff"></i>real pose</span></div>
+      </div>
+      <div>
+        <div class="seg" id="gy-m-show"><button data-v="full">Full PnP</button><button data-v="gyro">Gyro heading</button><button data-v="both" class="on">Both</button></div>
+        <div class="seg" id="gy-m-corners" style="margin-top:8px"><button data-v="4" class="on">4 corners</button><button data-v="2">Only 2 corners</button></div>
+        <div class="ctl" style="margin-top:14px"><label>Distance to the tag <output></output></label><input type="range" id="gy-m-d" min="1.5" max="8" step="0.1" value="5"></div>
+        <div class="ctl"><label>Viewing angle <output></output></label><input type="range" id="gy-m-a" min="0" max="45" step="1" value="10"></div>
+        <div class="ctl"><label>Corner noise <output></output></label><input type="range" id="gy-m-n" min="0.1" max="2" step="0.05" value="0.5"></div>
+        <div class="ctl"><label>Gyro error <output></output></label><input type="range" id="gy-m-g" min="0" max="3" step="0.1" value="0"></div>
+        <div class="readout">
+          <div><small>Full PnP spread</small><b id="gy-m-sf">–</b></div>
+          <div><small>Full PnP flips</small><b id="gy-m-ff">–</b></div>
+          <div><small>Gyro-heading spread</small><b id="gy-m-sg">–</b></div>
+          <div><small>Gyro-heading flips</small><b id="gy-m-fg">–</b></div>
+        </div>
+      </div>
+    </div>
+    <p class="hint full">80 simulated frames, each with fresh corner noise, solved both ways. Spread is the radius holding 95% of the unflipped dots. "Only 2 corners" can't be done with full PnP at all (4 numbers can't pin 6 unknowns), so the full-PnP cloud disappears. Push the gyro error up to see the trade: now the lever arm works against you, so the gyro has to be good.</p>
+  </div>
+
+  <p class="prose full">One catch: the heading has to be the one from the moment the frame was captured, not the latest one. <a href="#latency">Chapter 14</a> shows how the frame's timestamp makes that lookup work.</p>
+
+  <div class="full">
+
+  <div class="callout idea full">
+    <h5>Why this works so well</h5>
+    <p>The heading-constrained solve doesn't ask vision the question it's worst at. It uses vision only for what it's good at, direction and distance, and asks the gyro the question the gyro is best at. Each sensor covers the other's weakness.</p>
+  </div>
+
+
+  <h3 class="full">MegaTag1, MegaTag2 and PhotonLib</h3>
+  <div class="prose full"><p>You'll hear Limelight's names everywhere in FRC. Here's how they map to PhotonLib, which our robot uses:</p></div>
+  <div class="table-wrap reveal full">
+    <table class="data">
+      <tr><th></th><th>MegaTag1 (MT1)</th><th>MegaTag2 (MT2)</th></tr>
+      <tr><td><b>Solves for</b></td><td>Full pose from the tags alone</td><td>x and y, with heading from the gyro</td></tr>
+      <tr><td><b>One tag</b></td><td>Can flip (ambiguity)</td><td>Stable, no flip</td></tr>
+      <tr><td><b>Needs</b></td><td>Tags, layout, calibration</td><td>All that, plus a good gyro heading every loop</td></tr>
+      <tr><td><b>Limelight</b></td><td><code>botpose_wpiblue</code></td><td><code>botpose_orb</code> + <code>SetRobotOrientation</code></td></tr>
+      <tr><td><b>PhotonLib</b></td><td><code>estimateCoprocMultiTagPose</code>, falling back to <code>estimateLowestAmbiguityPose</code></td><td><code>estimateConstrainedSolvepnpPose</code>, or <code>estimatePnpDistanceTrigSolvePose</code> for one tag</td></tr>
+      <tr><td><b>Our plan</b></td><td>Seeding the pose, heading checks</td><td>Chassis position once the seed is confirmed</td></tr>
+    </table>
+  </div>
+  <p class="caption full">MT1 is still useful: it's how the robot finds its heading in the first place (seeding), and how it checks the gyro hasn't drifted. From our <code>docs/LIMELIGHT-COMPARISON.md</code>.</p>
+
+  <details class="deep">
+    <summary>Pitfalls in PhotonLib 2027 alpha-2</summary>
+    <div>
+      <ul>
+        <li><b>Missing heading throws.</b> <code>estimateConstrainedSolvepnpPose</code> with <code>headingFree=true</code> calls <code>headingBuffer.getSample(...).get()</code> without checking, so it throws if no heading has been added yet. With <code>headingFree=false</code> it returns empty instead. Call <code>addHeadingData</code> before the first estimate either way (upstream fix: PhotonVision #2529).</li>
+        <li><b>CPU on the robot.</b> The constrained solve runs on the SystemCore and is documented at "typically not more than 2 ms" on a roboRIO. Four cameras at about 2 frames each per loop is about 8 solves. Run it on the newest frame per camera, or use the trig solve, and time it on the SystemCore.</li>
+        <li><b>It needs the calibration.</b> The constrained solve takes <code>camera.getCameraMatrix()</code> and <code>camera.getDistCoeffs()</code>. The distortion is 8 coefficients (<code>N8</code>), which matches our 8-coefficient fix. Both are empty until the camera has connected.</li>
+        <li><b>Trig solve uses one tag,</b> the best target, even when several are visible.</li>
+        <li><b>Feed it fast.</b> Our plan feeds <code>addHeadingData</code> every loop, ideally from the 250 Hz odometry-thread samples, so the buffer has a sample close to every capture time.</li>
+      </ul>
+      <div class="code"><span class="c">// every loop (or every odometry sample)</span>
+estimator.addHeadingData(timestamp, drivetrain.getHeading());
+
+<span class="c">// per result: MT2-style, heading held to the gyro</span>
+var est = estimator.estimateConstrainedSolvepnpPose(result,
+    camera.getCameraMatrix().get(), camera.getDistCoeffs().get(),
+    seedPose, <span class="k">false</span> <span class="c">/* headingFree */</span>, headingScale);
+<span class="k">if</span> (est.isEmpty()) est = estimator.estimatePnpDistanceTrigSolvePose(result);</div>
+    </div>
+  </details>
+  <details class="deep">
+    <summary>How other teams use the gyro</summary>
+    <div>
+      <ul>
+        <li><b>4533's Whacknet</b> (a PhotonVision fork) does the heading-constrained solve on the coprocessor. The robot streams its gyro to it at 200 Hz over UDP, and the heading is interpolated to the shutter time. It's our upgrade path if the constrained solve turns out too heavy for the SystemCore.</li>
+        <li><b>AOS</b> (Austin Schuh's system, run by 1868 and 4646) goes beyond MegaTag2: an extended Kalman filter on the coprocessor fuses 4 cameras, the robot's heading and its chassis speeds into one estimate of x, y and heading. Adopting it would mean replacing our robot-side localization.</li>
+        <li><b>971's bos</b> resolves single-tag ambiguity across cameras: it tries every combination of each camera's two candidate poses and keeps the set that agrees best with itself and with the last pose.</li>
+        <li><b>Limelight 4</b> has a built-in IMU, but on our robot it wasn't doing anything for the pose: in the mode we ran, it was just kept matched to our gyro, and MT2 still used the heading we pushed.</li>
+      </ul>
+    </div>
+  </details>
+  <div class="deeper full">
+    <a href="https://docs.limelightvision.io/docs/docs-limelight/pipeline-apriltag/apriltag-robot-localization-megatag2">Limelight: MegaTag2</a>
+    <a href="https://docs.photonvision.org/en/latest/docs/programming/photonlib/robot-pose-estimator.html">PhotonLib pose estimator</a>
+    <a class="video" href="https://www.youtube.com/watch?v=eqZgxR6eRjo" target="_blank" rel="noopener">How To Mechatronics: How MEMS accelerometers and gyroscopes work (9:57)</a>
+  </div>
+
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Chapter 13 recap</h5>
+    <ul>
+      <li>The gyro knows heading well; heading is vision's weakest estimate from one tag.</li>
+      <li>Lever arm: 1° at 5 m ≈ 8.7 cm sideways.</li>
+      <li>Heading from the gyro leaves only x and y: one tag gives a steady position, and no flips. Use the heading at the frame's capture time.</li>
+    </ul>
+  </div>
+  <div class="recap reveal full">
+    <h5>Chapter 13 recap</h5>
+    <ul>
+      <li>The gyro measures heading accurately; vision's weakest estimate from one tag is heading.</li>
+      <li>Lever arm: sideways miss ≈ distance × angle. 1° at 5 m ≈ 8.7 cm.</li>
+      <li>Heading-constrained solves (MegaTag2) take heading from the gyro, leaving 2 unknowns. One tag, even two corners, gives a stable position, and the flip can't happen.</li>
+      <li>Use the heading at the frame's capture time (<a href="#latency">chapter 14</a>).</li>
+      <li class="full">MT1 = full pose from tags (PhotonLib multi-tag / lowest ambiguity). MT2 = heading held (constrained solvePnP / trig solve).</li>
+    </ul>
+  </div>
+</div>

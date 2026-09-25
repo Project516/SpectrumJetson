@@ -1,0 +1,10 @@
+USB camera bandwidth (all the Jetson's USB 2.0 ports share about 6720 bytes per 125 us microframe)
+Driver cap: 1bcf:28c5:1280,32e4:0144:1280,32e4:62f0:1600,1-1.1:256,1-2.1:1280,1-2.2:640,1-2.3:1280,1-2.4:640
+
+Bus 1: reserving 3840 of ~6720 bytes per microframe
+  port 1-2.1    TopLeft = Thrifty (1bcf:28c5):  1280 bytes now, streaming; alternate settings 192-3060 bytes, capped at 1280
+  port 1-2.2    Global_Shutter_Camera (1) = Global Shutter Camera (32e4:0144):   640 bytes now, streaming; alternate settings 192-3060 bytes, capped at 640
+  port 1-2.3    TopRight = Thrifty (1bcf:28c5):  1280 bytes now, streaming; alternate settings 192-3060 bytes, capped at 1280
+  port 1-2.4    Global_Shutter_Camera = Global Shutter Camera (32e4:0144):   640 bytes now, streaming; alternate settings 192-3060 bytes, capped at 640
+
+Every camera fits, and nothing failed to connect.

@@ -1,0 +1,254 @@
+<style>
+  #networktables .net svg { width: 100%; height: auto; display: block; }
+  #networktables .pkt-layers { display: grid; gap: 8px; margin-top: 12px; }
+  #networktables .layer { border-radius: 10px; padding: 8px 12px; font-size: .86rem; border: 1px solid; transition: opacity .3s, transform .3s; }
+  #networktables .layer b { font-family: var(--font-heading); margin-right: 8px; }
+  #networktables .layer code { font-size: .78rem; }
+  #networktables .layer.eth { background: rgba(6,182,212,.12); border-color: rgba(6,182,212,.5); }
+  #networktables .layer.ip { background: rgba(139,92,246,.14); border-color: rgba(139,92,246,.55); margin-left: 14px; }
+  #networktables .layer.tcp { background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.5); margin-left: 28px; }
+  #networktables .layer.nt { background: rgba(163,230,53,.12); border-color: rgba(163,230,53,.5); margin-left: 42px; }
+  #networktables .layer.off { opacity: .15; transform: translateX(8px); }
+  #networktables .tree-lab { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 22px; }
+  @media (max-width: 860px) { #networktables .tree-lab { grid-template-columns: minmax(0, 1fr); } #networktables .info { position: static; } #networktables .tree { font-size: .76rem; } }
+  #networktables .tree { background: #0e0518; border: 1px solid var(--lab-line); border-radius: 12px; padding: 10px 6px; font: .82rem/1.5 var(--mono); max-height: 560px; overflow: auto; }
+  #networktables .tree ul { list-style: none; margin: 0; padding-left: 16px; }
+  #networktables .tree > ul { padding-left: 4px; }
+  #networktables .tree li > ul { display: none; border-left: 1px dashed rgba(196,181,253,.2); margin-left: 6px; }
+  #networktables .tree li.open > ul { display: block; }
+  #networktables .tree button { all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; color: var(--lab-ink); width: calc(100% - 16px); box-sizing: border-box; }
+  #networktables .tree button:hover { background: rgba(255,255,255,.06); }
+  #networktables .tree button:focus-visible { outline: 2px solid var(--accent); }
+  #networktables .tree button.sel { background: rgba(139,92,246,.35); }
+  #networktables .tree .tw { width: 12px; color: var(--lab-muted); font-size: .7rem; }
+  #networktables .tree .dir { font-size: .66rem; padding: 0 5px; border-radius: 4px; margin-left: auto; font-family: var(--font); font-weight: 700; }
+  #networktables .tree .dir.up { background: rgba(196,181,253,.18); color: #c4b5fd; }
+  #networktables .tree .dir.down { background: rgba(245,158,11,.2); color: #fcd34d; }
+  #networktables .tree .folder { color: var(--accent-soft); font-weight: 500; }
+  #networktables .tree .ours::after { content: "ours"; font: 700 .6rem var(--font); color: #a3e635; border: 1px solid rgba(163,230,53,.5); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+  #networktables .info { background: rgba(255,255,255,.05); border: 1px solid var(--lab-line); border-radius: 12px; padding: 16px 18px; align-self: start; position: sticky; top: calc(var(--nav-h) + 14px); }
+  #networktables .info h5 { margin: 0 0 4px; font: 600 .95rem var(--mono); color: #fff; word-break: break-all; }
+  #networktables .info .meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+  #networktables .info .meta span { font: 600 .72rem var(--font); background: rgba(255,255,255,.08); border-radius: 6px; padding: 2px 8px; color: var(--lab-ink); }
+  #networktables .info p { font-size: .9rem; margin-bottom: .6em; }
+  #networktables .info .ex { font: .8rem var(--mono); color: #a3e635; background: #0e0518; border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: pre; }
+  body.mode-short #networktables .nt-ps { grid-template-columns: minmax(0, 1fr); max-width: 640px; margin-top: 24px; }
+  #networktables .keys { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--lab-muted); margin-top: 10px; }
+  #networktables pre.java { background: #1f1b23; color: #eee8f7; border-radius: 14px; padding: 18px 20px; font: .82rem/1.65 var(--mono); overflow-x: auto; box-shadow: var(--shadow-lg); margin: 0; }
+  #networktables pre.java .k { color: #c4b5fd; font-weight: 500; }
+  #networktables pre.java .t { color: #67e8f9; }
+  #networktables pre.java .s { color: #bef264; }
+  #networktables pre.java .n { color: #fcd34d; }
+  #networktables pre.java .c { color: #8f84a3; font-style: italic; }
+  #networktables pre.java .m { color: #f9a8d4; }
+  #networktables .ports { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 360px; }
+  #networktables .port { all: unset; cursor: pointer; background: #fff; border: 2px solid var(--border-strong); border-radius: 10px; padding: 10px 12px; text-align: center; box-shadow: var(--shadow-md); transition: border-color .2s, transform .2s; }
+  #networktables .port:hover, #networktables .port.on { border-color: var(--accent); transform: translateY(-2px); }
+  #networktables .port .sock { height: 16px; margin: 0 auto 8px; width: 70%; border-radius: 3px; background: linear-gradient(#1f1b23 0 40%, #3b82f6 40% 70%, #1f1b23 70%); }
+  #networktables .port b { display: block; font-family: var(--font-heading); color: var(--p700); }
+  #networktables .port small { font: .75rem var(--mono); color: var(--muted); }
+  #networktables .port-note { font-size: .9rem; margin-top: 12px; min-height: 3em; }
+  #networktables .dir-cards .card { border-left: 4px solid #f59e0b; }
+  #networktables .n-log { margin-top: 10px; font: 500 .8rem var(--mono); color: #d9f99d; background: #0e0518; border-radius: 8px; padding: 7px 10px; min-height: 2.2em; }
+  #networktables [data-pub]:active { transform: scale(.96); }
+  #networktables .lab-do { margin: -6px 0 14px; font: 600 .9rem var(--font); color: #ede4ff; }
+  #networktables .lab-do::before { content: "→ "; color: var(--accent-soft); }
+  @media (max-width: 640px) { #networktables .tree button { padding: 9px 8px; } #networktables .lab .seg button { min-height: 42px; } }
+</style>
+<div class="shell">
+  <div class="ch-head">
+    <span class="eyebrow"><span class="num">15</span> · On the robot</span>
+    <h2>Talking to the <em>SystemCore.</em></h2>
+    <p class="lede">The Jetson has found the tags and worked out where the robot is. None of that matters until the robot code hears about it. Here's how the answer travels down an Ethernet cable, and what the robot code does with it.</p>
+  </div>
+
+  <div class="prose short">
+    <p>The Jetson plugs into the robot's network with an <span class="term">Ethernet</span> cable: it's <code>10.85.15.15</code>, the SystemCore <code>10.85.15.2</code>. They share data through <span class="term">NetworkTables</span>, WPILib's shared whiteboard. Every value has a named <span class="term">topic</span>; programs publish or subscribe; the server, in the robot code, pushes each change to every subscriber. Every frame, PhotonVision publishes each camera's result (tags, corners, poses, timestamp) on <code>/photonvision/&lt;camera&gt;/rawBytes</code>.</p>
+    <p>Robot code reads it with <span class="term">PhotonLib</span>: <code>new PhotonCamera("TopLeft")</code>, <code>getAllUnreadResults()</code>, a pose estimator, and <code>addVisionMeasurement(pose, timestamp)</code>. Our cameras are named after the USB port they're in, because every Thriftiest Cam has the same serial number.</p>
+  </div>
+
+
+  <div class="split full">
+    <div class="prose">
+      <h3 style="margin-top:0">A cable and two addresses</h3>
+      <p>The Jetson plugs into the robot's network with an <span class="term">Ethernet</span> cable, the same kind of cable a desktop computer uses. The robot's radio acts as a small network switch, connecting the Jetson, the <span class="term">SystemCore</span> and (over Wi-Fi) the driver station laptop.</p>
+      <p>Every device on a network has an <span class="term">IP address</span>, like a street address for mail. FRC uses a pattern built from your team number: <code>10.TE.AM.x</code>. We play as team 8515 at this event, so our addresses start with <code>10.85.15</code>:</p>
+      <ul>
+        <li><strong>SystemCore:</strong> <code>10.85.15.2</code> (the <code>.2</code> address is the robot controller's by convention)</li>
+        <li><strong>Jetson:</strong> <code>10.85.15.15</code>, a <em>static</em> address we set, so it never changes and never waits for one to be handed out</li>
+      </ul>
+      <p>Data doesn't flow down the wire as one continuous stream. It's chopped into <span class="term">packet</span>s: small envelopes, each with a "from" and "to" address, sent one after another.</p>
+    </div>
+    <figure class="fig net" style="margin:0">
+      <svg id="n-net" viewBox="0 0 560 350" role="img" aria-label="Robot network: the Jetson at 10.85.15.15 and SystemCore at 10.85.15.2, both wired to the radio; the driver station on Wi-Fi; packets moving along the cables"></svg>
+      <figcaption>Our robot network. Packets animated; timing not to scale (a packet crosses this in microseconds).</figcaption>
+    </figure>
+  </div>
+
+  <div class="lab full">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Open up a packet</h4></div>
+    <p class="lab-do">Tap a layer name to see what it adds; “Whole packet” shows them all.</p>
+    <div class="lab-grid">
+      <div>
+        <p style="margin-top:0">A packet is envelopes inside envelopes. Each layer is added by a different part of the system, and each is only read by the part that needs it. Step through them.</p>
+        <div class="seg" id="n-layer"><button data-v="0" class="on">Whole packet</button><button data-v="1">Ethernet</button><button data-v="2">IP</button><button data-v="3">TCP</button><button data-v="4">NetworkTables</button></div>
+        <div class="pkt-layers" id="n-layers">
+          <div class="layer eth"><b>Ethernet</b>the hardware (MAC) addresses on this local network. A switch only reads it; a router would replace it.</div>
+          <div class="layer ip"><b>IP</b>from <code>10.85.15.15</code> to <code>10.85.15.2</code>: the whole trip, Jetson to SystemCore.</div>
+          <div class="layer tcp"><b>TCP</b>port <code>5810</code>: which program on the SystemCore should get it, and a sequence number so lost pieces get re-sent.</div>
+          <div class="layer nt"><b>NetworkTables</b>"topic <code>/photonvision/TopLeft/rawBytes</code> now holds these bytes, as of time T".</div>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:0">
+        <p><b>Why layers?</b> The switch in the radio only reads the Ethernet label. Routers read IP. The operating system reads TCP to find the right program. Only NetworkTables reads the innermost part. Nobody has to understand the whole thing, which is why the internet works.</p>
+        <p><b>A real detail:</b> NetworkTables 4 actually runs its TCP connection as a <em>WebSocket</em>, the same technology web pages use for live updates. Time sync uses <em>UDP</em> on the same port number: faster, with no re-sending, which is fine for pings.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="full">NetworkTables: a shared whiteboard</h3>
+  <div class="split flip nt-ps">
+    <div class="prose full">
+      <p><span class="term">NetworkTables</span> is WPILib's way for programs on the robot network to share values. Think of a whiteboard in the pit that everyone can see:</p>
+      <ul>
+        <li>Each value has a name, called a <span class="term">topic</span>, written like a file path: <code>/photonvision/TopLeft/hasTarget</code>.</li>
+        <li>A program that writes a topic is a <strong>publisher</strong>. A program that wants to know when it changes is a <strong>subscriber</strong>.</li>
+        <li>The whiteboard itself lives in the robot program on the SystemCore: the <strong>server</strong>. Everyone else is a <strong>client</strong> that connects to it on port <code>5810</code>: PhotonVision, dashboards like Elastic, AdvantageScope.</li>
+      </ul>
+      <p>When a publisher writes a new value, the server passes it on to every subscriber of that topic, with a timestamp. Nobody polls; changes are pushed. The robot code never has to know the Jetson's address. It just subscribes to the camera's topics.</p>
+      <div class="callout analogy"><h5>Analogy</h5><p>It's like a group chat with channels. You join the channels you care about, you post in the ones you own, and the server makes sure everyone in a channel sees each new message.</p></div>
+    </div>
+    <div class="lab" style="margin:0">
+      <div class="lab-head"><span class="tag">Lab</span><h4>Publish and subscribe</h4></div>
+      <svg class="vis" id="n-pubsub" viewBox="0 0 520 440" role="img" aria-label="NetworkTables server on the SystemCore with topics; PhotonVision, robot code and a dashboard as publishers and subscribers; values light up as they flow"></svg>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn-sm primary" data-pub="result">Jetson: new result</button>
+        <button class="btn-sm" data-pub="record">Robot: start Rewind</button>
+        <button class="btn-sm" data-pub="pipe">Dashboard: switch to pipeline 1</button>
+      </div>
+      <div class="n-log" id="n-log" aria-live="polite">Playing a demo. Press a button to publish a value yourself.</div>
+      <p class="hint">Press a button: the client sends one value to the server, and only the clients that subscribed to that topic get a copy (green). Values are illustrative.</p>
+    </div>
+  </div>
+
+  <h3 class="full">What PhotonVision publishes</h3>
+  <div class="prose full">
+    <p>Each camera gets its own folder of topics, named after the camera: <code>/photonvision/TopLeft/…</code>. The important one is <code>rawBytes</code>. Every frame, PhotonVision packs everything it found into one compact binary blob, a <code>PhotonPipelineResult</code>, and publishes it there. PhotonLib, on the robot, unpacks it.</p>
+    <p>Our patches added a lot more: health, settings snapshots, Rewind controls. Browse the tree below.</p>
+  </div>
+
+  <div class="lab full">
+    <div class="lab-head"><span class="tag">Lab</span><h4>Our topic tree</h4></div>
+    <p class="lab-do">Tap a folder (▸) to open it, and tap any topic to read about it.</p>
+    <div class="tree-lab">
+      <div>
+        <div class="tree" id="n-tree" role="tree" aria-label="NetworkTables topics"></div>
+        <div class="keys"><span><span class="dir up" style="font:700 .66rem var(--font);padding:0 5px;border-radius:4px;background:rgba(196,181,253,.18);color:#c4b5fd">to robot</span> Jetson → robot</span><span><span style="font:700 .66rem var(--font);padding:0 5px;border-radius:4px;background:rgba(245,158,11,.2);color:#fcd34d">to Jetson</span> robot → Jetson</span><span><span style="font:700 .6rem var(--font);color:#a3e635;border:1px solid rgba(163,230,53,.5);border-radius:4px;padding:0 4px">ours</span> added by our patches</span></div>
+      </div>
+      <div class="info" id="n-info"></div>
+    </div>
+  </div>
+
+  <div class="callout pitfall full"><h5>Versions: the one rule</h5><p>Our Jetson runs 2026 PhotonVision and the robot runs 2027 PhotonLib. That works because the message layout (its fingerprint hash) is identical in both, as we checked in the source (<a href="#photonvision">chapter 9</a>). So <strong>don't upgrade the robot's PhotonLib past alpha-6</strong>: later versions changed the layout, and the robot code would throw an error reading from this Jetson.</p></div>
+
+  <details class="deep"><summary>What's inside a PhotonPipelineResult</summary><div>
+    <p>Field names from PhotonVision's message definitions (<code>photon-serde/messages.yaml</code>, v2026.3.4). PhotonLib turns these into Java objects with getters like <code>getYaw()</code> and <code>getBestCameraToTarget()</code>.</p>
+    <ul>
+      <li><strong>metadata</strong>: <code>sequenceID</code> (counts frames), <code>captureTimestampMicros</code> (when the light was captured, mid-exposure on our Jetson), <code>publishTimestampMicros</code> (when it was sent), <code>timeSinceLastPong</code> (how fresh time sync is).</li>
+      <li><strong>targets</strong>, one per tag seen: <code>yaw</code>, <code>pitch</code> (degrees from the image center), <code>area</code> (% of the image), <code>skew</code>, <code>fiducialId</code> (the tag's ID), <code>bestCameraToTarget</code> and <code>altCameraToTarget</code> (the two candidate 3D poses of the tag), <code>poseAmbiguity</code> (how close those two are to each other in error: near 1 is bad, below ~0.2 is usually trustworthy), <code>detectedCorners</code> (the four corners in pixels), <code>minAreaRectCorners</code>, plus <code>objDetectId</code> / <code>objDetectConf</code> for game-piece models.</li>
+      <li><strong>multitagResult</strong> (optional): <code>estimatedPose</code> (a best and an alternate field-to-camera pose with their reprojection errors and ambiguity) and <code>fiducialIDsUsed</code>. This is the multi-tag solve that uses every visible tag at once.</li>
+    </ul>
+  </div></details>
+
+  <h3 class="full">Four ports, four names</h3>
+  <div class="split full">
+    <div class="prose">
+      <p>Here's a strange fact: <strong>every Thriftiest Cam reports the same name and the same serial number.</strong> To software, two of them are identical. So PhotonVision tells them apart by the only thing that differs: which USB port each is plugged into. We named the cameras after their ports, and the robot code uses the same names.</p>
+      <div class="callout pitfall"><h5>Swap two cables, swap two calibrations</h5><p>A calibration belongs to one physical camera and lens. If TopLeft's camera ends up in TopRight's port, PhotonVision happily uses the wrong calibration and the wrong mount position, with no error. That's why the ports and cables get labels, and why the plugs get hot glue.</p></div>
+    </div>
+    <div>
+      <p class="small muted" style="margin-bottom:8px">The Jetson's four USB-A ports, looking at them. Tap one.</p>
+      <div class="ports" id="n-ports">
+        <button class="port" data-n="TopLeft" data-p="2.1"><div class="sock"></div><b>TopLeft</b><small>hub port 2.1</small></button>
+        <button class="port" data-n="TopRight" data-p="2.3"><div class="sock"></div><b>TopRight</b><small>hub port 2.3</small></button>
+        <button class="port" data-n="BottomLeft" data-p="2.2"><div class="sock"></div><b>BottomLeft</b><small>hub port 2.2</small></button>
+        <button class="port" data-n="BottomRight" data-p="2.4"><div class="sock"></div><b>BottomRight</b><small>hub port 2.4 (expected)</small></button>
+      </div>
+      <p class="port-note" id="n-port-note">Notice the hub numbers don't go in reading order: top-left is 2.1, but bottom-left is 2.2. That's how the Jetson's internal hub is wired.</p>
+    </div>
+  </div>
+
+  <h3 class="full">The robot side: PhotonLib</h3>
+  <div class="split top full">
+    <div class="prose">
+      <p>Robot code uses <span class="term">PhotonLib</span> to read the camera's results. The steps:</p>
+      <ol>
+        <li><strong>Make a <code>PhotonCamera</code></strong> with the camera's name. Ours are named after the USB port they're plugged into.</li>
+        <li><strong>Make a <code>PhotonPoseEstimator</code></strong> with the field's tag layout and where the camera is mounted on the robot (<code>robotToCam</code>).</li>
+        <li><strong>Every loop, read <code>getAllUnreadResults()</code></strong>. At 120 fps, 2–3 results pile up between 20 ms loops, and you want all of them.</li>
+        <li><strong>Turn each result into a robot pose</strong>: multi-tag first, falling back to the single tag with the lowest ambiguity.</li>
+        <li><strong>Hand it to the drivetrain's pose estimator with its timestamp.</strong> That timestamp is already on the robot's clock (chapter 14).</li>
+      </ol>
+      <p class="small muted">Real robot code also sets how much to trust each measurement (standard deviations), and rejects bad ones (too far, too ambiguous, off the field). That's in our robot code's vision subsystem.</p>
+    </div>
+<pre class="java" aria-label="Java example using PhotonLib"><span class="c">// Once, when the robot starts</span>
+<span class="t">PhotonCamera</span> cam = <span class="k">new</span> <span class="t">PhotonCamera</span>(<span class="s">"TopLeft"</span>);   <span class="c">// = its USB port</span>
+<span class="t">Transform3d</span> robotToCam = <span class="k">new</span> <span class="t">Transform3d</span>(
+    <span class="k">new</span> <span class="t">Translation3d</span>(<span class="n">0.30</span>, <span class="n">0.25</span>, <span class="n">0.45</span>),   <span class="c">// m: fwd, left, up</span>
+    <span class="k">new</span> <span class="t">Rotation3d</span>(<span class="n">0</span>, <span class="t">Math</span>.<span class="m">toRadians</span>(<span class="n">-20</span>), <span class="n">0</span>)); <span class="c">// tilted up 20°</span>
+<span class="t">AprilTagFieldLayout</span> layout =
+    <span class="t">AprilTagFieldLayout</span>.<span class="m">loadField</span>(<span class="t">AprilTagFields</span>.k2026RebuiltAndymark);
+<span class="t">PhotonPoseEstimator</span> estimator =
+    <span class="k">new</span> <span class="t">PhotonPoseEstimator</span>(layout, robotToCam);
+
+<span class="c">// Every robot loop (every 20 ms)</span>
+<span class="k">for</span> (<span class="t">PhotonPipelineResult</span> result : cam.<span class="m">getAllUnreadResults</span>()) {
+  <span class="t">Optional</span>&lt;<span class="t">EstimatedRobotPose</span>&gt; est =
+      estimator.<span class="m">estimateCoprocMultiTagPose</span>(result);
+  <span class="k">if</span> (est.<span class="m">isEmpty</span>())
+    est = estimator.<span class="m">estimateLowestAmbiguityPose</span>(result);
+  est.<span class="m">ifPresent</span>(e -&gt; drivetrain.<span class="m">addVisionMeasurement</span>(
+      e.estimatedPose.<span class="m">toPose2d</span>(),
+      e.timestampSeconds));   <span class="c">// capture time, robot clock</span>
+}</pre>
+  </div>
+  <p class="small muted full">Checked against PhotonLib <code>v2027.0.0-alpha-2</code> (the <code>PhotonPoseEstimator(layout, robotToCamera)</code> constructor and the <code>estimate…Pose</code> methods) and WPILib's 2026 field list. The mount numbers are made up. In WPILib's <code>Rotation3d</code>, positive pitch points the camera down, so a camera tilted up has a negative pitch.</p>
+
+  <h3 class="full">The other direction: robot → Jetson</h3>
+  <p class="prose full">NetworkTables works both ways. The robot code doesn't just listen; it also tells the Jetson things.</p>
+  <div class="cards dir-cards full">
+    <div class="card"><div class="icon">🕐</div><h4>The time</h4><p>The robot is the time sync server (UDP 5810), so Jetson timestamps can be converted to robot time. It also publishes its date on <code>/photonvision/clock/unixMs</code> so the Jetson's logs and recordings get real dates.</p><span class="chip">photonvision-08</span></div>
+    <div class="card"><div class="icon">⏺️</div><h4>Record Rewind</h4><p>Set <code>/photonvision/rewind/record</code> true and every camera is saved to the SSD. Our robot code will do it for each FMS match, named by the match (in progress).</p><span class="chip">photonvision-07</span></div>
+    <div class="card"><div class="icon">💤</div><h4>Rest while disabled</h4><p><code>camera.setEnabled(false)</code> stops a camera's processing, so the Jetson runs cooler while the robot waits for a match. A robot-set FPS limit does something similar.</p><span class="chip">photonvision-11</span></div>
+    <div class="card"><div class="icon">🎚️</div><h4>Switch profiles</h4><p>Every camera has the same pipelines at the same numbers (say 0 = event field, 1 = practice field). Robot code can switch them all with <code>setPipelineIndex</code>, and the log records which was active.</p><span class="chip">pipelineIndexRequest</span></div>
+    <div class="card"><div class="icon">📐</div><h4>Where each camera is</h4><p>Robot code publishes each camera's mount, <code>robotToCamera</code>, from CAD. Field calibration uses it, and sends back the measured mount on <code>fieldcal/robotToCamera</code>.</p><span class="chip">photonvision-30</span></div>
+    <div class="card"><div class="icon">🚫</div><h4>Leave out a bad tag</h4><p>If a tag is mounted wrong at an event, robot code can list it on <code>/photonvision/excludedTags</code>, and every camera's multi-tag solve ignores it.</p><span class="chip">photonvision-22</span></div>
+  </div>
+
+  <div class="deeper full">
+    <a href="https://docs.photonvision.org/en/latest/docs/programming/photonlib/getting-target-data.html">PhotonLib: getting target data</a>
+    <a href="https://docs.photonvision.org/en/latest/docs/programming/photonlib/robot-pose-estimator.html">PhotonLib: pose estimator</a>
+    <a href="https://docs.wpilib.org/en/stable/docs/software/networktables/networktables-intro.html">WPILib: what is NetworkTables</a>
+  </div>
+
+  <div class="recap reveal short">
+    <h5>Chapter 15 recap</h5>
+    <ul>
+      <li>The Jetson (10.85.15.15) and SystemCore (10.85.15.2) share the robot's Ethernet network.</li>
+      <li>NetworkTables is a publish/subscribe whiteboard; the server lives in the robot code, and each camera's results arrive on <code>rawBytes</code>.</li>
+      <li>Robot code: <code>PhotonCamera</code> → <code>getAllUnreadResults()</code> → pose estimator → <code>addVisionMeasurement</code>.</li>
+    </ul>
+  </div>
+
+  <div class="recap reveal full">
+    <h5>Chapter 15 recap</h5>
+    <ul>
+      <li>The Jetson (<code>10.85.15.15</code>, static) and SystemCore (<code>10.85.15.2</code>) share the robot's Ethernet network. Data travels in packets.</li>
+      <li>NetworkTables 4 is a publish/subscribe whiteboard. The server lives in the robot code; PhotonVision and dashboards are clients on port 5810.</li>
+      <li>Each camera publishes a <code>PhotonPipelineResult</code> on <code>rawBytes</code>: targets, corners, candidate poses, ambiguity, multi-tag result, timestamps.</li>
+      <li class="full">A matching layout hash lets our 2026 PhotonVision talk to 2027 PhotonLib. Don't upgrade PhotonLib past alpha-6.</li>
+      <li>Robot code: <code>PhotonCamera("TopLeft")</code> → <code>getAllUnreadResults()</code> → <code>PhotonPoseEstimator</code> → <code>addVisionMeasurement(pose, timestamp)</code>.</li>
+      <li class="full">The robot talks back: time, Rewind, <code>setEnabled</code>, pipeline profiles, camera mounts, excluded tags.</li>
+    </ul>
+  </div>
+</div>

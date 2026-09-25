@@ -1,0 +1,146 @@
+[
+ {
+  "file": "tag-close_TopLeft",
+  "session": "0007_bench_20260924-061447",
+  "camera": "TopLeft",
+  "frame": 51,
+  "jpeg_bytes": 52801,
+  "size": [
+   1280,
+   800
+  ],
+  "jpeg_sampling": [
+   [
+    1,
+    2,
+    1,
+    0
+   ],
+   [
+    2,
+    1,
+    1,
+    1
+   ],
+   [
+    3,
+    1,
+    1,
+    1
+   ]
+  ],
+  "detections": [
+   {
+    "id": 3,
+    "hamming": 0,
+    "decision_margin": 89.8,
+    "corners_px": [
+     [
+      448.0,
+      576.9
+     ],
+     [
+      596.0,
+      533.6
+     ],
+     [
+      570.3,
+      394.6
+     ],
+     [
+      415.3,
+      430.0
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "file": "tag-close-bigger_TopRight",
+  "session": "0008_bench_20260924-064804",
+  "camera": "TopRight",
+  "frame": 12,
+  "jpeg_bytes": 60415,
+  "size": [
+   1280,
+   800
+  ],
+  "jpeg_sampling": [
+   [
+    1,
+    2,
+    1,
+    0
+   ],
+   [
+    2,
+    1,
+    1,
+    1
+   ],
+   [
+    3,
+    1,
+    1,
+    1
+   ]
+  ],
+  "detections": [
+   {
+    "id": 3,
+    "hamming": 0,
+    "decision_margin": 85.0,
+    "corners_px": [
+     [
+      672.4,
+      183.6
+     ],
+     [
+      819.3,
+      259.4
+     ],
+     [
+      910.5,
+      96.7
+     ],
+     [
+      729.7,
+      15.6
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "file": "no-tag_TopLeft",
+  "session": "0009_bench_20260924-070338",
+  "camera": "TopLeft",
+  "frame": 78,
+  "jpeg_bytes": 49745,
+  "size": [
+   1280,
+   800
+  ],
+  "jpeg_sampling": [
+   [
+    1,
+    2,
+    1,
+    0
+   ],
+   [
+    2,
+    1,
+    1,
+    1
+   ],
+   [
+    3,
+    1,
+    1,
+    1
+   ]
+  ],
+  "detections": []
+ }
+]

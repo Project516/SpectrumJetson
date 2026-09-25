@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Our Robot Sees | Spectrum 3847 Vision Training</title>
+  <meta name="description" content="A visual, scrollable training course on Spectrum 3847's Jetson Orin Nano AprilTag vision system: cameras, AprilTags, GPUs, CUDA, Linux, PhotonVision, calibration, pose estimation, latency and robot failsafes.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/site.css">
+  <link rel="stylesheet" href="css/chapters.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' shape-rendering='crispEdges'%3E%3Crect width='10' height='10' fill='%233c0060'/%3E%3Crect x='1' y='1' width='8' height='8' fill='%23000'/%3E%3Crect x='3' y='2' width='2' height='2' fill='%23fff'/%3E%3Crect x='6' y='3' width='2' height='3' fill='%23fff'/%3E%3Crect x='2' y='6' width='3' height='2' fill='%23fff'/%3E%3C/svg%3E">
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }</script>
+</head>
+<body>
+
+<header class="topnav">
+  <a class="brand" href="#top"><img src="assets/logo-white.png" alt="Spectrum 3847"><span>Vision Training</span></a>
+  <div class="now"></div>
+  <div class="modesw" role="group" aria-label="Course length"><button data-mode="short">Short<small></small></button><button data-mode="full">Full<small></small></button></div>
+  <button class="menu" aria-label="Open the chapter list">☰ Chapters</button>
+  <div class="progress"></div>
+</header>
+<aside class="toc" aria-label="Chapters">
+  <button class="btn-sm close" aria-label="Close">✕</button>
+  <h4 style="margin-top:4px">How our robot sees</h4>
+  <nav></nav>
+</aside>
+<div class="scrim"></div>
+
+<section class="hero" id="top">
+  <canvas class="bg" id="hero-canvas" aria-hidden="true"></canvas>
+  <div class="shell">
+    <span class="eyebrow">Spectrum 3847 · Vision Training</span>
+    <h1>How our robot <em>sees.</em></h1>
+    <p class="lede">From a photon hitting a camera sensor to a pose on the robot, in about 15 milliseconds. A visual tour of our Jetson Orin Nano AprilTag vision system: the hardware, the software and the math<span class="full">, and the engineering we did to make it match-ready</span>.</p>
+    <div class="mode-pick" role="group" aria-label="Pick a course length">
+      <button data-mode="short"><b>Short tour</b><span>The big ideas and the best labs. <em class="t-short"></em></span></button>
+      <button data-mode="full"><b>Full course</b><span>Everything, down to the fine details. <em class="t-full"></em></span></button>
+    </div>
+    <div class="cta">
+      <a class="btn btn-light" href="#preview">Start →</a>
+      <a class="btn btn-ghost" href="#course-map">See the course map</a>
+    </div>
+  </div>
+  <div class="scroll-hint">Scroll</div>
+</section>
+
+<section class="intro" id="preview" data-src="chapters/00-preview.html"><div class="loading">Loading…</div></section>
+
+<section class="roadmap" id="course-map">
+  <div class="shell">
+    <span class="eyebrow">Course map</span>
+    <h2>Six parts, <em>one frame's journey.</em></h2>
+    <p class="muted prose">You don't need to know anything about computers or cameras to start. Each chapter builds on the last, and most have a lab you can play with. Hover a <span class="term" data-term="dotted word" data-def="Words with a dotted underline have a definition. Hover or tap them.">dotted word</span> to see what it means.</p>
+    <div class="roadmap-grid"></div>
+  </div>
+</section>
+
+<section class="part" data-num="1" data-title="The Big Picture"><div class="shell">
+  <span class="eyebrow">Part 1</span>
+  <h2>The big <em>picture.</em></h2>
+  <p>Why a robot needs eyes, and the special black-and-white squares that make seeing easy.</p>
+</div></section>
+<section class="chapter" id="mission" data-n="01" data-title="Why robots need vision" data-src="chapters/01-mission.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="apriltags" data-n="02" data-title="AprilTags" data-src="chapters/02-apriltags.html"><div class="loading">Loading…</div></section>
+
+<section class="part" data-num="2" data-title="Capturing Light"><div class="shell">
+  <span class="eyebrow">Part 2</span>
+  <h2>Capturing <em>light.</em></h2>
+  <p>How a $50 camera turns light into numbers, and the knobs that decide whether a tag is crisp or a smear.</p>
+</div></section>
+<section class="chapter" id="camera" data-n="03" data-title="Inside the camera" data-src="chapters/03-camera.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="settings" data-n="04" data-title="Camera settings" data-src="chapters/04-settings.html"><div class="loading">Loading…</div></section>
+
+<section class="part" data-num="3" data-title="The Computer"><div class="shell">
+  <span class="eyebrow">Part 3</span>
+  <h2>The <em>computer.</em></h2>
+  <p>A credit-card-sized supercomputer, the operating system that runs it, and how a picture travels through its memory to 1,024 tiny processors at once.</p>
+</div></section>
+<section class="chapter" id="jetson" data-n="05" data-title="The Jetson Orin Nano Super" data-src="chapters/05-jetson.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="linux" data-n="06" data-title="Linux and drivers" data-src="chapters/06-linux.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="dataflow" data-n="07" data-title="A frame's journey" data-src="chapters/07-dataflow.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="cuda" data-n="08" data-title="CUDA and the GPU" data-src="chapters/08-cuda.html"><div class="loading">Loading…</div></section>
+
+<section class="part" data-num="4" data-title="The Software"><div class="shell">
+  <span class="eyebrow">Part 4</span>
+  <h2>The <em>software.</em></h2>
+  <p><span class="short">PhotonVision, the open-source program at the heart of it, and how it runs every camera's pipeline.</span><span class="full">PhotonVision, the open-source program at the heart of it, and the detective work that took us from 33 to 122 frames per second.</span></p>
+</div></section>
+<section class="chapter" id="photonvision" data-n="09" data-title="PhotonVision and our patches" data-src="chapters/09-photonvision.html"><div class="loading">Loading…</div></section>
+<section class="chapter full" id="speed" data-n="10" data-title="Making it fast" data-src="chapters/10-speed.html"><div class="loading">Loading…</div></section>
+
+<section class="part" data-num="5" data-title="The Math of Seeing"><div class="shell">
+  <span class="eyebrow">Part 5</span>
+  <h2>The math of <em>seeing.</em></h2>
+  <p>Turning four corners on a screen into "the robot is here, facing that way" — and knowing exactly when "here" was.</p>
+</div></section>
+<section class="chapter" id="calibration" data-n="11" data-title="Camera calibration" data-src="chapters/11-calibration.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="pose" data-n="12" data-title="From corners to pose" data-src="chapters/12-pose.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="gyro" data-n="13" data-title="Why the gyro helps" data-src="chapters/13-gyro.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="latency" data-n="14" data-title="Latency and timestamps" data-src="chapters/14-latency.html"><div class="loading">Loading…</div></section>
+
+<section class="part" data-num="6" data-title="On the Robot"><div class="shell">
+  <span class="eyebrow">Part 6</span>
+  <h2>On the <em>robot.</em></h2>
+  <p>Getting answers to the robot controller, and everything we built so the system keeps working when a match gets rough.</p>
+</div></section>
+<section class="chapter" id="networktables" data-n="15" data-title="Talking to the SystemCore" data-src="chapters/15-networktables.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="failsafes" data-n="16" data-title="Built for match day" data-src="chapters/16-failsafes.html"><div class="loading">Loading…</div></section>
+<section class="chapter" id="finale" data-extra-short="3" data-extra-full="7" data-n="17" data-title="Putting it all together" data-src="chapters/17-finale.html"><div class="loading">Loading…</div></section>
+
+<footer class="site">
+  <div class="shell">
+    <img src="assets/logo-white.png" alt="Spectrum 3847">
+    <p>Built by FRC Team 3847 Spectrum for our students. The vision system itself is documented in the <a href="https://github.com/Spectrum3847/SpectrumJetson">SpectrumJetson repository</a>.</p>
+    <p class="small">The CUDA AprilTag detector is Austin Schuh's work (FRC 971 / RealtimeRoboticsGroup). PhotonVision is by the PhotonVision team; the CUDA version by FRC 4143. AprilTags by the APRIL Robotics Lab, University of Michigan. 3D models: NVIDIA (Jetson Orin Nano Developer Kit CAD), The Thrifty Bot (Thriftiest Cam, Onshape), <i>FIRST</i> (2026 field CAD). FRC field camera frames: PhotonVision test images (GPL-3.0).</p>
+  </div>
+</footer>
+
+<script src="js/site.js"></script>
+<script src="js/glossary.js"></script>
+<script src="js/hero.js"></script>
+<script src="js/ch/00-preview.js"></script>
+<script src="js/ch/01-mission.js"></script>
+<script src="js/ch/02-apriltags.js"></script>
+<script src="js/ch/03-camera.js"></script>
+<script src="js/ch/04-settings.js"></script>
+<script type="module" src="js/ch/05-jetson.js"></script>
+<script src="js/ch/06-linux.js"></script>
+<script src="js/ch/07-dataflow.js"></script>
+<script src="js/ch/08-cuda.js"></script>
+<script src="js/ch/09-photonvision.js"></script>
+<script src="js/ch/10-speed.js"></script>
+<script src="js/ch/11-calibration.js"></script>
+<script type="module" src="js/ch/12-pose.js"></script>
+<script src="js/ch/13-gyro.js"></script>
+<script src="js/ch/14-latency.js"></script>
+<script src="js/ch/15-networktables.js"></script>
+<script src="js/ch/16-failsafes.js"></script>
+<script src="js/ch/17-finale.js"></script>
+</body>
+</html>

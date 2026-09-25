@@ -4,6 +4,8 @@ How FRC 3847 / 8515 turned an NVIDIA Jetson Orin Nano Super into a GPU-accelerat
 vision coprocessor: what we built, why, and how to redo it. The detailed technical reference
 (exact versions, commit hashes, every measurement) is in [docs/TECHNICAL.md](docs/TECHNICAL.md).
 
+> 🎓 **Vision Training Course:** Check out our interactive, 17-chapter visual guide on how the Jetson vision system works at **[spectrum3847.github.io/SpectrumJetson](https://spectrum3847.github.io/SpectrumJetson/)**.
+
 **Thank you, Austin Schuh.** The CUDA AprilTag detector at the heart of this build is Austin's work, first written for FRC 971 Spartan Robotics. He's the reason any of this works. He now develops it in [RealtimeRoboticsGroup/aos](https://github.com/RealtimeRoboticsGroup/aos) ([`frc/orin`](https://github.com/RealtimeRoboticsGroup/aos/tree/main/frc/orin)). We built from his copy in [frc971/bos](https://github.com/frc971/bos), inside [FRC-Team-4143's CUDA PhotonVision](https://github.com/FRC-Team-4143/photonvision). Full credits are at the [end](#credits-and-licenses).
 
 Built by Spectrum 3847 with Claude Opus 5.5 (Anthropic) in Claude Code, which did the research, code, patches, tests and docs alongside the team.
