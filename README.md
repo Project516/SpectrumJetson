@@ -32,7 +32,7 @@ Measured on the bench:
 
 We turned an NVIDIA Jetson Orin Nano Super into a vision coprocessor that finds AprilTags on its GPU, for team 8515's robot at the October 2026 off-season event.
 
-The robot controller is a SystemCore running 2027 alpha-6 robot code. The Jetson runs PhotonVision, the same software many FRC teams use on an Orange Pi. Ours is a special version that sends the AprilTag math to the GPU using a detector written by FRC team 971. The robot code talks to it through PhotonLib over NetworkTables, like any other PhotonVision camera. WPILib 2027.0.0-alpha-7 is the next migration target. Its release notes say alpha-6 and earlier vendordeps do not work with it, so the CUDA port and a matching robot PhotonLib must be tested together. See [docs/WPILIB-2027-ALPHA-7.md](docs/WPILIB-2027-ALPHA-7.md).
+The robot controller is a SystemCore running 2027 alpha-6 robot code. The Jetson runs PhotonVision, the same software many FRC teams use on an Orange Pi. Ours is a special version that sends the AprilTag math to the GPU using a detector written by FRC team 971. The robot code talks to it through PhotonLib over NetworkTables, like any other PhotonVision camera. The current compatibility limit and alpha-7 migration order are in [docs/WPILIB-2027-ALPHA-7.md](docs/WPILIB-2027-ALPHA-7.md).
 
 Everything we did is scripted in this repo, so another Jetson can be set up the same way. These notes explain what we did and why, including the mistakes, so you can understand the system and not just copy commands.
 
