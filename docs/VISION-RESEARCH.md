@@ -368,6 +368,21 @@ The newest code is [RobotCode2026Public/northstar](https://github.com/Mechanical
 - **Game pieces:** a field map where pieces expire after 3 s.
 - **Bumps:** odometry trust scaled down with tilt.
 
+### 3015's Polaris (checked 2026-09-28, nothing to take)
+
+[3015RangerRobotics/polaris](https://github.com/3015rangerrobotics/polaris) is their fork of
+Northstar's 2024-era design. **Low / low.** Don't search it again.
+- **Stack:** Python on Orange Pis, about 45 KB of code, MIT. OpenCV ArUco detection on the CPU,
+  `solvePnPGeneric` (IPPE_SQUARE) for two candidate poses, robotpy to NetworkTables, and an MJPEG
+  stream.
+- **Setup:** `setup.sh` builds OpenCV with GStreamer on each device and installs a systemd
+  service. The image workflow is unfinished ("maybe builds an image").
+- **Missing:** game pieces, health telemetry, camera recovery, logging and replay.
+- **Activity:** last push 2024-04-03. It has 9 saved camera calibrations, so they ran many cheap
+  cameras.
+- **Vs. ours:** a weaker detector than the 971 one on a much slower platform. No performance
+  numbers or field results are published.
+
 ## If we designed the ideal FRC vision system
 
 What an ideal system has that ours doesn't yet, roughly in order of value for effort:
