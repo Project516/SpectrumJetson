@@ -19,6 +19,10 @@
 #include <vector>
 
 #include <cuda_runtime.h>
+#include <jpeglib.h>
+
+#include <filesystem>
+#include <fstream>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -126,9 +130,79 @@ bool Found(const std::vector<far_search::Det> &d, int id) {
   return false;
 }
 
+// Grayscale JPEG, quality 85 (about what the cameras send).
+std::vector<unsigned char> EncodeJpeg(const cv::Mat &img) {
+  jpeg_compress_struct c;
+  jpeg_error_mgr err;
+  c.err = jpeg_std_error(&err);
+  jpeg_create_compress(&c);
+  unsigned char *buf = nullptr;
+  unsigned long size = 0;
+  jpeg_mem_dest(&c, &buf, &size);
+  c.image_width = img.cols;
+  c.image_height = img.rows;
+  c.input_components = 1;
+  c.in_color_space = JCS_GRAYSCALE;
+  jpeg_set_defaults(&c);
+  jpeg_set_quality(&c, 85, TRUE);
+  jpeg_start_compress(&c, TRUE);
+  while (c.next_scanline < c.image_height) {
+    JSAMPROW row = const_cast<uint8_t *>(img.ptr<uint8_t>(c.next_scanline));
+    jpeg_write_scanlines(&c, &row, 1);
+  }
+  jpeg_finish_compress(&c);
+  std::vector<unsigned char> out(buf, buf + size);
+  free(buf);
+  jpeg_destroy_compress(&c);
+  return out;
+}
+
+// --write-session DIR: a synthetic Rewind session for far_replay, with a known answer. Two
+// cameras, 3 s at 60 fps. CamA: near tags 1 and 2 (70 px) for the first and last second, and a
+// far tag 7 (14 px, moving) all along; CamB: no tags. Expected from far_replay: the far search
+// finds tag 7 on CamA frames the normal search misses, only in the middle second (after the
+// 250 ms wait); with --off, nothing extra.
+int WriteSession(const std::string &dir) {
+  namespace fs = std::filesystem;
+  std::mt19937 rng(7);
+  for (const char *cam : {"CamA", "CamB"}) {
+    fs::create_directories(fs::path(dir) / cam);
+    std::ofstream mj(fs::path(dir) / cam / "0000.mjpeg", std::ios::binary);
+    std::ofstream idx(fs::path(dir) / cam / "0000.csv");
+    idx << "# frame,offset,size,width,height,jetson_us,robot_us\n";
+    long long offset = 0;
+    double far_x = 850;
+    for (int f = 0; f < 180; ++f) {
+      const double t = f / 60.0;
+      cv::Mat img = Frame(rng);
+      if (std::string(cam) == "CamA") {
+        if (t < 1.0 || t >= 2.0) {
+          DrawTag(img, 1, 70, 250, 300);
+          DrawTag(img, 2, 70, 420, 330);
+        }
+        DrawTag(img, 7, 14, far_x, 400, 5);
+        far_x += 1.0;
+      }
+      Finish(img, rng);
+      auto jpeg = EncodeJpeg(img);
+      mj.write(reinterpret_cast<const char *>(jpeg.data()), static_cast<std::streamsize>(jpeg.size()));
+      // Cameras slightly out of step, as on the robot.
+      const long long us = 1'000'000 + f * 16'667 + (std::string(cam) == "CamB" ? 4'000 : 0);
+      idx << f << ',' << offset << ',' << jpeg.size() << ',' << kW << ',' << kH << ',' << us << ",0\n";
+      offset += static_cast<long long>(jpeg.size());
+    }
+  }
+  std::printf("wrote a synthetic session to %s (CamA, CamB: 180 frames each)\n", dir.c_str());
+  return 0;
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc >= 3 && std::string(argv[1]) == "--write-session") {
+    family = tag36h11_create();
+    return WriteSession(argv[2]);
+  }
   setvbuf(stdout, nullptr, _IOLBF, 0);  // line by line, so a timeout still shows how far it got
   family = tag36h11_create();
   apriltag_family_t *cam_family = tag36h11_create();

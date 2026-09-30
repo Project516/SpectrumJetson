@@ -101,5 +101,12 @@ target_link_libraries(fieldcal_detect PRIVATE 971apriltag absl::flags wpiutil CU
 # tests/far-search/run.sh builds and runs it on the Jetson.
 add_executable(far_search_test far_search_test.cc far_search.cc)
 target_include_directories(far_search_test PRIVATE ${BOS_DIR} ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(far_search_test PRIVATE 971apriltag absl::flags wpiutil CUDA::cudart
+target_link_libraries(far_search_test PRIVATE 971apriltag absl::flags wpiutil CUDA::cudart JPEG::JPEG
                                               ${OpenCV_LIBS} Threads::Threads ${CMAKE_DL_LIBS})
+
+# SpectrumJetson: far_replay, a whole Rewind session through the detector with the far-tag search
+# deciding as it does live (far_replay.cc). A command-line tool; tests/far-search/replay.sh.
+add_executable(far_replay far_replay.cc far_search.cc)
+target_include_directories(far_replay PRIVATE ${BOS_DIR} ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(far_replay PRIVATE 971apriltag absl::flags wpiutil CUDA::cudart JPEG::JPEG
+                                         ${OpenCV_LIBS} Threads::Threads ${CMAKE_DL_LIBS})

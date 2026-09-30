@@ -1534,9 +1534,37 @@ when the robot is short of a good pose:
   Settings > Robot state; `GpuDetectorJNI.setFarSearch` / `farSearchStatus` (retried at most every
   5 s until the library is loaded). `/api/robotState` has the counters; `health-check.sh` reports
   it. Browser test `far-search.spec.ts`: the status, and no searches while off.
-- **Not tested yet:** real far tags (on a field, or a long hallway), and the replay tool
-  (`fieldcal_detect`) doesn't use it yet. The previous library is at
-  `/usr/lib/lib971apriltag.so.before-far-search` on the Jetson.
+- **`bos-08`, found by replaying recordings:** one frame of session 0008 (TopRight 174, a busy
+  bench scene) made a full-size search run for minutes (still going at 80 s; `fieldcal_detect
+  --upscale 2`, which doesn't use the far search, hung on it too). In `RefineEdges`,
+  `nsamples = max(16, edge length / 8)` is unbounded: a candidate quad with a corner far outside
+  the image gave hundreds of millions of samples, each searched over 25 steps. The half-size
+  search never makes such quads (they stay inside its 640x400 image), so it never showed before.
+  The patch skips quads with a corner that isn't finite or is more than an image's size outside
+  it, and caps `nsamples` at (width + height) / 8 (260 for 1280x800; only edges over 2,000 px
+  reach it). Frame 174 at full size now takes a few ms; normal-size results are unchanged (0007:
+  305 sightings before and after; bench test passes). Live, one such frame would have frozen a
+  camera's thread: the time guard spaces searches out but can't stop one that has started.
+- **Replay: `far_replay`** (`detector/far_replay.cc`, `tests/far-search/replay.sh`). A whole Rewind
+  session, every camera merged in recording-time order, through per-camera detectors with
+  PhotonVision's settings and the far search deciding on each frame on the recording's clock (its
+  policy spans cameras, so they replay together). `--off` for a baseline, `--calib CAMERA=...`,
+  `--budget`, `--every`, `--trace` (each frame's far-search time as it goes, to find a stall),
+  `--out` (every detection with its source, normal or far). It reports tag sightings with and
+  without the far search, tags only the far search found and their smallest size, time starved,
+  searches and crops, and the slowest frames. The recording reader and JPEG decoder moved to
+  `detector/rewind_reader.h`, shared with `fieldcal_detect`.
+  - **Known-answer check** (`replay.sh`): `far_search_test --write-session` writes a synthetic
+    session (CamA: near tags for the first and last second, a moving 14 px tag all along; CamB:
+    none; JPEG quality 85). `far_replay` finds the far tag on 14 frames the normal search missed,
+    all inside the no-good-view window (1.25-2.0 s), and nothing extra with `--off`.
+  - **The five bench recordings** (2026-09-24, no far tags in them): all replay in 1-8 s; full-size
+    searches 4.5-10 ms each (the replay shares the GPU with the live cameras); the only slow frame
+    in each is the first (the detector build, ~130 ms).
+  - **Deadlines:** `replay.sh` gives each session 60 s + 1 s per 100 frames and reports TIMEOUT as
+    a failure. The first run used a flat 15 min per session, which hid the stalled frame for 6 min.
+- **Not tested yet:** real far tags (on a field, or a long hallway). The library before the far
+  search is at `/usr/lib/lib971apriltag.so.before-far-search` on the Jetson.
 
 #### Tag contrast and the Gain slider (`photonvision-54`)
 
