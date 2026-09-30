@@ -58,6 +58,9 @@ tests/ui/run.sh
   PhotonVision restarts with every camera as before, and the automatic "Before restoring" snapshot
   has the change. Test snapshots are deleted.
 
+- **`camera-controls`:** the Input tab's tag contrast readout matches `/api/tagContrast`, and there's
+  no Camera Gain slider on a camera without gain.
+
 **Limits:** 10 s per click, 2 min per test, 8 min per run; `run.sh` stops anything past 10 min. The
 run fails if a camera ends on a different pipeline than it started on, or a `zz-uitest` pipeline is
 left behind (or a `zz-uitest` snapshot), and says which.

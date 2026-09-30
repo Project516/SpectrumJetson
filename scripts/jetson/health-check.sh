@@ -207,6 +207,19 @@ PY
   fi
 fi
 
+# photonvision-54: how each camera's tags look (only when a tag is close enough to measure).
+contrast=$(timeout 5 python3 -c '
+import json, urllib.request
+for cam, t in json.load(urllib.request.urlopen("http://localhost:5800/api/tagContrast", timeout=3)).items():
+    if t["verdict"] == "no tags": continue
+    line = "%s tags: white %s, black %s (contrast %s), %s%% clipped: %s" % (cam, t["white"], t["black"], t["contrast"], t["clipped"], t["verdict"])
+    print(("PASS\t" if t["verdict"] == "good" else "WARN\t") + line + ("" if t["verdict"] == "good" else ". " + t["advice"]))
+' 2>/dev/null || true)
+while IFS= read -r l; do
+  [[ -z $l ]] && continue
+  case ${l%%$'\t'*} in PASS) pass "${l#*$'\t'}" ;; WARN) warn "${l#*$'\t'}" ;; esac
+done <<<"$contrast"
+
 echo "== Robot connection"
 last_nt=$(grep -E "NT connected to|Could not connect to the robot|disconnected" <<<"$LOG" | tail -1)
 team=$(grep -m1 -oE "server team is [0-9]+|server IP is [^ ]+" <<<"$LOG")

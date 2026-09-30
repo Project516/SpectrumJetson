@@ -1473,6 +1473,32 @@ flags. 5 cameras, ceiling scene:
 - The GC on disable (`photonvision-49`, 27 ms while disabled) stays.
 - PhotonVision allocates about 2.6 MB/s (young 37 MB -> 19 MB every ~7 s).
 
+#### Tag contrast and the Gain slider (`photonvision-54`)
+
+- **`TagContrast`:** for each detection the GPU AprilTag pipeline keeps (after the decision margin
+  and hamming filters) that's at least 24 px a side, a homography from the unit square to its
+  corners places 64 samples half a cell inside the edge (the black border; 36h11 is 8 cells across
+  it) and 64 half a cell outside (the 1-cell white margin), along the middle 70% of each side.
+  Medians of white and black, and the share of white samples at 250 or more. At most every 200 ms
+  per pipeline; the measurement rides on `CVPipelineResult`, and `VisionModule` records it per
+  camera. `GET /api/tagContrast` gives each camera's medians over the last 2 s and a verdict:
+  whites clipping (over 10% at 250+), low contrast (under 50), blacks lifted (over 80), good, or no
+  tags (none measured in 3 s). Thresholds are first guesses to check against a tuner run.
+- **Shown:** the Input tab (above Auto Exposure, polled every 1 s), Match Ready's tiles, and
+  `health-check.sh` (PASS or WARN, only for cameras with a tag in view).
+- **Unit tests** (`TagContrastTest`, photon-core, on the laptop): a flat-on tag of 30 on a 200
+  margin reads white 200 / black 30 / 0% clipped; a tilted one on a 255 margin reads 100% clipped;
+  a 20 px tag and a measurement 0 s after the last return nothing; the verdicts and advice. 4 of 4.
+- **Gain:** `QuirkyCamera` lists the Thrifty OV9281 (1bcf:28c5) with `Gain` (upstream #2478), but
+  ours has no gain control (`v4l2-ctl -l`: brightness -64..64 at 64, contrast, gamma 176 against a
+  default of 150, sharpness, backlight compensation, exposure; no gain). `hasGainControl()` now also
+  asks the camera (`VisionSourceSettables.hasControl`, true until it's connected so a camera with
+  real gain keeps its value while unplugged), so `cameraGain` is -1 and the slider hides, and the
+  Field Calibration tuner no longer steps gain. Browser test: `camera-controls.spec.ts`.
+- **Not measured yet:** brightness at +64 (the maximum, chosen in the tuning guide to make up for no
+  gain) adds an offset that lifts the tag's blacks too; gamma 176 isn't the default. The Field
+  Calibration tuner with a tag in view settles both; the tag contrast readout will say why.
+
 #### Settings snapshots (`photonvision-53`)
 
 - `SettingsSnapshots` keeps `/opt/photonvision/snapshots/ID/` (ID = `yyyyMMdd-HHmmss`):
