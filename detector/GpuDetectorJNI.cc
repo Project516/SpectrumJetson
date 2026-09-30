@@ -35,6 +35,8 @@
 #include <exception>
 #include <iostream>
 #include <mutex>
+#include <pthread.h>
+#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -50,6 +52,7 @@
 #include <jpeglib.h>
 #include "nvjpg_decoder.h"
 #include <wpi/RawFrame.h>
+#include <wpi/timestamp.h>
 #include "absl/status/status.h"
 #include <opencv2/core/mat.hpp>
 
@@ -138,6 +141,33 @@ bool GpuLockOn() {
 }
 std::mutex gpu_mu;
 
+// CUDA stream capture (bos-05's first-stage graph) breaks CUDA calls on other threads that aren't
+// allowed while any stream is capturing: work on the legacy default stream, cudaFree, EGL buffer
+// registration. When all cameras started at once, that broke detectors and turned the hardware
+// JPEG decoder off on 4 of 10 starts (2026-09-29). So every CUDA path in this process holds this
+// lock shared (one atomic operation when uncontended), and a graph is recorded holding it
+// exclusively, once per detector. Writer-preferring: with 8 threads taking it shared all the
+// time, glibc's default would let a waiting recorder starve. spectrum_cuda_lock_shared/unlock
+// export it for libspectrumtrt_jni.so (TensorRT game pieces).
+class CudaCaptureLock {
+ public:
+  CudaCaptureLock() {
+    pthread_rwlockattr_t a;
+    pthread_rwlockattr_init(&a);
+    pthread_rwlockattr_setkind_np(&a, PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP);
+    pthread_rwlock_init(&lock_, &a);
+    pthread_rwlockattr_destroy(&a);
+  }
+  void lock_shared() { pthread_rwlock_rdlock(&lock_); }
+  void unlock_shared() { pthread_rwlock_unlock(&lock_); }
+  void lock() { pthread_rwlock_wrlock(&lock_); }
+  void unlock() { pthread_rwlock_unlock(&lock_); }
+
+ private:
+  pthread_rwlock_t lock_;
+};
+CudaCaptureLock cuda_capture_lock;
+
 // How the CPU thread waits for the GPU (cudaSetDeviceFlags, at library load, before any CUDA
 // context exists): "block" (sleep; the default), "auto" (CUDA's default; with one context on 6
 // cores it spins), "spin" or "yield". With 2 cameras (2026-09-24) blocking added ~0.3 ms and saved
@@ -209,6 +239,7 @@ struct DetectorSlot {
   frc::apriltag::CameraMatrix camera_matrix = DefaultCameraMatrix();
   frc::apriltag::DistCoeffs dist_coeffs = DefaultDistCoeffs();
   long gpu_input_frames = 0;  // for the GPU input check
+  int graph_records = 0;      // first-stage graphs recorded (bos-05); at most kMaxGraphRecords
   bool in_use = false;
   bool needs_rebuild = false;
   int consecutive_failures = 0;
@@ -737,12 +768,18 @@ int NvjpgDecode(const uint8_t *jpeg, size_t size, cv::Mat &mat, bool bgr) {
 
 // A "971 jpeg" line every 10 s (not "971 stats", which health-check.sh parses per detector).
 // Colour frames are also counted on their own, in a clause at the end of the line.
+std::atomic<int> last_timestamp_src{-1};  // WPI_TimestampSource of the last gray frame
+
+// age_ms: how old the frame was when its decode started (from cscore's capture timestamp, which
+// the camera driver takes when the frame's first USB packet arrives), or < 0 if unknown.
 void CountJpeg(JpegDecoder used, int fallback, std::chrono::steady_clock::time_point t0,
-               bool colour = false) {
+               bool colour = false, double age_ms = -1, size_t jpeg_bytes = 0) {
   static std::mutex mu;
   static std::chrono::steady_clock::time_point start = t0;
   static long frames[2] = {0, 0}, colour_frames[2] = {0, 0}, fallbacks[5] = {0, 0, 0, 0, 0};
   static double ms[2] = {0, 0}, colour_ms[2] = {0, 0};
+  static double age_sum = 0, age_max = 0, jpeg_kb = 0;
+  static long ages = 0, jpegs = 0;
   const auto t1 = std::chrono::steady_clock::now();
   std::lock_guard<std::mutex> lock(mu);
   const int i = used == JpegDecoder::kNvjpg ? 1 : 0;
@@ -754,6 +791,15 @@ void CountJpeg(JpegDecoder used, int fallback, std::chrono::steady_clock::time_p
     colour_ms[i] += this_ms;
   }
   if (fallback < 0 && fallback >= -4) fallbacks[-fallback]++;
+  if (jpeg_bytes) {
+    jpeg_kb += jpeg_bytes / 1024.0;
+    jpegs++;
+  }
+  if (age_ms >= 0 && age_ms < 1000) {
+    age_sum += age_ms;
+    age_max = std::max(age_max, age_ms);
+    ages++;
+  }
   const double window = std::chrono::duration<double>(t1 - start).count();
   if (window < 10) return;
   std::cout << "971 jpeg " << static_cast<int>(window + 0.5) << " s: nvjpg "
@@ -768,6 +814,14 @@ void CountJpeg(JpegDecoder used, int fallback, std::chrono::steady_clock::time_p
   std::cout << "; checks since start " << checks_ok << " ok, " << checks_differ << " differ";
   if (checks_skipped) std::cout << ", " << checks_skipped << " skipped (corrupt frame)";
   if (nvjpg_off) std::cout << "; hardware decoder OFF";
+  if (ages) {
+    std::cout << "; frame age at decode avg " << age_sum / ages << " ms max " << age_max << " ms";
+  }
+  if (jpegs) std::cout << "; JPEG avg " << jpeg_kb / jpegs << " KB";
+  if (static int src = -1; src != last_timestamp_src) {
+    src = last_timestamp_src;
+    std::cout << "; timestamp source " << src;
+  }
   if (colour_frames[0] + colour_frames[1]) {
     std::cout << "; colour: nvjpg " << colour_frames[1] / window << " frames/s";
     if (colour_frames[1]) std::cout << " (" << colour_ms[1] / colour_frames[1] << " ms)";
@@ -776,6 +830,8 @@ void CountJpeg(JpegDecoder used, int fallback, std::chrono::steady_clock::time_p
   }
   std::cout << std::endl;
   start = t1;
+  age_sum = age_max = jpeg_kb = 0;
+  ages = jpegs = 0;
   frames[0] = frames[1] = colour_frames[0] = colour_frames[1] = 0;
   ms[0] = ms[1] = colour_ms[0] = colour_ms[1] = 0;
   for (auto &f : fallbacks) f = 0;
@@ -784,6 +840,13 @@ void CountJpeg(JpegDecoder used, int fallback, std::chrono::steady_clock::time_p
 }  // namespace
 
 extern "C" {
+
+__attribute__((visibility("default"))) void spectrum_cuda_lock_shared() {
+  cuda_capture_lock.lock_shared();
+}
+__attribute__((visibility("default"))) void spectrum_cuda_unlock_shared() {
+  cuda_capture_lock.unlock_shared();
+}
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
   JNIEnv *env;
@@ -827,18 +890,38 @@ JNIEXPORT jint JNICALL Java_org_photonvision_jni_GpuDetectorJNI_decodeMjpegGray(
   const size_t size = static_cast<size_t>(frame->size);
 
   const auto t0 = std::chrono::steady_clock::now();
+  const double age_ms =
+      frame->timestamp ? (static_cast<double>(wpi::Now()) - static_cast<double>(frame->timestamp)) / 1000
+                       : -1;
+  last_timestamp_src = frame->timestampSrc;
+  // Latency probe (tests only): while /tmp/spectrum-971-kmsg exists (checked every 60 frames),
+  // log each decode start to the kernel log, next to uvcvideo's "Frame complete" trace lines.
+  {
+    static std::atomic<int> calls{0};
+    static std::atomic<bool> on{false};
+    if (calls++ % 60 == 0) on = access("/tmp/spectrum-971-kmsg", F_OK) == 0;
+    if (on) {
+      if (FILE *k = std::fopen("/dev/kmsg", "w")) {
+        std::fprintf(k, "971 decode start tid %ld age %.3f\n", syscall(SYS_gettid), age_ms);
+        std::fclose(k);
+      }
+    }
+  }
   int fallback = SNJ_OK;
   nvjpg_thread.dev_valid = false;  // until a hardware decode puts this frame on the GPU
   if (WantedJpegDecoder() == JpegDecoder::kNvjpg) {
-    fallback = NvjpgDecode(data, size, *mat, /*bgr=*/false);
+    {
+      std::shared_lock<CudaCaptureLock> cuda(cuda_capture_lock);
+      fallback = NvjpgDecode(data, size, *mat, /*bgr=*/false);
+    }
     if (fallback == SNJ_OK) {
-      CountJpeg(JpegDecoder::kNvjpg, SNJ_OK, t0);
+      CountJpeg(JpegDecoder::kNvjpg, SNJ_OK, t0, false, age_ms, size);
       return 0;
     }
     if (fallback == SNJ_WRONG_SIZE) return -3;
   }
   const int rc = TurboDecodeGray(data, size, mat->data, mat->cols, mat->rows, mat->step);
-  if (rc == 0) CountJpeg(JpegDecoder::kTurbo, fallback, t0);
+  if (rc == 0) CountJpeg(JpegDecoder::kTurbo, fallback, t0, false, age_ms, size);
   return rc;
 }
 
@@ -871,7 +954,10 @@ JNIEXPORT jint JNICALL Java_org_photonvision_jni_GpuDetectorJNI_decodeMjpegBgr(
   const auto t0 = std::chrono::steady_clock::now();
   int fallback = SNJ_OK;
   if (WantedJpegDecoder() == JpegDecoder::kNvjpg) {
-    fallback = NvjpgDecode(data, size, *mat, /*bgr=*/true);
+    {
+      std::shared_lock<CudaCaptureLock> cuda(cuda_capture_lock);
+      fallback = NvjpgDecode(data, size, *mat, /*bgr=*/true);
+    }
     if (fallback == SNJ_OK) {
       CountJpeg(JpegDecoder::kNvjpg, SNJ_OK, t0, /*colour=*/true);
       return 0;
@@ -905,6 +991,7 @@ JNIEXPORT jlong JNICALL Java_org_photonvision_jni_GpuDetectorJNI_createGpuDetect
   }
   DetectorSlot &s = slots[h];
   std::lock_guard<std::mutex> lock(s.mu);
+  std::shared_lock<CudaCaptureLock> cuda(cuda_capture_lock);
   s.camera_matrix = DefaultCameraMatrix();
   s.dist_coeffs = DefaultDistCoeffs();
   s.family = tag36h11_create();
@@ -927,6 +1014,7 @@ JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_destroyGpuDetect
     return;
   }
   std::lock_guard<std::mutex> lock(s->mu);
+  std::shared_lock<CudaCaptureLock> cuda(cuda_capture_lock);
   delete s->gpu;
   s->gpu = nullptr;
   if (s->td) apriltag_detector_destroy(s->td);
@@ -1016,6 +1104,7 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
     return nullptr;
   }
   std::lock_guard<std::mutex> lock(s->mu);
+  std::shared_lock<CudaCaptureLock> cuda(cuda_capture_lock);
 
   // Clear any CUDA error left by an earlier unchecked call; CUB (CCCL >= 2.5) otherwise
   // fails later calls with it, and this detector's CHECK_CUDA would abort the process.
@@ -1093,6 +1182,22 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
     }
   }
   nt.dev_valid = false;  // one frame, one use
+
+  // bos-05: record the first-stage graph (once per detector and input buffer) while no other
+  // thread uses CUDA (see CudaCaptureLock).
+  constexpr int kMaxGraphRecords = 8;  // then run ungraphed, rather than stall every camera
+  if (s->gpu && s->graph_records < kMaxGraphRecords &&
+      s->gpu->FirstStageGraphWanted(image_device)) {
+    s->graph_records++;
+    cuda.unlock();
+    {
+      std::lock_guard<CudaCaptureLock> exclusive(cuda_capture_lock);
+      absl::Status status = s->gpu->RecordFirstStageGraph(image_device);
+      std::cout << "971 detector h" << handle << ": first-stage graph "
+                << (status.ok() ? "recorded" : std::string(status.message())) << std::endl;
+    }
+    cuda.lock();
+  }
   try {
     absl::Status status = s->gpu->Detect(img.ptr<uint8_t>(), image_device);
     if (status.ok()) {

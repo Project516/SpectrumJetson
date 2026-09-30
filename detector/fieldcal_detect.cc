@@ -222,6 +222,7 @@ int main(int argc, char **argv) {
   std::vector<std::atomic<int>> state(ring);  // 0 free, 1 ready, 2 bad
   for (auto &s : state) s = 0;
   std::atomic<size_t> next{0};
+  std::atomic<size_t> consumed{0};  // frames the detect loop has taken out of the ring
   std::atomic<bool> stop{false};
   std::vector<std::thread> workers;
   for (int t = 0; t < threads; ++t) {
@@ -231,7 +232,11 @@ int main(int argc, char **argv) {
       fs::path open_path;
       for (size_t i = next++; i < frames.size() && !stop; i = next++) {
         const size_t slot = i % ring;
-        while (state[slot] != 0 && !stop) std::this_thread::sleep_for(std::chrono::microseconds(200));
+        // Wait until frame i - ring has been taken, not just until the slot reads free: it also
+        // reads free while another thread is still decoding frame i - ring into it. Then both
+        // threads wrote the slot and one "ready" was lost, and the detect loop waited forever
+        // (seen 2026-09-29 with the CPU busy).
+        while (i >= consumed + ring && !stop) std::this_thread::sleep_for(std::chrono::microseconds(200));
         const Frame &f = frames[i];
         if (open_path != f.mjpeg) {
           file.close();
@@ -264,6 +269,7 @@ int main(int argc, char **argv) {
     if (state[slot] == 2) {
       ++bad;
       state[slot] = 0;
+      ++consumed;
       continue;
     }
     const auto d0 = std::chrono::steady_clock::now();
@@ -277,9 +283,16 @@ int main(int argc, char **argv) {
       }
       img = big.data();
     }
+    // bos-05: one thread here, so the first-stage graph can be recorded right before use.
+    if (gpu->FirstStageGraphWanted(nullptr)) {
+      if (absl::Status r = gpu->RecordFirstStageGraph(nullptr); !r.ok()) {
+        std::cerr << "first-stage graph: " << r.message() << std::endl;
+      }
+    }
     absl::Status st = gpu->Detect(img, nullptr);
     detect_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - d0).count();
     state[slot] = 0;
+    ++consumed;
     if (!st.ok()) {
       ++failed;
       continue;

@@ -1144,9 +1144,143 @@ and the GPU sat at 40–45%, against 0.8 cores and 17% on 2026-09-26 (two camera
 | Start (2026-09-29) | 4.4 ms | 2.2 cores | 40–43% |
 | + `bos-03` | 2.2 ms | 1.5 | 35% |
 | + `bos-04` | 1.9 ms | 1.4 | 28% |
-| + GPU input | **1.3 ms** | **1.26** | **27%** |
+| + GPU input | 1.3 ms | 1.26 | 27% |
+| + first-stage graph (`bos-05`) | 1.2 ms | 1.23 | 25.6% |
+| + `bos-06`, `photonvision-37` (no gray copy); 10 clean restarts | **1.23 ms** | **1.14** | **25.7%** |
+
+Board power 9.9 W at the end, against 11.6 W at the start; tj 54.7 °C (fan on the quiet
+profile).
 
 For comparison, one camera alone took 1.45 ms and 7% GPU at the start.
+
+#### First stage as one CUDA graph (`bos-05`)
+
+- **What:** `GpuDetector::RecordFirstStageGraph` records the fixed-size first stage once per
+  detector: the labels memset, threshold and decimate (4 kernels), labeling (5 kernels), the
+  point-count memset, `BlobDiffCompact`, and the count's copy to the host. `Detect()` then launches
+  it as one graph: 13 CUDA calls a frame become 1. `FirstStageGraphWanted` asks for a new
+  recording if the input's GPU buffer or `min_white_black_diff` changes (at most 8 per detector
+  slot, then it runs ungraphed). Used only with the fused `BlobDiff`, a gray image and no event
+  timing; `0` in `/tmp/spectrum-971-graph` goes back to launching the steps one by one.
+- **Recording must happen with no other CUDA work in the process.** The first version recorded
+  inside `Detect()`, on the first frame. When all 4 cameras started at once, that broke CUDA
+  calls on the other threads, which aren't allowed while any stream is capturing:
+  - a scan on CUDA's legacy stream ("operation would make the legacy stream depend on a capturing
+    blocking stream"),
+  - `cudaFree` from a detector rebuild ("operation not permitted when stream is capturing"),
+  - the hardware decoder's `cuGraphicsEGLRegisterImage` (CUresult 900), which switched the
+    hardware JPEG decoder off for the whole run.
+
+  That happened on 4 of 10 starts. The A/B tests had missed it, because they switched the graph on
+  live, after startup. Now `processimage` records it holding `CudaCaptureLock` exclusively.
+  Every CUDA path in `lib971apriltag.so` holds that lock shared: detect, gray and colour decode,
+  create and destroy. So does the TensorRT library, through `spectrum_cuda_lock_shared` /
+  `spectrum_cuda_unlock_shared`, found with `dlopen(RTLD_NOLOAD)`. The lock is a
+  writer-preferring `pthread_rwlock` (`PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP`), since with
+  8 threads taking it shared, glibc's default would let a recording wait indefinitely. Each
+  recording logs `971 detector hN: first-stage graph recorded`. `fieldcal_detect` (one thread)
+  records right before its first `Detect()`.
+- **The line-fit scan's stream (`bos-06`).** `cub::DeviceScan::InclusiveScanByKey` in `Detect()`
+  had no stream argument, so it ran on the legacy default stream. That stream waits for every
+  other blocking stream in the process, and holds them up, so each camera's line-fit scan waited on
+  the other cameras' GPU work. Now it runs on the detector's own stream.
+- **Checked:** the same replay as `bos-04`, 3,567 detections, byte-identical with the graph on
+  and off (with `bos-06`), and against the original build.
+- **`fieldcal_detect` hung** during that replay once the CPU was busy. Its decode threads waited
+  only for a ring slot to read free, and a slot also reads free while another thread is still
+  decoding the frame one ring earlier into it. Two threads then filled the same slot, one
+  "ready" was lost, and the detect loop waited forever (it could also have detected the wrong
+  frame's pixels). Now a thread starts frame `i` only after the detect loop has consumed frame
+  `i - ring`.
+- **Measured live** (alternating 3 times): GPU **25.6%** against 27.6% (the gaps between 13 small
+  launches), detect 1.20 against 1.23 ms, CPU unchanged (1.23 cores). The remaining CPU isn't
+  launch overhead any more (below).
+
+#### Where the remaining CPU goes (4 cameras, 1.2 cores)
+
+- **`tests/cpu-profile.sh`:** the 4 camera threads (15–25% of a core each) split their samples
+  between `grabRawSinkFrameTimeoutLastTime` (waiting for the camera), `decodeMjpegGray` and
+  `processimage`.
+- **Page faults** ~1/s: buffers are reused, allocation costs nothing.
+- **System calls** (function tracer, 0.36 s; the kernel refuses `set_ftrace_filter`, so it traced
+  everything), per second: futex ~44,000, `mprotect` ~11,000, `sched_yield` ~9,800, `getpid`
+  ~9,800, ioctl ~8,700, openat/close ~1,600/1,900.
+- **Where from** (gdb `catch syscall`): `mprotect` and `sched_yield` come from inside libcuda's
+  `cudaEventSynchronize`, which is how its blocking wait works. `getpid` and `openat` come from
+  NVIDIA's JPEG engine driver (`libnvvideo` → `libnvrm_host1x`), which opens `/dev/dri` and
+  `/dev/dri/renderD128` and pushes host1x command streams for every frame, on one helper thread
+  per camera (~2.4% of a core each). Both are inside NVIDIA's libraries.
+
+#### Latency: where a frame's ~14.5 ms go
+
+The dashboard shows 14.3–15.2 ms per camera: mid-exposure to the result.
+- **New in the `971 jpeg` line:** `frame age at decode` is how old each frame is when its decode
+  starts, from cscore's timestamp. That's `WPI_TIMESRC_V4L_SOE` (source 3), which our driver sets
+  at the frame's first USB packet. The line also has `JPEG avg` (KB).
+- **Measured** (4 cameras, 122 fps): age at decode 8.2 ms on average (max ~16), JPEG 34–36 KB.
+- **Split with the kernel log:** `/tmp/spectrum-971-kmsg` makes the decoder write each decode start
+  to `/dev/kmsg`, next to uvcvideo's "Frame complete" lines (`trace=128`). Over 393 ms:
+  **first packet to last packet 8.1 ms** on every camera, **last packet to decode start
+  0.15 ms**.
+- **So the camera sets the pace, not USB and not PhotonVision.** At alt 7 (1280 bytes per 125 µs)
+  34 KB would cross in 3.4 ms, but the camera spreads each frame over ~8.1 ms, about one frame
+  period: it sends the JPEG while the sensor reads out. So the bandwidth cap doesn't add the ~2 ms
+  latency estimated in VISION-RESEARCH.md.
+- **Budget:** ~2.5 ms (half the 5 ms exposure) + 8.1 ms (camera readout and send) + ~2.8 ms (JPEG
+  decode, 4 cameras sharing the 2 engines) + 1.2 ms (detection) ≈ 14.6 ms.
+
+#### A camera stuck at 320x240, again: the real cause (`photonvision-37`)
+
+`photonvision-27`'s recovery never fixed it. Twice tonight (00:12 and 01:14) TopRight came up at
+320x240; the "reconnecting it so the mode is applied again" warning repeated every 3 s for minutes,
+and only a PhotonVision restart helped.
+- **Chain of events,** from the logs and cscore's source
+  (`allwpilib-v2026.2.1/cscore/src/main/native/linux/UsbCameraImpl.cpp`):
+  1. On first connect, with no mode set yet, cscore applies the camera's **lowest** mode:
+     "set format 1 res 320x240" (`DeviceCacheMode`).
+  2. PhotonVision sets 1280x800. The resolution changed, so cscore closes the device, reopens it
+     and calls `VIDIOC_S_FMT`, which failed with **`Device or resource busy`** both times, and so
+     did `VIDIOC_S_PARM` (cscore logs these as `ioctl VIDIOC_S_FMT failed ...`). In uvcvideo,
+     EBUSY there means another handle still owns the stream: the old one, not yet released.
+     Probably a control read from another thread still held it (PhotonVision caches and sets
+     properties at the same moment). No other process had the camera open, and Java's
+     `ProcessBuilder` closes inherited file descriptors.
+  3. cscore keeps 1280x800 as its mode anyway, so `USBFrameProvider` sees 320x240 frames against
+     1280x800.
+  4. `GenericUSBCameraSettables` logged "Failed to set video mode!" when `setVideoMode` returned
+     **true** (success), so it printed on every start and hid the real failure.
+  5. The recovery set `kForceClose`, then `kAutoManage`. In cscore's Linux camera loop that only
+     stops and restarts streaming (`m_streaming && !IsEnabled()` → `DeviceStreamOff`). The device is
+     never reopened and the format never sent again, and setting the same mode is a no-op.
+- **Fix:** `reconnectForVideoMode` switches the camera to another mode of the same pixel format,
+  then back (`camera.setVideoMode(other)`, `camera.setVideoMode(want)`). Two real changes, each
+  reopening the device and setting its format, whatever state the race left. The warning now says
+  "applying the mode again ... switching through WxH". The inverted log now warns only on a real
+  failure.
+- **Not yet seen in action:** 8 starts in a row after the fix came up clean (below).
+
+#### A camera's thread killed at startup (`photonvision-38`)
+
+- **What happened:** on one start, TopLeft's `VisionRunner` thread died with
+  `ConcurrentModificationException` in `UIPhotonConfiguration.programStateToUi`. That's called
+  from `VisionRunner.update` once its camera connects, and it iterates `VisionModuleManager`'s
+  module list, a plain `ArrayList`, while `VisionSourceManager` is still adding cameras. The
+  camera stayed at cscore's first-connect 320x240 and was never processed, until a restart. It's
+  in the logs twice since 2026-09-24.
+- **Fix:** the list is a `CopyOnWriteArrayList` (it changes only when cameras are added or
+  removed), and `VisionRunner` catches any exception building the UI state, logging "Couldn't send
+  the settings to the UI" instead of dying.
+
+#### No copy of each gray frame (`photonvision-37`)
+
+- **What:** `GrayscalePipe` copied every gray frame (1 MB at 1280x800) into `processedImage`,
+  although it was already gray: 4 cameras × 122 fps ≈ 480 MB/s of memcpy. Now it shares the pixels
+  (`Mat.assignTo`: OpenCV counts the references, so either Mat can be released first).
+- **Where it matters:** only the dashboard stream draws on a frame (`OutputStreamPipeline` resizes
+  and draws on both `colorImage` and `processedImage` in place), and so does Aruco's debug-threshold
+  view. So `Frame.unshareProcessed()` gives `processedImage` its own copy right before a frame goes
+  to the stream (at most 30 a second, `photonvision-15`) or to that debug view. Detection is always
+  finished with the frame by then.
 
 ## Changes from the handoff
 

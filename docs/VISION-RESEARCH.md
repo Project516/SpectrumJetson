@@ -176,8 +176,11 @@ PhotonVision 2027.
     complete, no gaps over 45 ms, and no invalid-JPEG warnings. Frames were 48–50 KB median,
     **62 KB max** (73% of what alt 7 carries at 120 fps). A busier scene makes bigger frames; if
     frames approach 85 KB, use `CAP=1bcf:28c5:1984` (alt 9, 3 per port) or put cameras on USB-C.
-  - **Trade-off:** a frame takes longer to cross USB, ~4.9 ms for 50 KB at alt 7 against ~2.0 ms
-    at alt 11, so results reach the robot ~2 ms later. Timestamps aren't affected: the driver
+  - **Trade-off (estimated):** a frame would take longer to cross USB, ~4.9 ms for 50 KB at alt
+    7 against ~2.0 ms at alt 11. **Measured 2026-09-29, it doesn't:** the camera spreads each
+    frame over ~8.1 ms (about one frame period, while its sensor reads out), longer than alt 7
+    needs for a 34 KB frame (3.4 ms), so the cap adds no latency (TECHNICAL.md, "Latency").
+    Timestamps aren't affected: the driver
     stamps a frame when its *first* USB packet arrives, and `photonvision-13` moves that back to
     mid-exposure.
 - **Hardware JPEG decode (NVJPG) works on our Orin Nano, but only one way of calling it gives
