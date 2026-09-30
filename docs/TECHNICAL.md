@@ -1414,6 +1414,33 @@ inside "N: name". Suite: 5 tests, 1.5 min, all passing.
 - The fake robot result reader needed PhotonVision's own type string (`photonstruct:...`) to
   subscribe, and a topics-only subscription for the topics to be announced to it at all.
 
+#### Smaller USB batches: 16 packets per URB (`kernel/uvcvideo-urb-packets.patch`)
+
+uvcvideo queues 5 isochronous URBs of `UVC_MAX_PACKETS` (32) packets, 4 ms each at one packet per
+125 us microframe, and sees a URB's packets only when the whole URB completes. So a frame's last
+packet (the camera marks the end with EOF) can wait up to 4 ms, 2 ms on average, before the frame
+is handed over. The patch adds `urb_packets` (0 = stock); like `payload_cap` it's writable at run
+time and applies when a stream next starts. `tests/`: `urbtest.sh`-style runs, 40 s warm-up then
+60 s per value, 5 cameras, camera-clock timestamps:
+
+| `urb_packets` | Frame age at decode | At result | Whole-system CPU | Interrupts/s |
+|---|---|---|---|---|
+| 32 (stock), 3 runs | 9.33 ms | 12.98 ms | 1.09 cores (0.98-1.26) | 15,500 |
+| **16**, 3 runs | 8.25 ms | **11.76 ms** | 1.18 cores (1.16-1.20) | 17,900 |
+| 8, 2 runs | 7.94 ms | 11.61 ms | 1.30 cores (1.19-1.40) | 20,000 |
+
+- **16 kept:** 1.2 ms lower latency at the result, every run, worst frame age 17 ms instead of
+  18-21 ms, 122.2 fps, no USB errors, about 0.1 core more (within the stock runs' spread).
+  PhotonVision's own CPU is unchanged; the extra is kernel time.
+- 8 gains only 0.15 ms more for more CPU and interrupts: the host controller doesn't interrupt
+  much more often than every millisecond.
+- The remaining ~8 ms from first packet to decode is the camera: it paces a 24 KB frame out over
+  about one frame period while its sensor reads out (the frame takes ~2.4 ms at our 1280-byte cap
+  if sent at once).
+- Saved in `/etc/modprobe.d/92-spectrum-uvcvideo-urb-packets.conf` by
+  `11-uvcvideo-payload-cap.sh --install` (`URB_PACKETS` overrides); `--undo` removes it with the
+  patched driver. `health-check.sh` checks it.
+
 #### Garbage collection and the worst-case detects (2026-09-30)
 
 The 4-7 ms worst-case detects seen earlier came with dashboards streaming or tests running; a clean

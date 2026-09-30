@@ -478,6 +478,8 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 
 **Steadier timestamps**: frames are timestamped by each camera's own clock (the USB video driver's `hwtimestamps` option) instead of when their first USB packet happens to be processed. The timestamps the robot receives now vary by 0.01 ms instead of 0.95 ms (up to 4 ms before), which matters when the robot is turning: 1 ms is 0.36° at 360°/s. `11-uvcvideo-payload-cap.sh --install` sets it, and `health-check.sh` checks it.
 
+**1.2 ms lower latency from the camera driver**: our USB video driver now looks at incoming packets every 2 ms instead of every 4 ms (`urb_packets=16`), so each finished frame reaches PhotonVision sooner: **12.98 → 11.76 ms** from capture to result with 5 cameras, for about 0.1 core of CPU. Set by `11-uvcvideo-payload-cap.sh --install`, checked by `health-check.sh`.
+
 **Hidden dashboard tabs stop their streams** (`photonvision-48`): a dashboard tab that's behind another tab, or in a minimised window, disconnects its camera streams, and the Jetson stops encoding them. They reconnect when you look at the tab again. This also fixes streams that broke (`http://undefined:…`) when a dashboard reconnected to PhotonVision after a restart.
 
 **After installing a new build:** run `tests/ui/run.sh` on the laptop. It drives the dashboard in Chrome and checks that every slider, switch and menu changes the page, PhotonVision and a second dashboard, and puts each one back. It also tests the mask editor, Start from, Create on every camera, Switch all and hidden-tab streams. It takes about a minute and a half and works on a temporary copy of a pipeline, so your settings aren't touched. See [tests/ui](tests/ui/README.md).
