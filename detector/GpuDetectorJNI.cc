@@ -199,6 +199,7 @@ struct Stats {
   int errors = 0;
   double detect_ms = 0, jni_ms = 0, max_ms = 0, margin = 0, min_margin = 1e9;
   double lock_wait_ms = 0;  // part of detect_ms spent waiting for gpu_mu
+  int gpu_input = 0;        // frames Detect() got straight from the hardware decoder's GPU copy
 };
 
 struct DetectorSlot {
@@ -207,6 +208,7 @@ struct DetectorSlot {
   apriltag_family_t *family = nullptr;
   frc::apriltag::CameraMatrix camera_matrix = DefaultCameraMatrix();
   frc::apriltag::DistCoeffs dist_coeffs = DefaultDistCoeffs();
+  long gpu_input_frames = 0;  // for the GPU input check
   bool in_use = false;
   bool needs_rebuild = false;
   int consecutive_failures = 0;
@@ -353,6 +355,7 @@ void RecordStats(Stats &st, jlong handle, const cv::Mat &img, const zarray_t *de
     }
     if (st.errors) std::cout << ", errors " << st.errors;
     if (st.lock_wait_ms > 0) std::cout << ", gpu lock wait " << st.lock_wait_ms / st.frames << " ms";
+    if (st.gpu_input) std::cout << ", gpu input " << 100 * st.gpu_input / st.frames << "%";
     std::cout << " [bos]" << std::endl;
     st = Stats{};
   }
@@ -432,6 +435,7 @@ struct Nvjpg {
   decltype(&snj_destroy) destroy;
   decltype(&snj_decode_gray) decode;
   decltype(&snj_decode_bgr) decode_bgr;  // null in a library older than the colour path
+  decltype(&snj_decode_gray_dev) decode_gray_dev;  // null in a library older than GPU input
   decltype(&snj_error) error;
 };
 
@@ -459,6 +463,8 @@ const Nvjpg *LoadNvjpg() {
     a.destroy = reinterpret_cast<decltype(a.destroy)>(dlsym(h, "snj_destroy"));
     a.decode = reinterpret_cast<decltype(a.decode)>(dlsym(h, "snj_decode_gray"));
     a.decode_bgr = reinterpret_cast<decltype(a.decode_bgr)>(dlsym(h, "snj_decode_bgr"));
+    a.decode_gray_dev =
+        reinterpret_cast<decltype(a.decode_gray_dev)>(dlsym(h, "snj_decode_gray_dev"));
     a.error = reinterpret_cast<decltype(a.error)>(dlsym(h, "snj_error"));
     if (!a.create || !a.create_error || !a.destroy || !a.decode || !a.error) {
       std::cout << "971 jpeg: " << path << " is missing functions; using libjpeg-turbo"
@@ -595,11 +601,57 @@ struct NvjpgThread {
   bool path_unavailable[2] = {};  // [0] gray, [1] colour: this camera's JPEGs can't use it
   int unsupported_in_a_row[2] = {};
   long frames = 0;
+  // GPU input: the last gray frame decoded on this thread, also on the GPU (dev, dev_w x dev_h),
+  // while dev_valid. fp: 64 of its pixels, to recognise it in processimage (PhotonVision hands
+  // the detector a copy, and a rotation would change the pixels in place).
+  uint8_t *dev = nullptr;
+  int dev_w = 0, dev_h = 0;
+  bool dev_valid = false;
+  uint8_t fp[64];
   ~NvjpgThread() {
     if (dec) LoadNvjpg()->destroy(dec);
+    if (dev) cudaFree(dev);
   }
 };
 thread_local NvjpgThread nvjpg_thread;
+
+// GPU input: the hardware decoder leaves each gray frame on the GPU too, and processimage hands
+// that copy to Detect(), which otherwise copies the frame it was given back up to the GPU (48 us
+// of GPU and a ~270 us call a frame at 1280x800, nsys 2026-09-29). Only when processimage gets
+// the frame that was just decoded on the same thread (same size and the same 64 sampled pixels;
+// a full comparison every kCheckEvery frames). "0" in /tmp/spectrum-971-gpu-input
+// turns it off (re-read every 2 s).
+std::atomic<bool> gpu_input_off{false};  // a check found the GPU copy differing: off until restart
+// The pixels FingerprintGpuInput samples: spread over the frame (Knuth's multiplicative hash).
+size_t FingerprintIndex(int i, size_t n) { return (static_cast<size_t>(i) * 2654435761u) % n; }
+void FingerprintGpuInput(const uint8_t *img, size_t n, uint8_t *fp) {
+  for (int i = 0; i < 64; ++i) fp[i] = img[FingerprintIndex(i, n)];
+}
+bool MatchesGpuInput(const uint8_t *img, size_t n, const uint8_t *fp) {
+  for (int i = 0; i < 64; ++i) {
+    if (fp[i] != img[FingerprintIndex(i, n)]) return false;
+  }
+  return true;
+}
+
+bool GpuInputOn() {
+  if (gpu_input_off) return false;
+  static std::mutex mu;
+  static std::chrono::steady_clock::time_point next{};
+  static bool on = true;
+  std::lock_guard<std::mutex> lock(mu);
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= next) {
+    next = now + std::chrono::seconds(2);
+    int v = 1;
+    if (FILE *f = std::fopen("/tmp/spectrum-971-gpu-input", "r")) {
+      if (std::fscanf(f, "%d", &v) != 1) v = 1;
+      std::fclose(f);
+    }
+    on = v != 0;
+  }
+  return on;
+}
 
 std::atomic<int> nvjpg_errors_logged{0};
 
@@ -630,11 +682,36 @@ int NvjpgDecode(const uint8_t *jpeg, size_t size, cv::Mat &mat, bool bgr) {
     t.unavailable = true;
     return SNJ_UNSUPPORTED;
   }
-  const int rc = (bgr ? api->decode_bgr : api->decode)(t.dec, jpeg, size, mat.data, mat.cols,
-                                                       mat.rows, mat.step);
+  t.dev_valid = false;
+  bool to_dev = !bgr && api->decode_gray_dev && GpuInputOn();
+  if (to_dev && (t.dev_w != mat.cols || t.dev_h != mat.rows)) {
+    if (t.dev) cudaFree(t.dev);
+    t.dev = nullptr;
+    t.dev_w = t.dev_h = 0;
+    if (cudaMalloc(reinterpret_cast<void **>(&t.dev), static_cast<size_t>(mat.cols) * mat.rows) ==
+        cudaSuccess) {
+      t.dev_w = mat.cols;
+      t.dev_h = mat.rows;
+    } else {
+      cudaGetLastError();
+      t.dev = nullptr;
+    }
+  }
+  to_dev = to_dev && t.dev;
+  const int rc = to_dev ? api->decode_gray_dev(t.dec, jpeg, size, mat.data, mat.cols, mat.rows,
+                                               mat.step, t.dev)
+                        : (bgr ? api->decode_bgr : api->decode)(t.dec, jpeg, size, mat.data,
+                                                                mat.cols, mat.rows, mat.step);
   if (rc == SNJ_OK) {
     t.unsupported_in_a_row[bgr] = 0;
-    if (JpegFaultActive()) mat.data[0] ^= 0x80;
+    if (to_dev) {
+      t.dev_valid = true;
+      FingerprintGpuInput(mat.data, static_cast<size_t>(mat.cols) * mat.rows, t.fp);
+    }
+    if (JpegFaultActive()) {
+      mat.data[0] ^= 0x80;
+      t.dev_valid = false;  // the host copy no longer matches
+    }
     if (t.frames++ % kCheckEvery == 0) {
       Checker().Submit(jpeg, size, mat.data, mat.cols, mat.rows, mat.step, bgr ? 3 : 1);
     }
@@ -751,6 +828,7 @@ JNIEXPORT jint JNICALL Java_org_photonvision_jni_GpuDetectorJNI_decodeMjpegGray(
 
   const auto t0 = std::chrono::steady_clock::now();
   int fallback = SNJ_OK;
+  nvjpg_thread.dev_valid = false;  // until a hardware decode puts this frame on the GPU
   if (WantedJpegDecoder() == JpegDecoder::kNvjpg) {
     fallback = NvjpgDecode(data, size, *mat, /*bgr=*/false);
     if (fallback == SNJ_OK) {
@@ -990,8 +1068,33 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
     s->stats.lock_wait_ms +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   }
+  // GPU input (GpuInputOn): the frame is already on the GPU when this is the buffer just decoded.
+  NvjpgThread &nt = nvjpg_thread;
+  const uint8_t *image_device = nullptr;
+  if (nt.dev_valid && nt.dev_w == img.cols && nt.dev_h == img.rows &&
+      MatchesGpuInput(img.ptr(), static_cast<size_t>(img.cols) * img.rows, nt.fp)) {
+    image_device = nt.dev;
+    s->stats.gpu_input++;
+    // Safety net, every kCheckEvery such frames per camera (~2 s): the GPU copy must still match
+    // the frame Java handed us.
+    if (s->gpu_input_frames++ % kCheckEvery == 0) {
+      std::vector<uint8_t> back(static_cast<size_t>(img.cols) * img.rows);
+      if (cudaMemcpy(back.data(), image_device, back.size(), cudaMemcpyDeviceToHost) !=
+              cudaSuccess ||
+          std::memcmp(back.data(), img.ptr(), back.size()) != 0) {
+        cudaGetLastError();
+        if (!gpu_input_off.exchange(true)) {
+          std::cout << "971 GPU input: the GPU copy of a frame DIFFERS from the frame given; "
+                       "copying frames up again until PhotonVision restarts"
+                    << std::endl;
+        }
+        image_device = nullptr;
+      }
+    }
+  }
+  nt.dev_valid = false;  // one frame, one use
   try {
-    absl::Status status = s->gpu->Detect(img.ptr<uint8_t>(), nullptr);
+    absl::Status status = s->gpu->Detect(img.ptr<uint8_t>(), image_device);
     if (status.ok()) {
       detections = s->gpu->Detections();
       s->consecutive_failures = 0;

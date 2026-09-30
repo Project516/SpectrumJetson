@@ -201,7 +201,7 @@ Swap by installing one to `/usr/lib/lib971apriltag.so` and restarting `photonvis
 | Build | Source | Script | Status |
 |---|---|---|---|
 | **4143 + patches** (fallback) | FRC-Team-4143/GpuDetectorJNI `ef9fc1e` (≈971 code of 2024-08) + `patches/gpudetector-0{1,2,3}` | `05-build-gpudetector.sh` (installs) | Running; leak, handle and stale-error fixes applied |
-| **bos / Austin's current** (**installed**, robot config) | frc971/bos `62e93b4` `third_party/971apriltag` = RealtimeRoboticsGroup/aos `frc/orin` detector as of `8736ba62` (2026-03-30) + 971's `absl::Status` returns + `patches/bos-01` to `bos-03`; JNI in `detector/` | `07-build-bos-detector.sh` then `08-select-detector.sh bos --mwbd 20` | A/B tested and fault tested (below) |
+| **bos / Austin's current** (**installed**, robot config) | frc971/bos `62e93b4` `third_party/971apriltag` = RealtimeRoboticsGroup/aos `frc/orin` detector as of `8736ba62` (2026-03-30) + 971's `absl::Status` returns + `patches/bos-01` to `bos-04`; JNI in `detector/` | `07-build-bos-detector.sh` then `08-select-detector.sh bos --mwbd 20` | A/B tested and fault tested (below) |
 
 aos is the upstream source of truth. The only detector change in aos since bos
 imported it (2026-04-03) is `c1c3b4607` (M_PI → std::numbers::pi, cosmetic).
@@ -1094,11 +1094,59 @@ and the GPU sat at 40–45%, against 0.8 cores and 17% on 2026-09-26 (two camera
 - **Also seen:** TopRight came up at 320x240 after one of the restarts (`health-check.sh` FAIL, one
   of 4 detectors missing; see `photonvision-27`); another restart fixed it. Check that all 4
   detectors report before trusting a measurement.
-- **Next** (being tried): fold the zero removal into `BlobDiff` (971's own TODO; ~20% of the GPU
-  time), hand the hardware decoder's GPU copy of the frame straight to `Detect()` instead of
-  copying it down and back up (48 µs of GPU and a 270 µs call per frame), and a CUDA graph for the
-  fixed-size first stage. Batching the 4 cameras into one pass was ruled out: they free-run, so a
-  batch waits up to 8 ms for the slowest frame.
+- **Batching the 4 cameras into one pass was ruled out:** they free-run, so a batch waits up to
+  8 ms for the slowest frame.
+
+#### Fused `BlobDiff` (`bos-04`)
+
+- **What:** `BlobDiffCompact` writes only the boundary points, straight into the compacted
+  array: each block counts its points in shared memory and takes one global `atomicAdd`. It
+  replaces `BlobDiff` writing all 4 slots of every pixel (~1M points, 8 MB at 1280x800) plus
+  `cub::DeviceSelect::If` reading them all back. `0` in `/tmp/spectrum-971-fused-blobdiff`
+  (re-read every 2 s) goes back to the original pair; on by default.
+- **Order:** the points arrive in a different order. The first sort only orders by blob pair
+  (bits 24–63), and nothing after it depends on the order within a pair except the angle sort of
+  the selected points. That sort now uses the whole 64-bit key (blob, angle, then the point's own
+  bits, which are unique), so the result depends only on which points exist.
+- **Checked:** `fieldcal_detect` over the synthetic 4-camera recording and the bench sessions
+  0006–0009 and 0011 (~5,000 frames, 3,567 tag detections): the CSVs are **byte-identical** fused,
+  unfused, and against the Sep 24 build (`bos-01`/`-02` only).
+- **Measured live** (4 cameras, alternating 3 times, 10 s each):
+
+  | | GPU | Detect | PhotonVision CPU |
+  |---|---|---|---|
+  | **Fused** | **28.1%** | **1.88 ms** | 1.43 cores |
+  | Unfused | 35.6% | 2.40 ms | 1.52 |
+
+#### Frames stay on the GPU ("GPU input")
+
+- **What:** with the hardware decoder, each gray frame was decoded on the GPU, copied down into
+  PhotonVision's Mat, then copied back up by `Detect()`. `snj_decode_gray_dev`
+  (`libspectrumnvjpg.so`) now also leaves the Y plane in a per-camera-thread GPU buffer (a GPU to
+  GPU copy; the Mat is filled from it, so both hold the same pixels). `processimage` passes that
+  buffer to `Detect(image, image_device)`, which then skips the upload. The CPU copy is still
+  needed: tag decoding reads it.
+- **Which frame is which:** PhotonVision hands the detector a copy of the decoded Mat
+  (`GrayscalePipe`), so the pointers differ, and a 180° rotation would change the pixels in
+  place. So the GPU copy is used only on the same thread, for a frame of the same size whose 64
+  sampled pixels match the decoded frame's. Every 240 such frames per camera (~2 s), the GPU copy
+  is read back and compared in full. Any difference turns it off until PhotonVision restarts
+  (`971 GPU input: ... DIFFERS`). `0` in `/tmp/spectrum-971-gpu-input` turns it off live. The
+  stats line shows `gpu input N%`; it's 100% on all 4 cameras.
+- **Measured live** (alternating 3 times): detect **1.32 ms** against 1.55, PhotonVision CPU 1.26
+  cores against 1.34, GPU unchanged (27%: the GPU-to-GPU copy replaced the upload). No
+  differences found.
+
+#### Where 4 cameras stand now
+
+| | Detect | PhotonVision CPU | GPU |
+|---|---|---|---|
+| Start (2026-09-29) | 4.4 ms | 2.2 cores | 40–43% |
+| + `bos-03` | 2.2 ms | 1.5 | 35% |
+| + `bos-04` | 1.9 ms | 1.4 | 28% |
+| + GPU input | **1.3 ms** | **1.26** | **27%** |
+
+For comparison, one camera alone took 1.45 ms and 7% GPU at the start.
 
 ## Changes from the handoff
 

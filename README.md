@@ -170,6 +170,17 @@ We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. Th
 
 **Four cameras share one GPU.** With 4 cameras the GPU is only about a third busy, yet the slowest frames take 6–12 ms instead of ~3. That's queueing: a camera's GPU work sometimes waits behind another camera's, like a short line at a busy store. We tried two settings to shorten the wait: 32 hardware work queues for CUDA instead of 8, and letting the CPU sleep while the GPU works instead of spinning. The first test made the queues look like a big win, but repeating it showed the same settings vary by 2 ms from one restart to the next. Over 11 runs the queues were worth maybe 0.5 ms, and sleeping made no difference. Both are on anyway because neither costs anything (`08-select-detector.sh` sets the queues; details in [TECHNICAL.md](docs/TECHNICAL.md)). **Lesson: measure more than once before believing a speed-up.** Also close the dashboard before measuring: 4 open camera streams added about half a CPU core and 1–2 ms to the slowest frames.
 
+**Four Thriftiest Cams at 122 fps** (2026-09-29). The first time all four ran, PhotonVision used 2.2 CPU cores and the GPU was 40% busy. Three fixes later:
+
+| Change | Detect time | CPU | GPU |
+| --- | --- | --- | --- |
+| Starting point, 4 cameras | 4.4 ms | 2.2 cores | 40–43% |
+| Stop debug timing on every frame (`bos-03`, see the bugs table) | 2.2 ms | 1.5 | 35% |
+| Find blob edges and drop the empty ones in one GPU step, not two (`bos-04`; the original author's own to-do) | 1.9 ms | 1.4 | 28% |
+| Keep each frame on the GPU after the JPEG hardware decodes it, instead of copying it down and back up | **1.3 ms** | **1.26** | **27%** |
+
+Each frame now takes less time with four cameras than one camera did before. The `bos-04` change was checked by replaying ~5,000 recorded frames: every one of 3,567 tag detections came out byte-for-byte identical.
+
 **More cameras.** Each camera at its full 122 fps now costs about 0.6 of a CPU core (it was 1.4 before the decode fix), and less with the JPEG hardware, so 4 cameras should fit. The limit was **USB bandwidth**. With the stock driver each camera reserves ~196 Mbps whatever mode it runs, and the Jetson's whole USB 2.0 side holds two of those (see below).
 
 We fixed that with a patched camera driver (`scripts/jetson/11-uvcvideo-payload-cap.sh`). It caps the Thriftiest Cam's reservation at 82 Mbps (UVC alternate setting 7), still about 1.4x the largest frame we've measured at 120 fps. Now **4 cameras fit on the USB-A ports**, plus a 5th capped at 1600 bytes on a USB-C hub. Tested with 2 cameras: 122 fps each, every frame complete. The cost: a 50 KB frame takes ~4.9 ms to cross USB instead of ~2 ms, so results reach the robot ~2 ms later. It does **not** make timestamps less accurate: the driver stamps a frame when its *first* USB packet arrives. Java's memory isn't a concern: the heap peaked at 28 MB with zero garbage collections in 20 s.
