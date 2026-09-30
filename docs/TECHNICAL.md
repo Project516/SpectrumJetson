@@ -1341,6 +1341,39 @@ From the upstream review (`docs/UPSTREAM-PORT.md`, 2026-09-29):
   - The delete dialog names the camera being deleted, not the one selected on the dashboard.
   - Not tested live: there were no disabled configs left to try it with.
 
+#### Browser tests (`tests/ui`, `photonvision-45`)
+
+Playwright, run from the laptop in its own Chrome against the live Jetson (`tests/ui/run.sh`, which
+opens the SSH tunnel for port 5800 and the stream ports 1181-1200). Written after the gamma slider
+(`-39`) and the second-dashboard bug (`-41`) got through: in both, the camera changed but a page
+didn't show it.
+- **`photonvision-45`:** the shared controls (`pv-slider`, `pv-switch`, `pv-select`,
+  `pv-range-slider`, `pv-number-input`, `pv-radio`, `pv-input`) carry `data-pv-control` and
+  `data-pv-label` (sliders also `data-pv-min/max/step`), so tests find controls by label rather than
+  by Vuetify's generated ids. `GET /api/spectrum/uiState` returns the backend's own copy of each
+  camera's current pipeline settings and extra controls. Read-only.
+- **Nothing is reset.** Each test duplicates the camera's current pipeline, renames the copy
+  `zz-uitest`, works on it, then deletes it and switches back (the fixture in `lib/fixtures.ts`).
+  A killed run's leftover `zz-uitest` is deleted by the next one. Refuses to run while the robot is
+  connected (`/api/rewind`'s `robotConnected`).
+- **`round-trip`:** every visible control on every tab. It changes each one the way a person would
+  (the arrow buttons for sliders, the menu for selects), then checks that the page shows the value,
+  that the backend changed (a diff of `uiState`, which also names the setting each control
+  moves), and that a second browser context shows it. Then it puts the value back and checks all
+  three again. On TopLeft's AprilTagCuda copy: 20 controls in 30 s.
+  - Extra controls store -1 for "camera default", so -1 is compared as the default.
+  - "Draw on the stream" is local to one browser and is skipped.
+  - Resolutions are skipped (`PV_UI_TEST_VIDEO_MODES=1` includes them).
+- **`mask`:** draws a box on the stream, resizes it from the bottom-right and top-left corners
+  (the opposite corner stays put), moves it, adds a second box, removes the first with Delete, then
+  Remove all. Each step is checked against the backend's box coordinates (within 2%) and the
+  second dashboard's box table. 10 s.
+- **Proved against the bug:** a jar with `-39` undone (`updateStore` false again) fails exactly
+  Contrast, Gamma and Sharpness with "page didn't show the new value", and Backlight Compensation
+  with "didn't go back". The good jar then passes.
+- Every click has a 10 s limit (`actionTimeout`); Playwright's default is none, and a stuck
+  locator hung the first run silently.
+
 #### Extra camera control sliders snapped back (`photonvision-39`)
 
 Contrast, gamma, sharpness and backlight compensation (`photonvision-28`) show the store's value
