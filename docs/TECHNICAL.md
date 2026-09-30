@@ -1437,6 +1437,10 @@ time and applies when a stream next starts. `tests/`: `urbtest.sh`-style runs, 4
 - The remaining ~8 ms from first packet to decode is the camera: it paces a 24 KB frame out over
   about one frame period while its sensor reads out (the frame takes ~2.4 ms at our 1280-byte cap
   if sent at once).
+- **Live vs saved:** `health-check.sh` now compares each driver setting's live value with
+  `/etc/modprobe.d` and warns when a reboot would change it. Reinstalling the driver showed why:
+  the 5th camera's 1280-byte cap (port 1-1.1) had only been set live, so the saved file still had
+  256, and the Camera Matching card showed 1280 with nothing to save. Saved on 2026-09-30.
 - Saved in `/etc/modprobe.d/92-spectrum-uvcvideo-urb-packets.conf` by
   `11-uvcvideo-payload-cap.sh --install` (`URB_PACKETS` overrides); `--undo` removes it with the
   patched driver. `health-check.sh` checks it.

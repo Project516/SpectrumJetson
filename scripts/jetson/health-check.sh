@@ -222,6 +222,16 @@ if [[ $(cat /sys/module/uvcvideo/parameters/hwtimestamps 2>/dev/null) == 1 ]]; t
 else
   warn "frames timestamped on USB arrival (~1 ms jitter): 11-uvcvideo-payload-cap.sh --install sets hwtimestamps=1"
 fi
+# A driver setting changed live but not saved is lost at the next boot (a 5th camera's 1280-byte
+# cap set by hand once reverted to 256 that way). Compare each live value with modprobe.d.
+for parm in payload_cap hwtimestamps urb_packets; do
+  live=$(cat /sys/module/uvcvideo/parameters/$parm 2>/dev/null) || continue
+  saved=$(cat /etc/modprobe.d/9*-spectrum-uvcvideo*.conf 2>/dev/null | sed -n "s/^options uvcvideo .*$parm=\([^ ]*\).*/\1/p" | tail -1)
+  default=$([[ $parm == payload_cap ]] && echo "" || echo 0)
+  if [[ $live != "${saved:-$default}" ]]; then
+    warn "camera driver $parm is '$live' now but '${saved:-$default}' after a reboot (save it: Camera Matching page for payload_cap, or /etc/modprobe.d)"
+  fi
+done
 urbp=$(cat /sys/module/uvcvideo/parameters/urb_packets 2>/dev/null || echo none)
 case $urbp in
   16) pass "camera driver hands frames over in 2 ms steps (urb_packets 16)" ;;
