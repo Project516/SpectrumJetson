@@ -1271,6 +1271,37 @@ All on the finished build (patches up to `photonvision-44`, `bos-07`). Logs reco
   detecting as with 2 cameras, so tonight's startup work (the capture lock, graph recording)
   costs no measurable boot time.
 
+#### Five Thriftiest Cams (2026-09-29)
+
+The 5th camera ("5th Cam") on a USB 3 hub in the Jetson's USB-C port (USB 2.0 side `1-1.1`),
+so SSH went over Wi-Fi. `payload_cap` had a leftover `1-1.1:256` port entry, which beats the
+model's 1280. It was raised to 1280 at runtime only (`/etc/modprobe.d/90-spectrum-uvcvideo.conf`
+unchanged), so after a reboot that port is 256 again unless it's set on the USB bandwidth card.
+- **USB budget:** 6,400 of ~6,720 bytes per 125 µs allocated (320 free), 39.6 of 53.8 MB/s used.
+  All five held 121–122 fps. The largest frames were 52–76 KB. BottomLeft's 75.5 KB used 88% of its
+  allocation ("fits 1.1x"), and three cameras were at 80–88%. At 90% or more a camera compresses
+  harder instead of dropping frames. A 6th camera doesn't fit at this cap.
+- **Load** (cameras facing the ceiling lights, no tag, 2 streams still open, 3 × 10 s), against 4
+  cameras in the same scene:
+
+  | | 4 cameras | 5 cameras |
+  |---|---|---|
+  | Frames/s | 488 | 610 |
+  | Detect avg (worst) | 1.85 ms | 2.4 ms (3.7–5.1) |
+  | GPU | 36.4% | 45.6% |
+  | PhotonVision CPU | 1.42 cores | 1.89 cores (incl. 2 streams) |
+  | Frame age at result | 13.5 ms | 14.0 ms |
+  | NVJPG decode | ~3.0 ms | 3.3 ms (606 frames/s) |
+  | Board power, tj | ~10.6 W | 11.2 W, 56.8 °C |
+
+- **Scaling is linear now:** GPU +25% for +25% frames. The next limits are USB (full) and the two
+  NVJPG engines (queueing more), not the GPU or CPU.
+- **The hub** (with a built-in ASIX AX88179 gigabit Ethernet) logged register errors (`Failed to
+  write reg ... -32`) the whole time. That's harmless for the cameras, but it floods the kernel
+  log; use a plain USB 2.0 hub on the robot.
+- **Fanless:** 11.2 W is close to the 12 W fanless test (~73 °C with the plate), so test fanless
+  with 5 cameras before relying on it.
+
 #### Upstream fixes and a real reconnect for stuck cameras (`photonvision-42` to `-44`)
 
 From the upstream review (`docs/UPSTREAM-PORT.md`, 2026-09-29):

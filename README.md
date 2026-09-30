@@ -183,7 +183,7 @@ We went from 33 fps to the cameras' full **122 fps**, on two cameras at once. Th
 | Launch the first 13 GPU steps as one pre-recorded CUDA graph (`bos-05`) | 1.2 ms | 1.23 | 25.6% |
 | Stop copying every gray frame in PhotonVision (`photonvision-37`) | **1.2 ms** | **1.14** | **25.7%** |
 
-Each frame now takes less time with four cameras than one camera did before. What's left of the CPU is mostly inside NVIDIA's own libraries: how CUDA waits for the GPU, and the JPEG hardware's driver, which reopens the graphics device for every frame.
+Each frame now takes less time with four cameras than one camera did before. **Five cameras** also run at 122 fps each: 2.4 ms detection, 46% GPU, 1.9 cores, 11.2 W (facing bright ceiling lights, the hard case). The limit is now USB bandwidth: five capped Thrifties use 6,400 of the ~6,720 bytes the Jetson's USB 2.0 ports share, so a 6th won't fit. What's left of the CPU is mostly inside NVIDIA's own libraries: how CUDA waits for the GPU, and the JPEG hardware's driver, which reopens the graphics device for every frame.
 
 **Where the latency goes.** A result reaches the robot about 14.5 ms after the middle of the exposure. We timed each step with the camera driver's own log: half the 5 ms exposure (2.5 ms), then **8.1 ms for the camera to send the frame**, then 0.15 ms until our decoder starts, 2.8 ms of JPEG decode, and 1.2 ms of detection. The camera streams each frame out over about one frame period while its sensor reads out, so neither USB nor PhotonVision is what's slow. The `bos-04` change was checked by replaying ~5,000 recorded frames: every one of 3,567 tag detections came out byte-for-byte identical.
 
