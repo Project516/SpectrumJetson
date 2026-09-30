@@ -216,6 +216,12 @@ if grep -q "NT connected to" <<<"$last_nt"; then
 else
   warn "not connected to the robot (${team:-no team set}); expected off the robot"
 fi
+# Camera-clock timestamps (uvcvideo hwtimestamps=1): 0.01 ms jitter instead of 0.95 ms.
+if [[ $(cat /sys/module/uvcvideo/parameters/hwtimestamps 2>/dev/null) == 1 ]]; then
+  pass "frames timestamped by the camera clock (uvcvideo hwtimestamps)"
+else
+  warn "frames timestamped on USB arrival (~1 ms jitter): 11-uvcvideo-payload-cap.sh --install sets hwtimestamps=1"
+fi
 # photonvision-49/50: idle mode (30 fps per camera while the robot is disabled) switched off?
 idle=$(timeout 5 python3 -c 'import json,urllib.request; s=json.load(urllib.request.urlopen("http://localhost:5800/api/robotState", timeout=3)); print("on %g" % s["idleFps"] if s["idleWhileDisabled"] else "off")' 2>/dev/null || true)
 case $idle in

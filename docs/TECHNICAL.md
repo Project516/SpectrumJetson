@@ -1382,6 +1382,38 @@ hid mismatches such as TopRight's pipeline 1 being "Fuel Test". Test: the dropdo
 `uiState`'s `pipelineNicknames` numbered from 0. The test helpers read and pick pipelines by name
 inside "N: name". Suite: 5 tests, 1.5 min, all passing.
 
+#### Frame timestamps from the camera clock (`uvcvideo hwtimestamps=1`, 2026-09-30)
+
+- **Before:** uvcvideo stamps a frame when its first USB packet is processed. It processes packets
+  in URBs of 32 microframes (4 ms), so stamps land on 4 ms steps: intervals of 8 or 12 ms instead
+  of 8.245, jitter 0.95 ms, identical on every camera. (The camera does mark each frame's end,
+  "Frame complete (EOF found)" in the driver trace, so there's no wait for the next frame.)
+- **After:** `hwtimestamps=1` makes uvcvideo convert the camera's own PTS (in its clock, through
+  the SCR it sends) to the host clock. The Thriftiest Cam sends both. On the stamp's meaning: it's
+  0.74 ms before the first-packet stamp on average, so it marks roughly when the camera starts
+  sending, not the start of exposure. `photonvision-13`'s half-exposure correction is unchanged,
+  and the camera's delay from the end of exposure to sending is still unmeasured
+  (`SPECTRUM_CAMERA_DELAY_US`, the robot spin test).
+- **Measured** (`tests/uvc-timestamps/run.sh`: v4l2-ctl, PhotonVision stopped, one or all
+  cameras):
+
+  | 600 frames per camera, all 5 at once | Jitter | Intervals |
+  |---|---|---|
+  | first USB packet | 0.95 ms | 7.97-12.00 ms |
+  | camera clock | 0.004-0.007 ms | 8.22-8.27 ms |
+
+  **As the robot sees it** (`tests/fake-robot/timestamps.sh`: a fake robot, enabled, subscribed to
+  every camera's results; the capture timestamp in each result's metadata; 30 s, 3,640 results a
+  camera): jitter **0.955 -> 0.008-0.011 ms** (BottomLeft 0.036, range 7.60-8.89 ms, from the
+  occasional clock-recovery correction). 1 ms of timestamp error is 0.36 deg at 360 deg/s.
+- **Where:** `/etc/modprobe.d/91-spectrum-uvcvideo-timestamps.conf`, written by
+  `11-uvcvideo-payload-cap.sh --install` (its own file, so the Camera Matching page's
+  `payload_cap` rewrites never touch it). The parameter is also writable at run time; streams
+  opened after the change use it (restart PhotonVision). `health-check.sh` checks it. Frame age
+  in the `971 stats` lines reads 0.5-1 ms higher, as the stamps are earlier and truer.
+- The fake robot result reader needed PhotonVision's own type string (`photonstruct:...`) to
+  subscribe, and a topics-only subscription for the topics to be announced to it at all.
+
 #### Garbage collection and the worst-case detects (2026-09-30)
 
 The 4-7 ms worst-case detects seen earlier came with dashboards streaming or tests running; a clean

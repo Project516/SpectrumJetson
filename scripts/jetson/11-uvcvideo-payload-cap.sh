@@ -97,5 +97,10 @@ ports=$(sed -n 's/^options uvcvideo payload_cap=//p' "$CONF" 2>/dev/null | tr ',
 sudo install -D -m 644 "$W/patched/uvcvideo.ko" "$DEST"
 printf '# SpectrumJetson: cap USB bandwidth reservations (scripts/jetson/11-uvcvideo-payload-cap.sh)\noptions uvcvideo payload_cap=%s\n' "$CAP" \
   | sudo tee "$CONF" >/dev/null
+# Frames timestamped with the camera's clock (its UVC PTS, through the SCR) instead of the first
+# USB packet's arrival: robot-side jitter 0.95 ms -> 0.01 ms (tests/fake-robot/timestamps.sh). The
+# stock driver has this option too; its own file so the Camera Matching page never rewrites it.
+printf '# SpectrumJetson: timestamp frames with the camera clock (scripts/jetson/11-uvcvideo-payload-cap.sh)\noptions uvcvideo hwtimestamps=1\n' \
+  | sudo tee /etc/modprobe.d/91-spectrum-uvcvideo-timestamps.conf >/dev/null
 sudo depmod -a
 reload
