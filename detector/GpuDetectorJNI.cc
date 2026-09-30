@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -241,7 +242,15 @@ struct DetectorSlot {
   frc::apriltag::CameraMatrix camera_matrix = DefaultCameraMatrix();
   frc::apriltag::DistCoeffs dist_coeffs = DefaultDistCoeffs();
   long gpu_input_frames = 0;  // for the GPU input check
-  int graph_records = 0;      // first-stage graphs recorded (bos-05); at most kMaxGraphRecords
+  // When the first-stage graph (bos-05) was last recorded: at most once a second, so a buffer
+  // or mask that keeps changing can't stall every camera on each frame.
+  std::chrono::steady_clock::time_point last_graph_record{};
+  // Detection mask (setMask, bos-07): 0 off, 1 ignore inside the boxes, 2 search only inside
+  // them. Boxes are x, y, w, h fractions of the image. mask_dirty: rasterise it on the next frame.
+  int mask_mode = 0;
+  std::vector<double> mask_rects;
+  bool mask_dirty = false;
+  std::vector<uint8_t> mask_pixels;  // the decimated mask handed to the GPU (kept alive)
   bool in_use = false;
   bool needs_rebuild = false;
   int consecutive_failures = 0;
@@ -279,6 +288,34 @@ apriltag_detector_t *MakeTagDetector(apriltag_family_t *family) {
 }
 
 // Rebuilds the GPU detector for a new size or calibration. Caller holds s.mu.
+// The slot's mask at the detector's decimated size (1 = search, 0 = ignore), handed to the GPU;
+// or none. An "only inside" mask with no boxes counts as no mask, so an empty list can't switch
+// detection off without anyone noticing.
+void ApplyMaskToDetector(DetectorSlot &s, int width, int height) {
+  s.mask_dirty = false;
+  const size_t n_rects = s.mask_rects.size() / 4;
+  if (!s.gpu || s.mask_mode == 0 || (s.mask_mode == 1 && n_rects == 0) ||
+      (s.mask_mode == 2 && n_rects == 0)) {
+    if (s.gpu) s.gpu->SetMask(nullptr);
+    return;
+  }
+  const int dw = width / 2, dh = height / 2;
+  const bool include = s.mask_mode == 2;
+  s.mask_pixels.assign(static_cast<size_t>(dw) * dh, include ? 0 : 1);
+  for (size_t r = 0; r < n_rects; ++r) {
+    const double *b = &s.mask_rects[r * 4];
+    const int x0 = std::clamp(static_cast<int>(std::floor(b[0] * dw)), 0, dw);
+    const int y0 = std::clamp(static_cast<int>(std::floor(b[1] * dh)), 0, dh);
+    const int x1 = std::clamp(static_cast<int>(std::ceil((b[0] + b[2]) * dw)), 0, dw);
+    const int y1 = std::clamp(static_cast<int>(std::ceil((b[1] + b[3]) * dh)), 0, dh);
+    for (int y = y0; y < y1; ++y) {
+      std::fill(s.mask_pixels.begin() + static_cast<size_t>(y) * dw + x0,
+                s.mask_pixels.begin() + static_cast<size_t>(y) * dw + x1, include ? 1 : 0);
+    }
+  }
+  s.gpu->SetMask(s.mask_pixels.data());
+}
+
 bool Rebuild(DetectorSlot &s, size_t width, size_t height) {
   delete s.gpu;
   s.gpu = nullptr;
@@ -286,6 +323,7 @@ bool Rebuild(DetectorSlot &s, size_t width, size_t height) {
     s.gpu = new frc::apriltag::GpuDetector(width, height, s.td, s.camera_matrix,
                                            s.dist_coeffs, vision::ImageFormat::MONO8);
     s.needs_rebuild = false;
+    s.mask_dirty = true;  // a new detector has no mask yet
     return true;
   } catch (const std::exception &e) {
     std::cout << "971 detector build " << width << "x" << height << " failed: " << e.what()
@@ -1028,6 +1066,10 @@ JNIEXPORT jlong JNICALL Java_org_photonvision_jni_GpuDetectorJNI_createGpuDetect
   s.family = tag36h11_create();
   s.td = MakeTagDetector(s.family);
   s.consecutive_failures = 0;
+  s.mask_mode = 0;  // a reused slot must not keep the previous detector's mask
+  s.mask_rects.clear();
+  s.mask_dirty = true;
+  s.last_graph_record = {};
   // If the GPU build fails, keep the slot: processimage retries the build each frame.
   if (!Rebuild(s, width, height)) s.needs_rebuild = true;
   s.stats = Stats{};
@@ -1096,6 +1138,29 @@ JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setparams(
     JNIEnv *, jclass, jlong handle, jdouble fx, jdouble cx, jdouble fy, jdouble cy, jdouble k1,
     jdouble k2, jdouble p1, jdouble p2, jdouble k3) {
   SetParams(handle, fx, cx, fy, cy, k1, k2, p1, p2, k3, 0, 0, 0, 5);
+}
+
+// SpectrumJetson (bos-07): the detection mask. mode 0 off, 1 ignore inside the boxes, 2 search
+// only inside them; rects: x, y, w, h fractions of the image, 4 per box. Takes effect next frame.
+JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setMask(JNIEnv *env, jclass,
+                                                                        jlong handle, jint mode,
+                                                                        jdoubleArray rects) {
+  DetectorSlot *s = Slot(handle);
+  if (!s) {
+    std::cout << "setMask: bad handle " << handle << std::endl;
+    return;
+  }
+  std::vector<double> r;
+  if (rects) {
+    const jsize n = env->GetArrayLength(rects);
+    r.resize(static_cast<size_t>(n - n % 4));
+    if (!r.empty()) env->GetDoubleArrayRegion(rects, 0, static_cast<jsize>(r.size()), r.data());
+  }
+  std::lock_guard<std::mutex> lock(s->mu);
+  if (mode == s->mask_mode && r == s->mask_rects) return;
+  s->mask_mode = mode >= 0 && mode <= 2 ? mode : 0;
+  s->mask_rects = std::move(r);
+  s->mask_dirty = true;
 }
 
 JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setparams8(
@@ -1214,12 +1279,21 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
   }
   nt.dev_valid = false;  // one frame, one use
 
+  if (s->mask_dirty) {
+    ApplyMaskToDetector(*s, img.cols, img.rows);
+    std::cout << "971 detector h" << handle << ": mask "
+              << (s->mask_mode == 0 ? "off" : s->mask_mode == 1 ? "ignoring" : "searching only")
+              << (s->mask_mode ? " " + std::to_string(s->mask_rects.size() / 4) + " box(es)" : "")
+              << std::endl;
+  }
+
   // bos-05: record the first-stage graph (once per detector and input buffer) while no other
   // thread uses CUDA (see CudaCaptureLock).
-  constexpr int kMaxGraphRecords = 8;  // then run ungraphed, rather than stall every camera
-  if (s->gpu && s->graph_records < kMaxGraphRecords &&
+  // Meanwhile (a new mask, say) Detect() runs the steps one by one.
+  const auto now_graph = std::chrono::steady_clock::now();
+  if (s->gpu && now_graph - s->last_graph_record >= std::chrono::seconds(1) &&
       s->gpu->FirstStageGraphWanted(image_device)) {
-    s->graph_records++;
+    s->last_graph_record = now_graph;
     cuda.unlock();
     {
       std::lock_guard<CudaCaptureLock> exclusive(cuda_capture_lock);

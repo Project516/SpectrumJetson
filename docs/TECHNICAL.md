@@ -1200,6 +1200,38 @@ Same scene as the tag tests (cameras facing the ceiling lights, no tag), 4 camer
   end of detection, per camera. 13.5 ms here ≈ 8.1 (the camera sending the frame) + 3.0 (decode) +
   2.2 (detection); add half the exposure for mid-exposure to result.
 
+#### Detection masks drawn on the stream (`photonvision-40`, `bos-07`)
+
+- **Why:** facing the shop's ceiling lights cost ~10 points of GPU and 0.6 ms before any tag was in
+  view (above). On a field, the upper part of some cameras' views is arena lighting and truss.
+- **UI:** a **Mask** tab (AprilCudaTag and Object Detection pipelines) sets the mode (Off /
+  Ignore inside the boxes / Search only inside the boxes). Its "Draw on the stream" switch lets you
+  draw on either dashboard stream: drag on empty space to draw a box, drag a box to move it, drag
+  any of its 4 corners to resize (the opposite corner stays put), and press Delete to remove the
+  selected box. The table lists the boxes, each with a delete button. The mask is shown faintly on
+  both streams whenever it's on.
+- **Reusable:** `pv-mask-overlay.vue` (components/common) wraps any stream or image with an SVG in
+  image fractions and edits a `DetectionMask` ({mode, boxes: [{x, y, w, h}]}, 0–1, on the image as
+  displayed, i.e. after rotation). The setting lives on `AdvancedPipelineSettings`, so any advanced
+  pipeline can use it; `VisionModuleChangeSubscriber.setProperty` converts it with Jackson.
+- **AprilCudaTag (GPU, `bos-07`):** `GpuDetectorJNI.setMask(handle, mode, boxes[])` (called by
+  `AprilTagDetectionCudaPipe.setMask` from the pipeline's parameters, only when the mask changed).
+  The library turns it into a keep/ignore image at the detector's half size. `ApplyMask` turns
+  ignored pixels into "no contrast" (127) right after thresholding, so no blob, edge or tag is found
+  there. It's part of the first-stage graph; switching the mask on or off records the graph again
+  (at most once a second per detector; meanwhile the steps run one by one). Moving or resizing boxes
+  only copies new bytes into the same GPU buffer. An "only inside" mask with no boxes does nothing.
+  Log: `971 detector hN: mask ignoring N box(es)`.
+- **Object detection:** detections whose centre is ignored are dropped before PhotonVision's own
+  filters.
+- **Checked** (`fieldcal_detect --mask`, synthetic TopLeft, 814 tags): ignoring the left half
+  removed all 349 tags fully on the left and kept all 433 on the right with **byte-identical
+  corners**. The 32 tags crossing the middle were dropped, as expected. "Search only the right half"
+  gave the same result. In the UI: drawing, moving, 4-corner resize and Delete all reached the
+  detector live, and changes are saved 1 s later (ConfigManager).
+- **Two dashboards editing the same mask overwrite each other** (seen while testing: one tab's
+  stale boxes replaced the other's). Use one dashboard at a time for masks.
+
 #### Extra camera control sliders snapped back (`photonvision-39`)
 
 Contrast, gamma, sharpness and backlight compensation (`photonvision-28`) show the store's value

@@ -4,12 +4,15 @@
 //
 //   fieldcal_detect CAMERA_DIR OUT.csv [--every N] [--calib fx,fy,cx,cy,k1,k2,p1,p2,k3,k4,k5,k6]
 //                   [--mwbd N] [--mse X] [--threads N] [--upscale 2]
+//                   [--mask ignore|only x,y,w,h[;x,y,w,h...]]
 //
 // CAMERA_DIR: one camera's folder of a Rewind session (NNNN.mjpeg + NNNN.csv, docs/REWIND.md).
 // --every N: every Nth frame. --calib: the camera's lens calibration; the detector's edge
 // refinement straightens edges with it, as it does in PhotonVision (without it, no undistortion).
 // --mwbd / --mse: as SPECTRUM_971_MIN_WHITE_BLACK_DIFF / SPECTRUM_971_MAX_LINE_FIT_MSE, which
 // are also read from the environment (defaults 5 and 10, as in GpuDetectorJNI.cc).
+// --mask (bos-07): as PhotonVision's Mask tab. ignore = skip the boxes, only = search only inside
+// them; boxes are fractions of the image. Without --upscale 2 (the mask is at the detector's size).
 // --upscale 2 (experimental, off by default): search at full size. The detector finds quads on a
 // half-size image (quad_decimate 2 is hard-wired), which misses tags under ~20 px; a 2x
 // nearest-neighbour upscale finds them down to ~12 px, at ~2x the GPU time. Corners are scaled
@@ -24,6 +27,7 @@
 // decoders give the detector. Decoding runs on --threads CPU threads (default 5) ahead of the GPU.
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -146,12 +150,15 @@ double EnvOr(const char *name, double fallback) {
 int main(int argc, char **argv) {
   if (argc < 3) {
     std::cerr << "usage: fieldcal_detect CAMERA_DIR OUT.csv [--every N] "
-                 "[--calib fx,fy,cx,cy,k1,k2,p1,p2,k3,k4,k5,k6] [--mwbd N] [--mse X] [--threads N] [--upscale 2]\n";
+                 "[--calib fx,fy,cx,cy,k1,k2,p1,p2,k3,k4,k5,k6] [--mwbd N] [--mse X] [--threads N] [--upscale 2]"
+                 " [--mask ignore|only x,y,w,h[;x,y,w,h...]]\n";
     return 2;
   }
   const fs::path dir = argv[1];
   const std::string out_path = argv[2];
   int every = 1, threads = 5, upscale = 1;
+  int mask_mode = 0;  // 1 ignore inside the boxes, 2 search only inside them
+  std::vector<double> mask_boxes;
   int mwbd = static_cast<int>(EnvOr("SPECTRUM_971_MIN_WHITE_BLACK_DIFF", 5));
   double mse = EnvOr("SPECTRUM_971_MAX_LINE_FIT_MSE", 10.0);
   frc::apriltag::CameraMatrix cam{1, 1, 1, 1};  // with zero distortion: no undistortion
@@ -164,6 +171,22 @@ int main(int argc, char **argv) {
     else if (a == "--threads") threads = std::max(1, std::atoi(v)), ++i;
     else if (a == "--upscale") upscale = std::atoi(v) == 2 ? 2 : 1, ++i;
     else if (a == "--mwbd") mwbd = std::atoi(v), ++i;
+    else if (a == "--mask") {
+      const std::string m = v;
+      mask_mode = m == "ignore" ? 1 : m == "only" ? 2 : 0;
+      std::stringstream ss(i + 2 < argc ? argv[i + 2] : "");
+      std::string t;
+      while (std::getline(ss, t, ';')) {
+        std::stringstream bs(t);
+        std::string c;
+        while (std::getline(bs, c, ',')) mask_boxes.push_back(std::atof(c.c_str()));
+      }
+      if (!mask_mode || mask_boxes.empty() || mask_boxes.size() % 4) {
+        std::cerr << "--mask needs ignore|only and x,y,w,h boxes separated by ';'\n";
+        return 2;
+      }
+      i += 2;
+    }
     else if (a == "--mse") mse = std::atof(v), ++i;
     else if (a == "--calib") {
       double k[12] = {};
@@ -215,6 +238,26 @@ int main(int argc, char **argv) {
   td->debug = false;
   auto *gpu = new frc::apriltag::GpuDetector(dw, dh, td, cam, dist, vision::ImageFormat::MONO8);
   std::vector<uint8_t> big(upscale == 2 ? static_cast<size_t>(dw) * dh : 0);
+  // --mask: the same rasterisation as GpuDetectorJNI.cc's ApplyMaskToDetector, at half size.
+  std::vector<uint8_t> mask_pixels;
+  if (mask_mode) {
+    const int mw = dw / 2, mh = dh / 2;
+    mask_pixels.assign(static_cast<size_t>(mw) * mh, mask_mode == 2 ? 0 : 1);
+    for (size_t r = 0; r + 3 < mask_boxes.size(); r += 4) {
+      const double *b = &mask_boxes[r];
+      const int x0 = std::clamp(static_cast<int>(std::floor(b[0] * mw)), 0, mw);
+      const int y0 = std::clamp(static_cast<int>(std::floor(b[1] * mh)), 0, mh);
+      const int x1 = std::clamp(static_cast<int>(std::ceil((b[0] + b[2]) * mw)), 0, mw);
+      const int y1 = std::clamp(static_cast<int>(std::ceil((b[1] + b[3]) * mh)), 0, mh);
+      for (int y = y0; y < y1; ++y) {
+        std::fill(mask_pixels.begin() + static_cast<size_t>(y) * mw + x0,
+                  mask_pixels.begin() + static_cast<size_t>(y) * mw + x1, mask_mode == 2 ? 1 : 0);
+      }
+    }
+    gpu->SetMask(mask_pixels.data());
+    std::cerr << "mask: " << (mask_mode == 1 ? "ignoring" : "searching only") << " "
+              << mask_boxes.size() / 4 << " box(es)\n";
+  }
 
   // Decode ahead on CPU threads into a ring of slots; the GPU detects in frame order.
   const size_t ring = static_cast<size_t>(threads) * 4;
