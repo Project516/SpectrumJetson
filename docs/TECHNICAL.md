@@ -1382,6 +1382,26 @@ hid mismatches such as TopRight's pipeline 1 being "Fuel Test". Test: the dropdo
 `uiState`'s `pipelineNicknames` numbered from 0. The test helpers read and pick pipelines by name
 inside "N: name". Suite: 5 tests, 1.5 min, all passing.
 
+#### Event pipeline when the field connects (`photonvision-51`)
+
+- Settings `eventProfileOnFms` (default off) and `eventPipeline` join idle mode's in
+  `spectrum-robot-state.json`. On the control word's FMS-attached bit going false to true (this
+  includes connecting to a robot that's already on the field), `IdleMode.switchAllTo` sets every
+  camera that has that number to it, skipping driver mode (-1), calibration (-2) and focus (-3).
+  Only on that edge, so later switches (dashboard, robot code, the setting turned off) stick.
+- The summary, kept as `lastEventSwitch` and logged, names cameras whose pipeline at that number
+  isn't the one most cameras have there: "the field (FMS) connected, pipeline 1: switched TopRight
+  (its 1 is 'Fuel Test'), 5th Cam, BottomRight, TopLeft, BottomLeft".
+- `POST /api/robotState {switchNow: true}` runs it by hand (Settings' Switch now).
+- `health-check.sh`: PASS with each camera's pipeline at that number, WARN if one lacks it or
+  has a different name there.
+- Test (`tests/ui/specs/event.spec.ts`, 37 s): `zz-uitest-all` on every camera (pipeline 1 on
+  four, 2 on TopRight), turned on and chosen in the Settings card. The fake robot runs disabled 4 s,
+  then FMS-attached. Every camera switched to 1, and the summary named TopRight's Fuel Test. The
+  test then switched TopLeft back on the dashboard, and 5 s later (FMS still attached) it hadn't
+  moved. Switch now moved it again. Afterwards the settings are restored, the pipelines deleted,
+  and every camera put back. Suite: 8 tests, 2.0 min.
+
 #### Idle mode switch and Robot state card (`photonvision-50`)
 
 - `IdleMode` settings `{idleWhileDisabled, idleFps}` live in

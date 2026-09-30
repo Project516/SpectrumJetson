@@ -1,5 +1,5 @@
 import { test as base, expect, type APIRequestContext, type Browser, type Page } from "@playwright/test";
-import { cameraState, Dashboard, TEST_PIPELINE, uiState } from "./pv";
+import { cameraState, Dashboard, TEST_PIPELINE, uiState, type CameraState } from "./pv";
 
 // Every test runs on a temporary copy of the camera's current pipeline, called zz-uitest, and
 // deletes it afterwards, so the real pipelines are never touched. A run that died half way
@@ -87,6 +87,39 @@ export async function secondDashboard(browser: Browser, page: Page): Promise<Das
   const dash = new Dashboard(await context.newPage());
   await dash.open();
   return dash;
+}
+
+/** Delete test pipelines on every camera and put each camera back on the pipeline it was running. */
+export async function removeEverywhere(dash: Dashboard, request: APIRequestContext, names: string[], home: string) {
+  for (const camera of await uiState(request)) {
+    const running = camera.pipelineNicknames[camera.currentPipelineIndex];
+    const leftovers = names.filter((n) => camera.pipelineNicknames.includes(n));
+    if (!leftovers.length) continue;
+    for (const name of leftovers) await deletePipeline(dash, request, camera.nickname, name);
+    const back = names.includes(running) ? undefined : running;
+    if (back) {
+      await dash.selectPipeline(back);
+      await expect.poll(async () => (await cameraState(request, camera.nickname)).currentPipelineSettings.pipelineNickname).toBe(back);
+    }
+  }
+  await dash.selectCamera(home);
+}
+
+/** Put every camera except `skip` back on the pipeline (by name) it was running in `before`. */
+export async function restoreRunning(dash: Dashboard, request: APIRequestContext, before: CameraState[], skip?: string) {
+  for (const c of await uiState(request)) {
+    if (c.nickname === skip) continue;
+    const wanted = before.find((b) => b.nickname === c.nickname);
+    if (!wanted) continue;
+    const name = wanted.pipelineNicknames[wanted.currentPipelineIndex];
+    if (c.pipelineNicknames[c.currentPipelineIndex] !== name) {
+      await dash.selectCamera(c.nickname);
+      await dash.selectPipeline(name);
+    }
+    await expect
+      .poll(async () => (await cameraState(request, c.nickname)).currentPipelineIndex)
+      .toBe(wanted.currentPipelineIndex);
+  }
 }
 
 export const test = base.extend<{ dash: Dashboard; camera: string; pipeline: TestPipeline }>({

@@ -1,23 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { spawn, type ChildProcess } from "child_process";
+import { FakeRobot, JETSON, robotState } from "../lib/fake-robot";
 import { Dashboard } from "../lib/pv";
 import { pickCamera } from "../lib/fixtures";
 
 // photonvision-49/50: with a (fake) robot connected and disabled the cameras idle at 30 fps; the
 // dashboard says so and its "Full speed" button, or Settings > Robot state, turns idling off.
 // Needs the Jetson over SSH to run tests/fake-robot there (run.sh sets PV_UI_JETSON).
-
-const JETSON = process.env.PV_UI_JETSON;
-
-async function robotState(request: import("@playwright/test").APIRequestContext) {
-  return (await (await request.get("/api/robotState")).json()) as {
-    idleWhileDisabled: boolean;
-    idleFps: number;
-    robotConnected: boolean;
-    enabled: boolean;
-    idleNow: boolean;
-  };
-}
 
 async function shownFps(dash: Dashboard): Promise<number> {
   const text = await dash.page.locator(".v-card-title .v-chip").first().innerText();
@@ -30,15 +18,9 @@ test("idle while disabled, and the Full speed / Settings switches", async ({ pag
   test.skip(before.robotConnected, "a robot is already connected");
   const camera = await pickCamera(request);
 
-  // 50 s disabled; the fake robot and its script end by themselves (their own deadlines).
-  const robot: ChildProcess = spawn(
-    "ssh",
-    ["-o", "BatchMode=yes", "-i", `${process.env.HOME}/.ssh/jetson_ed25519`, `spectrum3847@${JETSON}`,
-      "bash ~/SpectrumJetson/tests/fake-robot/run.sh disabled:50"],
-    { stdio: "ignore" }
-  );
+  // 50 s disabled at most; stopped early below.
+  const robot = await FakeRobot.start(request, "disabled:50");
   try {
-    await expect.poll(async () => (await robotState(request)).robotConnected, { timeout: 30_000 }).toBe(true);
     if (!(await robotState(request)).idleWhileDisabled) {
       await request.post("/api/robotState", { data: { idleWhileDisabled: true } });
     }
@@ -72,10 +54,6 @@ test("idle while disabled, and the Full speed / Settings switches", async ({ pag
     });
   } finally {
     await request.post("/api/robotState", { data: { idleWhileDisabled: before.idleWhileDisabled, idleFps: before.idleFps } });
-    // End the fake robot now, not when its 50 s are up, so later tests don't see a robot.
-    spawn("ssh", ["-o", "BatchMode=yes", "-i", `${process.env.HOME}/.ssh/jetson_ed25519`, `spectrum3847@${JETSON}`,
-      "touch /tmp/fake-robot-stop"], { stdio: "ignore" });
-    await expect.poll(async () => (await robotState(request)).robotConnected, { timeout: 15_000 }).toBe(false);
-    robot.kill();
+    await robot.stop();
   }
 });

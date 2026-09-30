@@ -222,6 +222,29 @@ case $idle in
   on*) pass "idle while disabled: ${idle#on } fps per camera" ;;
   off) warn "idle while disabled is off: cameras run at full speed while the robot is disabled (Settings > Robot state)" ;;
 esac
+# photonvision-51: the event pipeline, and what each camera has at that number.
+event=$(timeout 5 python3 - <<'PY' 2>/dev/null || true
+import json, urllib.request
+get = lambda p: json.load(urllib.request.urlopen("http://localhost:5800" + p, timeout=3))
+s = get("/api/robotState")
+if s["eventProfileOnFms"]:
+    n = s["eventPipeline"]
+    cams = get("/api/spectrum/uiState")["cameras"]
+    have = ["%s '%s'" % (c["nickname"], c["pipelineNicknames"][n]) for c in cams if len(c["pipelineNicknames"]) > n]
+    miss = [c["nickname"] for c in cams if len(c["pipelineNicknames"]) <= n]
+    names = {c["pipelineNicknames"][n] for c in cams if len(c["pipelineNicknames"]) > n}
+    line = "event pipeline %d when the field connects: %s" % (n, ", ".join(have))
+    if miss: line += "; no pipeline %d on %s" % (n, ", ".join(miss))
+    print(("WARN\t" if miss or len(names) > 1 else "PASS\t") + line)
+else:
+    print("INFO\tevent pipeline when the field connects: off (Settings > Robot state)")
+PY
+)
+case ${event%%$'\t'*} in
+  PASS) pass "${event#*$'\t'}" ;;
+  WARN) warn "${event#*$'\t'}" ;;
+  INFO) echo "        ${event#*$'\t'}" ;;
+esac
 ips=$(ip -4 -br addr | awk '$1 !~ /^(lo|l4tbr0|usb|docker)/ && $3 != "" {print $1" "$3}' | paste -sd',' | sed 's/,/, /g')
 echo "        addresses: ${ips:-none}"
 if nmcli -t -f DEVICE,TYPE,STATE dev 2>/dev/null | grep -q ":wifi:connected"; then

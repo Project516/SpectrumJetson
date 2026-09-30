@@ -1,4 +1,4 @@
-import { test, expect, deletePipeline } from "../lib/fixtures";
+import { test, expect, removeEverywhere, restoreRunning } from "../lib/fixtures";
 import { cameraState, changeControl, uiState, type CameraState, type Dashboard } from "../lib/pv";
 import type { APIRequestContext } from "@playwright/test";
 
@@ -23,22 +23,6 @@ function settingsOf(camera: CameraState, name: string): Record<string, unknown> 
 function differences(a: Record<string, unknown>, b: Record<string, unknown>, ignore: Set<string>): string[] {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   return [...keys].filter((k) => !ignore.has(k) && JSON.stringify(a[k]) !== JSON.stringify(b[k]));
-}
-
-/** Delete test pipelines on every camera and put each camera back on the pipeline it was running. */
-async function removeEverywhere(dash: Dashboard, request: APIRequestContext, names: string[], home: string) {
-  for (const camera of await uiState(request)) {
-    const running = camera.pipelineNicknames[camera.currentPipelineIndex];
-    const leftovers = names.filter((n) => camera.pipelineNicknames.includes(n));
-    if (!leftovers.length) continue;
-    for (const name of leftovers) await deletePipeline(dash, request, camera.nickname, name);
-    const back = names.includes(running) ? undefined : running;
-    if (back) {
-      await dash.selectPipeline(back);
-      await expect.poll(async () => (await cameraState(request, camera.nickname)).currentPipelineSettings.pipelineNickname).toBe(back);
-    }
-  }
-  await dash.selectCamera(home);
 }
 
 async function createPipeline(dash: Dashboard, name: string, startFrom: string, everyCamera: boolean) {
@@ -148,17 +132,7 @@ test("Create on every camera from another camera's pipeline, then Switch all", a
     });
   } finally {
     await removeEverywhere(dash, request, [ALL], camera);
-    // Put every other camera back on the pipeline it was running before the test.
-    for (const c of await uiState(request)) {
-      if (c.nickname === camera) continue;
-      const wanted = before.find((b) => b.nickname === c.nickname)!;
-      const name = wanted.pipelineNicknames[wanted.currentPipelineIndex];
-      if (c.pipelineNicknames[c.currentPipelineIndex] !== name) {
-        await dash.selectCamera(c.nickname);
-        await dash.selectPipeline(name);
-      }
-      await expect.poll(async () => (await cameraState(request, c.nickname)).currentPipelineIndex).toBe(wanted.currentPipelineIndex);
-    }
+    await restoreRunning(dash, request, before, camera);
     await dash.selectCamera(camera);
     await dash.selectPipeline("zz-uitest");
   }
