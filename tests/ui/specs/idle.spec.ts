@@ -45,7 +45,7 @@ test("idle while disabled, and the Full speed / Settings switches", async ({ pag
 
     await test.step("back on from Settings > Robot state", async () => {
       await page.goto("/#/settings");
-      const card = page.locator(".v-card").filter({ hasText: "Robot state" });
+      const card = page.locator(".v-card").filter({ has: page.locator(".v-card-title", { hasText: /^Robot state$/ }) });
       await expect(card).toContainText("Robot disabled");
       await card.locator('[data-pv-control="switch"][data-pv-label="Idle while the robot is disabled"] input').check();
       await expect.poll(async () => (await robotState(request)).idleNow).toBe(true);

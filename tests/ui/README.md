@@ -54,9 +54,13 @@ tests/ui/run.sh
 - **`ready`:** the Match Ready page: its verdict matches the health check, a live tile per camera,
   Check again.
 
+- **`snapshots`:** save a named snapshot, add a pipeline, restore the snapshot through the card:
+  PhotonVision restarts with every camera as before, and the automatic "Before restoring" snapshot
+  has the change. Test snapshots are deleted.
+
 **Limits:** 10 s per click, 2 min per test, 8 min per run; `run.sh` stops anything past 10 min. The
 run fails if a camera ends on a different pipeline than it started on, or a `zz-uitest` pipeline is
-left behind, and says which.
+left behind (or a `zz-uitest` snapshot), and says which.
 
 ## Writing a test
 

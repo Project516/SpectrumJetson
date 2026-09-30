@@ -40,11 +40,12 @@ test("event pipeline when the field connects; overrides stick; Switch now", asyn
   }
   const event = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
 
+  const startedAt = Date.now();
   let robot: FakeRobot | undefined;
   try {
     await test.step("turn it on in Settings > Robot state", async () => {
       await page.goto("/#/settings");
-      const card = page.locator(".v-card").filter({ hasText: "Robot state" });
+      const card = page.locator(".v-card").filter({ has: page.locator(".v-card-title", { hasText: /^Robot state$/ }) });
       await card.locator('[data-pv-control="switch"][data-pv-label="Event pipeline when the field connects"] input').check();
       await expect.poll(async () => (await robotState(request)).eventProfileOnFms).toBe(true);
       const select = card.locator('[data-pv-control="select"][data-pv-label="Event pipeline"]');
@@ -87,13 +88,19 @@ test("event pipeline when the field connects; overrides stick; Switch now", asyn
 
     await test.step("Switch now switches again", async () => {
       await page.goto("/#/settings");
-      const card = page.locator(".v-card").filter({ hasText: "Robot state" });
+      const card = page.locator(".v-card").filter({ has: page.locator(".v-card-title", { hasText: /^Robot state$/ }) });
       await card.getByRole("button", { name: "Switch now" }).click();
       await expect.poll(async () => (await cameraState(request, home)).currentPipelineIndex).toBe(event);
       await expect(card.getByTestId("last-event-switch")).toContainText("Switch now");
     });
   } finally {
     await robot?.stop();
+    // The fake field also triggers the day's "field connected" snapshot (photonvision-53): delete
+    // it, so a real one is still taken when the real field connects.
+    const snaps = (await (await request.get("/api/snapshots")).json()) as { id: string; reason: string; createdAt: number }[];
+    for (const s of snaps) {
+      if (s.reason === "field connected" && s.createdAt >= startedAt) await request.post("/api/snapshots/delete", { data: { id: s.id } });
+    }
     await request.post("/api/robotState", {
       data: { eventProfileOnFms: saved.eventProfileOnFms, eventPipeline: saved.eventPipeline }
     });

@@ -1473,6 +1473,32 @@ flags. 5 cameras, ceiling scene:
 - The GC on disable (`photonvision-49`, 27 ms while disabled) stays.
 - PhotonVision allocates about 2.6 MB/s (young 37 MB -> 19 MB every ~7 s).
 
+#### Settings snapshots (`photonvision-53`)
+
+- `SettingsSnapshots` keeps `/opt/photonvision/snapshots/ID/` (ID = `yyyyMMdd-HHmmss`):
+  `photon.sqlite` copied with SQLite's `VACUUM INTO` after `saveToDisk()` (consistent even if a save
+  is running), the config folder's `spectrum/` (excluded tags), `extra/` (Robot state, Rewind
+  settings) and `meta.json` (name, reason, time, version, each camera's pipeline names). 2.0 MB.
+  The whole config folder is 76 MB, but 31 MB is logs and 35 MB calibration images.
+- **Restore** takes a "Before restoring 'NAME'" snapshot, stops the write task and the flush on
+  exit, replaces `photon.sqlite` (and removes any `-journal`/`-wal`/`-shm`), `spectrum/` and the
+  extra files, then restarts PhotonVision. Unlike the stock settings import it doesn't delete the
+  config folder, so logs and calibration images stay.
+- **Automatic:** "before restore", and "Field connected DATE" the first time the FMS attaches
+  each day (off the NetworkTables thread). The newest 20 automatic ones are kept; named ones stay
+  until deleted.
+- `GET/POST /api/snapshots`, `POST /api/snapshots/restore {id}`, `POST /api/snapshots/delete {id}`,
+  `GET /api/snapshots/download?id=` (a zip). The card reloads its list when the page reconnects
+  after a restore (the first version showed the old list until reopened).
+- Test (`tests/ui/specs/snapshots.spec.ts`): save "zz-uitest snapshot" in the card, add pipeline
+  `zz-uitest-snap` on TopLeft, restore through the card's confirm dialog. PhotonVision restarted
+  and came back in ~10 s with every camera's pipelines and running pipeline as before and no
+  `zz-uitest-snap`; the "Before restoring" snapshot lists it. Both are deleted afterwards. The
+  Event test deletes the "field connected" snapshot its fake field causes, and the run fails if a
+  `zz-uitest` snapshot is left.
+- A manual copy of the settings from before the first restore test is at
+  `~/photon.sqlite.before-snapshots-20260930-080654` on the Jetson.
+
 #### Match Ready page (`photonvision-52`)
 
 - `GET /api/healthCheck` runs `health-check.sh` (through `/opt/photonvision/health-check.sh`, a

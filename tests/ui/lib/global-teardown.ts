@@ -24,6 +24,9 @@ export default async function globalTeardown() {
     const leftovers = c.pipelineNicknames.filter((n) => n.startsWith("zz-uitest"));
     if (leftovers.length) problems.push(`${c.nickname} still has ${leftovers.join(", ")}`);
   }
+  // Test snapshots (photonvision-53), and a "field connected" one taken during the run by the fake field.
+  const snaps = (await (await fetch(`${base}/api/snapshots`)).json()) as { name: string; reason: string }[];
+  for (const s of snaps) if (s.name.includes("zz-uitest")) problems.push(`snapshot '${s.name}' left behind`);
   if (problems.length) {
     throw new Error(`The tests left the Jetson changed:\n  ${problems.join("\n  ")}`);
   }

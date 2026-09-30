@@ -25,7 +25,7 @@ cleanup() { [[ -n $tunnel_pid ]] && kill "$tunnel_pid" 2>/dev/null || true; }
 trap cleanup EXIT
 if ! (exec 3<>/dev/tcp/127.0.0.1/5800) 2>/dev/null; then
   for host in $HOSTS; do
-    ssh -N -o ExitOnForwardFailure=yes -o ConnectTimeout=4 -o ServerAliveInterval=15 -o BatchMode=yes \
+    ssh -q -N -o ExitOnForwardFailure=yes -o ConnectTimeout=4 -o ServerAliveInterval=15 -o BatchMode=yes \
       -i "$KEY" "${FORWARDS[@]}" "spectrum3847@$host" &
     tunnel_pid=$!
     for _ in $(seq 20); do
