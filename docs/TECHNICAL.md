@@ -1167,6 +1167,39 @@ above them, every camera seeing every tag on every frame, no streams, 3 × 8 s e
 - **Backlit tags** (held under the lights) decoded at margins 5–9 until they were held still and
   out of the glare.
 
+#### CUDA wait mode again, and splitting JPEG decode between hardware and CPU
+
+Same scene as the tag tests (cameras facing the ceiling lights, no tag), 4 cameras.
+- **CUDA wait mode** (`/tmp/spectrum-971-cuda-sync`, read when PhotonVision starts). Cycled
+  block, spin, yield twice, one restart each, 2 × 10 s after each start settled:
+
+  | Mode | Detect (round 1 / 2) | Typical worst (1 / 2) | CPU |
+  |---|---|---|---|
+  | `block` (default) | 2.16 / 2.33 ms | 4.35 / 4.54 ms | ~1.65 cores |
+  | `spin` | 2.11 / 2.45 ms | 4.57 / 4.91 ms | ~1.65 |
+  | `yield` | 2.10 / 1.87 ms | 3.94 / 3.71 ms | ~1.6 |
+
+  `yield` was best in both rounds, but by ~0.2 ms, which is as big as the restart-to-restart
+  noise. It needs more alternating rounds before changing the default. `spin` no longer gains
+  anything, now that the cameras don't queue on CUDA's lock.
+- **Hardware and CPU decode split** (`nvjpg:N` in `/tmp/spectrum-jpeg-decoder` or
+  `SPECTRUM_JPEG_DECODER`: the first N cameras, in the order they first decoded, use NVJPG, the
+  rest libjpeg-turbo; live). Alternating, 12 s each:
+
+  | | Frame age at result | Detect | Decode NVJPG / turbo | CPU |
+  |---|---|---|---|---|
+  | **All 4 NVJPG** | **13.5 ms** | **2.2 ms** | 3.0 / – ms | **1.6 cores** |
+  | `nvjpg:3` | 14.2 ms | 2.9 ms | 2.9 / 3.1 ms | 1.9 |
+  | `nvjpg:2` | 15.0 ms | 3.3 ms | 2.9 / 3.2 ms | 2.25 |
+
+  **Worse, keep all 4 on the hardware.** In this bright scene libjpeg-turbo took 3.1–3.2 ms (2.4 ms
+  on the earlier plain scene), and freeing NVJPG gained only 0.1 ms. The CPU-decoded cameras also
+  lose GPU input (an upload again), and the decode threads compete with the detection threads
+  (cross-core wakeups 12k → 24k a second), so detection got 0.7–1.1 ms slower.
+- **New: `frame age at result`** in each `971 stats` line: capture (the first USB packet) to the
+  end of detection, per camera. 13.5 ms here ≈ 8.1 (the camera sending the frame) + 3.0 (decode) +
+  2.2 (detection); add half the exposure for mid-exposure to result.
+
 #### Extra camera control sliders snapped back (`photonvision-39`)
 
 Contrast, gamma, sharpness and backlight compensation (`photonvision-28`) show the store's value

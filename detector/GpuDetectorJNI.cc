@@ -230,6 +230,8 @@ struct Stats {
   double detect_ms = 0, jni_ms = 0, max_ms = 0, margin = 0, min_margin = 1e9;
   double lock_wait_ms = 0;  // part of detect_ms spent waiting for gpu_mu
   int gpu_input = 0;        // frames Detect() got straight from the hardware decoder's GPU copy
+  double age_ms = 0;        // capture (first USB packet) to the end of detection, summed
+  int ages = 0;
 };
 
 struct DetectorSlot {
@@ -387,6 +389,7 @@ void RecordStats(Stats &st, jlong handle, const cv::Mat &img, const zarray_t *de
     if (st.errors) std::cout << ", errors " << st.errors;
     if (st.lock_wait_ms > 0) std::cout << ", gpu lock wait " << st.lock_wait_ms / st.frames << " ms";
     if (st.gpu_input) std::cout << ", gpu input " << 100 * st.gpu_input / st.frames << "%";
+    if (st.ages) std::cout << ", frame age at result " << st.age_ms / st.ages << " ms";
     std::cout << " [bos]" << std::endl;
     st = Stats{};
   }
@@ -515,6 +518,12 @@ enum class JpegDecoder { kTurbo, kNvjpg };
 // libjpeg-turbo decodes everything until PhotonVision restarts.
 std::atomic<bool> nvjpg_off{false};
 
+// "nvjpg:N": only the first N cameras (camera threads, in the order they first decoded) use the
+// hardware decoder for gray frames, the rest libjpeg-turbo. 4 cameras share the Jetson's 2 NVJPG
+// engines, which made a hardware decode ~2.8 ms against ~2.4 ms on the CPU (2026-09-29); moving
+// some cameras to the CPU (which has idle cores) shortens the hardware's queue. -1: no limit.
+std::atomic<int> nvjpg_camera_limit{-1};
+
 JpegDecoder WantedJpegDecoder() {
   static std::mutex mu;
   static std::chrono::steady_clock::time_point next{};
@@ -531,16 +540,34 @@ JpegDecoder WantedJpegDecoder() {
       if (std::fgets(buf, sizeof(buf), f)) v = std::string(buf).substr(0, std::strcspn(buf, " \r\n"));
       std::fclose(f);
     }
-    mode = v == "nvjpg" ? JpegDecoder::kNvjpg : JpegDecoder::kTurbo;
+    int limit = -1;
+    if (v.rfind("nvjpg:", 0) == 0) {
+      limit = std::atoi(v.c_str() + 6);
+      if (limit < 0) limit = -1;
+    }
+    nvjpg_camera_limit = limit;
+    mode = v.rfind("nvjpg", 0) == 0 ? JpegDecoder::kNvjpg : JpegDecoder::kTurbo;
     if (v != logged) {
       logged = v;
       std::cout << "971 jpeg decoder: "
-                << (mode == JpegDecoder::kNvjpg ? "nvjpg (hardware)" : "libjpeg-turbo")
+                << (mode == JpegDecoder::kNvjpg
+                        ? (limit >= 0 ? "nvjpg (hardware) for the first " + std::to_string(limit) +
+                                            " cameras, libjpeg-turbo for the rest"
+                                      : std::string("nvjpg (hardware)"))
+                        : std::string("libjpeg-turbo"))
                 << (nvjpg_off ? " requested, but the hardware decoder is off (see above)" : "")
                 << std::endl;
     }
   }
   return nvjpg_off ? JpegDecoder::kTurbo : mode;
+}
+
+// This camera thread's place in the order cameras first decoded, for nvjpg:N.
+bool HardwareForThisCamera() {
+  static std::atomic<int> next_slot{0};
+  thread_local int slot = next_slot++;
+  const int limit = nvjpg_camera_limit;
+  return limit < 0 || slot < limit;
 }
 
 std::atomic<long> checks_ok{0}, checks_differ{0}, checks_skipped{0};
@@ -769,6 +796,9 @@ int NvjpgDecode(const uint8_t *jpeg, size_t size, cv::Mat &mat, bool bgr) {
 // A "971 jpeg" line every 10 s (not "971 stats", which health-check.sh parses per detector).
 // Colour frames are also counted on their own, in a clause at the end of the line.
 std::atomic<int> last_timestamp_src{-1};  // WPI_TimestampSource of the last gray frame
+// The capture timestamp (wpi::Now microseconds) of the last gray frame decoded on this thread;
+// processimage reports how old that frame is when its detection ends ("frame age at result").
+thread_local uint64_t last_capture_us = 0;
 
 // age_ms: how old the frame was when its decode started (from cscore's capture timestamp, which
 // the camera driver takes when the frame's first USB packet arrives), or < 0 if unknown.
@@ -894,6 +924,7 @@ JNIEXPORT jint JNICALL Java_org_photonvision_jni_GpuDetectorJNI_decodeMjpegGray(
       frame->timestamp ? (static_cast<double>(wpi::Now()) - static_cast<double>(frame->timestamp)) / 1000
                        : -1;
   last_timestamp_src = frame->timestampSrc;
+  last_capture_us = frame->timestamp;
   // Latency probe (tests only): while /tmp/spectrum-971-kmsg exists (checked every 60 frames),
   // log each decode start to the kernel log, next to uvcvideo's "Frame complete" trace lines.
   {
@@ -909,7 +940,7 @@ JNIEXPORT jint JNICALL Java_org_photonvision_jni_GpuDetectorJNI_decodeMjpegGray(
   }
   int fallback = SNJ_OK;
   nvjpg_thread.dev_valid = false;  // until a hardware decode puts this frame on the GPU
-  if (WantedJpegDecoder() == JpegDecoder::kNvjpg) {
+  if (WantedJpegDecoder() == JpegDecoder::kNvjpg && HardwareForThisCamera()) {
     {
       std::shared_lock<CudaCaptureLock> cuda(cuda_capture_lock);
       fallback = NvjpgDecode(data, size, *mat, /*bgr=*/false);
@@ -1217,6 +1248,14 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
 
   jobjectArray result = MakeJObjectArray(env, detections);
   auto t2 = std::chrono::steady_clock::now();
+  if (last_capture_us) {
+    const double age = (static_cast<double>(wpi::Now()) - static_cast<double>(last_capture_us)) / 1000;
+    if (age >= 0 && age < 1000) {
+      s->stats.age_ms += age;
+      s->stats.ages++;
+    }
+    last_capture_us = 0;  // one frame, one reading
+  }
   RecordStats(s->stats, handle, img, detections, failed, t0, t1, t2);
   return result;
 }
