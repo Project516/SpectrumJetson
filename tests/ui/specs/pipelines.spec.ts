@@ -83,7 +83,6 @@ test("Create on every camera from another camera's pipeline, then Switch all", a
   camera,
   pipeline
 }) => {
-  test.slow();
   await removeEverywhere(dash, request, [ALL], camera);
   await dash.selectPipeline("zz-uitest");
   // A distinctive source: decision margin 23, and an orientation the other cameras mustn't take.

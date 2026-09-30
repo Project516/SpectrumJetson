@@ -45,7 +45,6 @@ test("every control round-trips: page, backend and a second dashboard", async ({
   camera,
   pipeline
 }) => {
-  test.slow();
   const rows: Row[] = [];
   const other = await secondDashboard(browser, dash.page);
   await other.selectCamera(camera);

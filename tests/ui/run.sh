@@ -40,4 +40,8 @@ if ! (exec 3<>/dev/tcp/127.0.0.1/5800) 2>/dev/null; then
   echo "Tunnel to the Jetson open on localhost:5800"
 fi
 
-npx playwright test "$@"
+# Belt and braces over Playwright's own globalTimeout (8 min): nothing here runs past 10 min.
+rc=0
+timeout --kill-after=10 600 npx playwright test "$@" || rc=$?
+[[ $rc == 124 ]] && echo "TIMEOUT: the browser tests didn't finish in 10 min" >&2
+exit "$rc"

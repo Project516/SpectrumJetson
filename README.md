@@ -473,7 +473,11 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 
 **Checking on it:** run `scripts/jetson/health-check.sh` for a readiness report. `journalctl -u photonvision -f` shows PhotonVision's live log on the Jetson. The `971 stats` lines show frames per second, detection time and decision margin for each camera. The `971 jpeg` lines (every 10 s) show which JPEG decoder is running and how its checks went.
 
-**After installing a new build:** run `tests/ui/run.sh` on the laptop. It drives the dashboard in Chrome and checks that every slider, switch and menu changes the page, PhotonVision and a second dashboard, and puts each one back. It also tests the mask editor, Start from, Create on every camera and Switch all. It takes about a minute and a half and works on a temporary copy of a pipeline, so your settings aren't touched. See [tests/ui](tests/ui/README.md).
+**Idle while disabled** (`photonvision-49`): while the Jetson is connected to a robot that's disabled, each camera processes 30 frames a second instead of 122. It's back to full rate within 5 ms of enable. With 5 cameras: **7.8 W disabled against 9.7 W enabled**, less heat in the queue and between matches, and 30 results a second is still plenty to set the robot's starting pose. Off the robot (no NetworkTables connection) nothing changes, so tuning on the bench sees every frame. When the robot disables, PhotonVision also runs a garbage collection (27 ms), so the memory is cleaned up before the next match rather than during it. `SPECTRUM_IDLE_FPS` in the service sets the rate (0 = off).
+
+**Hidden dashboard tabs stop their streams** (`photonvision-48`): a dashboard tab that's behind another tab, or in a minimised window, disconnects its camera streams, and the Jetson stops encoding them. They reconnect when you look at the tab again. This also fixes streams that broke (`http://undefined:…`) when a dashboard reconnected to PhotonVision after a restart.
+
+**After installing a new build:** run `tests/ui/run.sh` on the laptop. It drives the dashboard in Chrome and checks that every slider, switch and menu changes the page, PhotonVision and a second dashboard, and puts each one back. It also tests the mask editor, Start from, Create on every camera, Switch all and hidden-tab streams. It takes about a minute and a half and works on a temporary copy of a pipeline, so your settings aren't touched. See [tests/ui](tests/ui/README.md).
 
 **Robot code sees the same health on NetworkTables** (`photonvision-16`), once a second:
 - `/photonvision/jetson/`: GPU load, temperatures, fan speed, power, the JPEG decoder's state, and a **throttle reason** (`OVER-CURRENT` when the supply sags, `HIGH TEMP`, or clocks capped, `photonvision-20`). It's also on the Settings page as **CPU Throttling**.
@@ -506,7 +510,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 | `tools/fieldcal/` | Field calibration: tag positions and camera mounts from a recording of the robot pushed to still spots ([README](tools/fieldcal/README.md)) |
 | `tools/fieldmodel/`, `assets/field-models/` | The 3D field model for the Field Calibration page, converted from *FIRST*'s field CAD ([README](tools/fieldmodel/README.md)) |
 | `kernel/` | Our patch to Linux's USB camera driver (bandwidth cap), built by `11-uvcvideo-payload-cap.sh` |
-| `tests/` | Dashboard browser tests (`tests/ui`), detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, USB hub reset test, robot clock test, flicker check, CPU profiler, performance snapshot, telemetry and mount-estimate check |
+| `tests/` | Dashboard browser tests (`tests/ui`), a fake robot for robot-state features (`tests/fake-robot`), detector stress test, live A/B and fault-injection test, ChArUco board checker, calibration checker, JVM memory check, Rewind on/off test, power-cut test, camera unplug test, USB hub reset test, robot clock test, flicker check, CPU profiler, performance snapshot, telemetry and mount-estimate check |
 | `docs/` | The technical reference, Rewind, the Limelight 4 comparison, vision research, the upstream PhotonVision port, the game-piece models, and the original handoff document that started the project |
 
 **Still to do before the October event:**

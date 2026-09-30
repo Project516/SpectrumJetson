@@ -41,6 +41,13 @@ tests/ui/run.sh
   `zz-uitest-copy` and `zz-uitest-all`, and deletes them from every camera afterwards. Also checks
   the Pipeline dropdown's "N: name" numbers match PhotonVision's.
 
+- **`streams`:** a hidden tab (another tab in front, or minimised) disconnects its streams, and they
+  come back when shown. Skipped if another dashboard is watching the camera.
+
+**Limits:** 10 s per click, 2 min per test, 8 min per run; `run.sh` stops anything past 10 min. The
+run fails if a camera ends on a different pipeline than it started on, or a `zz-uitest` pipeline is
+left behind, and says which.
+
 ## Writing a test
 
 - Find controls by their label: `dash.control("slider", "Gamma", card)`. The shared components

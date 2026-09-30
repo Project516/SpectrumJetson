@@ -6,10 +6,14 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./specs",
   globalSetup: "./lib/global-setup.ts",
+  globalTeardown: "./lib/global-teardown.ts",
   // One browser at a time: the tests share the Jetson's cameras.
   workers: 1,
   fullyParallel: false,
-  timeout: 5 * 60_000,
+  // Hard limits, so a stuck test fails instead of hanging: 2 min a test (the longest takes ~35 s),
+  // 8 min for the whole run, 10 s for any single click or fill (Playwright's default is none).
+  timeout: 2 * 60_000,
+  globalTimeout: 8 * 60_000,
   expect: { timeout: 5_000 },
   reporter: [["list"], ["html", { outputFolder: "report", open: "never" }]],
   outputDir: "results",

@@ -1382,6 +1382,50 @@ hid mismatches such as TopRight's pipeline 1 being "Fuel Test". Test: the dropdo
 `uiState`'s `pipelineNicknames` numbered from 0. The test helpers read and pick pipelines by name
 inside "N: name". Suite: 5 tests, 1.5 min, all passing.
 
+#### Idle while disabled, GC on disable (`photonvision-49`)
+
+- **`IdleMode`:** `active()` is true while NetworkTables is connected and the Driver Station's
+  control word (`/FMSInfo/FMSControlData`, already read by upstream's `NTDriverStation`, which only
+  logged it) says disabled. `VisionRunner` then waits before each grab until 1/`SPECTRUM_IDLE_FPS`
+  (default 30) after the last one, in sleeps of at most 5 ms that end as soon as the robot is
+  enabled. Frames not grabbed are never decoded, so both the NVJPG decode and the detector are
+  saved. `NTDriverStation` now keeps `current()` and calls transition listeners.
+- **GC:** 0.5 s after each enabled-to-disabled transition, `System.gc()` on a daemon thread, logged
+  as "Robot disabled: garbage collected in N ms, heap A -> B MB".
+- **Test** (`tests/fake-robot/run.sh`, on the Jetson): PhotonVision looks for team 8515's robot at
+  10.85.15.2, so the script adds that address to `lo` for the run and `FakeRobot.java` (a
+  NetworkTables server using PhotonVision's own jar) answers there, with no settings change. It
+  publishes the control word through phases and prints each phase's fps per camera and board
+  power. 5 cameras, ceiling scene:
+
+  | Phase (30 s) | fps per camera | Board |
+  |---|---|---|
+  | disabled | 30-31 | 7.8 W |
+  | enabled | 122 | 9.7 W |
+  | disabled | 31 | 7.8 W |
+
+  "Robot disabled: garbage collected in 27 ms, heap 24 -> 11 MB" 0.5 s after the second disable.
+- **Not yet checked on 2027 robot code:** that 2027 WPILib still publishes `/FMSInfo/FMSControlData`
+  to coprocessors. If it doesn't, idle mode never engages (it fails safe: full rate).
+- **Deadlines:** the script re-runs itself under `timeout` (the phases plus 60 s), so cleanup still
+  runs on a timeout; `FakeRobot` gives up after 30 s without a connection. `tegrastats` is stopped
+  with `tegrastats --stop`: killing its `sudo` left it running and holding the script's output
+  open, which hung the first run.
+
+#### Hidden tabs close their streams (`photonvision-48`)
+
+- `photon-camera-stream` sets its `img` to the empty source while `document.visibilityState` is
+  `hidden`, which closes the MJPEG connection; `photonvision-15` then stops encoding that stream.
+  Shown again, it reconnects.
+- **Upstream bug found on the way:** the stream URL called `inject("backendHostname")` inside a
+  `computed`. `inject` only works during setup, so any recompute (tab shown again, or the backend
+  reconnecting after a PhotonVision restart) built `http://undefined:PORT/stream.mjpg`. Now read
+  once at setup.
+- `uiState` has `streamViewers` per camera (cscore's source enabled = a client is streaming).
+  Test (`tests/ui/specs/streams.spec.ts`): the dashboard's stream reaches the Jetson; hidden (the
+  browser's visibility state and event), the Jetson has no viewer within 10 s; shown, the viewer
+  and a decoded frame are back. Skipped if another dashboard is already watching that camera.
+
 #### Browser tests (`tests/ui`, `photonvision-45`)
 
 Playwright, run from the laptop in its own Chrome against the live Jetson (`tests/ui/run.sh`, which
@@ -1412,8 +1456,12 @@ didn't show it.
 - **Proved against the bug:** a jar with `-39` undone (`updateStore` false again) fails exactly
   Contrast, Gamma and Sharpness with "page didn't show the new value", and Backlight Compensation
   with "didn't go back". The good jar then passes.
-- Every click has a 10 s limit (`actionTimeout`); Playwright's default is none, and a stuck
-  locator hung the first run silently.
+- **Deadlines:** 10 s for any click or fill (`actionTimeout`; Playwright's default is none, and a
+  stuck locator hung the first run silently), 2 min a test, 8 min a run (`globalTimeout`), and
+  `run.sh` kills anything past 10 min.
+- **Left-behind check:** `global-setup` records every camera's running pipeline; `global-teardown`
+  fails the run if one ends elsewhere or a `zz-uitest` pipeline remains. Added after a crashed
+  cleanup left TopRight on its object-detection pipeline, which later runs then treated as normal.
 
 #### Extra camera control sliders snapped back (`photonvision-39`)
 

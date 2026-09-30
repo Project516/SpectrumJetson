@@ -12,6 +12,8 @@ export interface CameraState {
   pipelineNicknames: string[];
   currentPipelineSettings: Record<string, unknown>;
   extraControls: { key: string; label: string; value: number; default: number }[];
+  /** Whether each stream has a viewer (photonvision-48). */
+  streamViewers: { input: boolean; output: boolean };
   /** Every pipeline's saved settings, by index (photonvision-46). */
   pipelines: Record<string, unknown>[];
 }
