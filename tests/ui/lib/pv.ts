@@ -88,14 +88,28 @@ export class Dashboard {
     await expect(select.locator(".v-select__selection-text")).toHaveText(nickname);
   }
 
+  /** The Pipeline dropdown shows "N: name" (photonvision-47). */
+  async currentPipeline(): Promise<{ index: number; name: string }> {
+    const text = (await this.control("select", "Pipeline").locator(".v-select__selection-text").innerText()).trim();
+    const m = /^(\d+): (.*)$/.exec(text);
+    return m ? { index: parseInt(m[1]), name: m[2] } : { index: -1, name: text };
+  }
+
   async currentPipelineName(): Promise<string> {
-    return (await this.control("select", "Pipeline").locator(".v-select__selection-text").innerText()).trim();
+    return (await this.currentPipeline()).name;
   }
 
   async selectPipeline(name: string): Promise<void> {
     if ((await this.currentPipelineName()) === name) return;
-    await this.chooseInSelect(this.control("select", "Pipeline"), name);
-    await expect(this.control("select", "Pipeline").locator(".v-select__selection-text")).toHaveText(name);
+    const select = this.control("select", "Pipeline");
+    await select.locator(".v-field").click();
+    await this.page
+      .locator(".v-overlay--active .v-list-item")
+      .filter({ hasText: new RegExp(`^\\s*\\d+: ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`) })
+      .first()
+      .click();
+    await expect(this.page.locator(".v-overlay--active .v-list")).toHaveCount(0);
+    await expect.poll(() => this.currentPipelineName()).toBe(name);
   }
 
   /** Click one of the pipeline menu (☰) entries, found by its icon. */

@@ -164,3 +164,14 @@ test("Create on every camera from another camera's pipeline, then Switch all", a
     await dash.selectPipeline("zz-uitest");
   }
 });
+
+test("the Pipeline dropdown numbers pipelines as PhotonVision does", async ({ dash, request, camera, pipeline }) => {
+  const state = await cameraState(request, camera);
+  const select = dash.control("select", "Pipeline");
+  await select.locator(".v-field").click();
+  const options = (await dash.page.locator(".v-overlay--active .v-list-item").allInnerTexts()).map((t) => t.trim());
+  await dash.page.keyboard.press("Escape");
+  expect(options).toEqual(state.pipelineNicknames.map((name, index) => `${index}: ${name}`));
+  expect(await dash.currentPipeline()).toEqual({ index: state.currentPipelineIndex, name: "zz-uitest" });
+  void pipeline;
+});

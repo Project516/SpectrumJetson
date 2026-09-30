@@ -1374,6 +1374,14 @@ From the upstream review (`docs/UPSTREAM-PORT.md`, 2026-09-29):
   - A slider sends 20 ms after the last change, so the test waits for the backend before switching
     tabs. A tab closed within those 20 ms drops the change; a person can't switch that fast.
 
+#### Pipeline numbers shown (`photonvision-47`)
+
+The dashboard's Pipeline dropdown and the Camera Matching page's pipeline lists show "N: name"
+(Copy settings and Start from already did). Profiles and Switch all go by number, and names alone
+hid mismatches such as TopRight's pipeline 1 being "Fuel Test". Test: the dropdown's options equal
+`uiState`'s `pipelineNicknames` numbered from 0. The test helpers read and pick pipelines by name
+inside "N: name". Suite: 5 tests, 1.5 min, all passing.
+
 #### Browser tests (`tests/ui`, `photonvision-45`)
 
 Playwright, run from the laptop in its own Chrome against the live Jetson (`tests/ui/run.sh`, which

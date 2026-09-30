@@ -308,6 +308,7 @@ The score depends on the scene and the light, so only compare numbers without mo
   - A copy from another camera keeps each camera's own orientation, exposure limits and mask, and its resolution unless the two cameras offer the same video modes.
   - Only the camera on the dashboard switches to the new pipeline.
 - **Switching from the dashboard:** ☰ → **Switch every camera to pipeline N** (the ⇄ icon) moves every camera to the number you're on. A camera without that number stays where it is, as do cameras in driver mode or calibrating; the message lists them, and warns when a camera's pipeline at that number has a different name.
+- **Numbers everywhere** (`photonvision-47`): the Pipeline dropdown and the Camera Matching page show each pipeline as "N: name", so a mismatched profile is easy to spot.
 - Robot code switches them all together too (the toggle is in issue #10), and the robot log records which one was active.
 - Copy settings fills in the other cameras after tuning one.
 
