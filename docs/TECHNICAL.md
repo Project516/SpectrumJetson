@@ -1229,8 +1229,17 @@ Same scene as the tag tests (cameras facing the ceiling lights, no tag), 4 camer
   corners**. The 32 tags crossing the middle were dropped, as expected. "Search only the right half"
   gave the same result. In the UI: drawing, moving, 4-corner resize and Delete all reached the
   detector live, and changes are saved 1 s later (ConfigManager).
-- **Two dashboards editing the same mask overwrite each other** (seen while testing: one tab's
-  stale boxes replaced the other's). Use one dashboard at a time for masks.
+- **Two dashboards editing the same mask overwrote each other** while testing: one tab's stale
+  boxes replaced the other's. The cause was a general bug, fixed in `photonvision-41` (below).
+
+#### Other dashboards never saw setting changes (`photonvision-41`)
+
+`VisionModule.saveAndBroadcastSelective` sends each pipeline-setting change to the other open
+dashboards as `{mutatePipelineSettings}`. But `App.vue` applies it only when the message also
+carries `cameraUniqueName`, which it never did. So a second dashboard showed stale values for
+every setting (sliders, exposure, masks) until reloaded, and could send them back. Now the message
+carries the camera's name. Checked: a change in one tab showed up in a second tab within 2 s, and
+a mask box added from one browser appeared live on another.
 
 #### Extra camera control sliders snapped back (`photonvision-39`)
 
