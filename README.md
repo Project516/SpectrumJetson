@@ -480,6 +480,11 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 - **Cost:** both are rebuilt every 5 s but only sent when something changes, and AdvantageKit records them at the start of every log.
 - **Rewind:** each recording's `session.json` gets the same snapshot.
 
+**Every change in the UI is saved right away** (within about a second), with no undo and no "unsaved changes" warning (upstream issue [#2614](https://github.com/PhotonVision/photonvision/issues/2614)). So at an event:
+- **Before experimenting**, duplicate the pipeline (☰ next to the pipeline name) and try things on the copy. Switch back if it doesn't work out.
+- **If a good setup gets lost**, the settings from any earlier match are in that match's robot log (`settingsJson` above) and in any Rewind recording's `session.json`. Nothing restores them in one click: re-enter them from there, or use **Copy settings from…** if another camera still has good ones.
+- **Only one person tunes a camera at a time.** Two dashboards now stay in sync (`photonvision-41`), but two people dragging the same slider will still fight.
+
 ## Where everything lives, and what's left
 
 The detailed technical reference, with exact versions, commits and measurements, is [docs/TECHNICAL.md](docs/TECHNICAL.md). This README is the overview. What this setup lacks compared with Limelight 4, and what the robot code has to do about it (MegaTag 1/2, gyro heading), is in [docs/LIMELIGHT-COMPARISON.md](docs/LIMELIGHT-COMPARISON.md). Other teams' vision systems and our performance work are in [docs/VISION-RESEARCH.md](docs/VISION-RESEARCH.md). What we took from upstream PhotonVision, and what to test, is in [docs/UPSTREAM-PORT.md](docs/UPSTREAM-PORT.md).

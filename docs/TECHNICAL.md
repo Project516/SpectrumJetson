@@ -1241,6 +1241,30 @@ every setting (sliders, exposure, masks) until reloaded, and could send them bac
 carries the camera's name. Checked: a change in one tab showed up in a second tab within 2 s, and
 a mask box added from one browser appeared live on another.
 
+#### Upstream fixes and a real reconnect for stuck cameras (`photonvision-42` to `-44`)
+
+From the upstream review (`docs/UPSTREAM-PORT.md`, 2026-09-29):
+- **`photonvision-42` (upstream #2617):** `currentVideoFormat` is `VideoFormat | undefined`, and its
+  callers allow for it, as do the stream's aspect ratio and the 3D view (they indexed
+  `validVideoFormats` directly). Before, dashboard tabs could vanish while a camera was activating.
+- **`photonvision-43`: the stuck-camera "reconnect" now reopens the camera.** `photonvision-29`'s
+  first step set `kForceClose` and then `kAutoManage`, which in cscore's Linux camera only stops and
+  restarts streaming (see `photonvision-37`). So in its bench test the camera came back only at the
+  USB-reset step. `reconnectCamera` now switches through another video mode and back: cscore then
+  closes the device, opens it, sets the format and streams again, twice. The video-mode fix
+  (`-37`) and the bandwidth retry share it. Tested with the stuck-camera hook on BottomLeft:
+  "reopening it (switching through 640x360)" at +3.0 s, cscore `set format 640x360` then
+  `1280x800`, hook lifted at +4.5 s, and "delivering frames again, after a reconnect" with no USB
+  reset. All 4 cameras at 122 fps afterwards.
+- **`photonvision-44` (upstream #2352):**
+  - `reactivateDisabledCameraConfig` logged "already in use by active VisionModule! Cannot
+    reactivate", then reactivated anyway, binding two modules to one device. Now it puts the config
+    back and returns false, as the "add camera" branch next to it already did.
+  - Camera Matching cards are titled by nickname, with the device model underneath; identical
+    cameras were all "Thrifty:".
+  - The delete dialog names the camera being deleted, not the one selected on the dashboard.
+  - Not tested live: there were no disabled configs left to try it with.
+
 #### Extra camera control sliders snapped back (`photonvision-39`)
 
 Contrast, gamma, sharpness and backlight compensation (`photonvision-28`) show the store's value
