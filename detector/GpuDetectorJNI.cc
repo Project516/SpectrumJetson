@@ -110,6 +110,34 @@ int DetectorThreads() {
   return threads;
 }
 
+// One camera's Detect() at a time. All cameras share one CUDA context, and libcuda guards it with
+// one lock (a priority-inheritance mutex) that every launch and event wait takes. With 4 cameras
+// at 120 fps (2026-09-29) the threads convoyed on it: ~20,000 cross-core wakeups a second, 1.2
+// cores of kernel time, detect 4.4 ms against 1.5 ms for one camera, and the GPU ~40% "busy"
+// against ~22% for 3 cameras. Taking this lock first makes each camera queue once per frame
+// instead of ~40 times. SPECTRUM_971_GPU_LOCK=1/0; /tmp/spectrum-971-gpu-lock overrides it
+// (re-read every 2 s, for A/B tests).
+bool GpuLockOn() {
+  static std::mutex mu;
+  static std::chrono::steady_clock::time_point next{};
+  static bool on = false;
+  std::lock_guard<std::mutex> lock(mu);
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= next) {
+    next = now + std::chrono::seconds(2);
+    int v = 0;
+    if (const char *e = std::getenv("SPECTRUM_971_GPU_LOCK")) v = std::atoi(e);
+    if (FILE *f = std::fopen("/tmp/spectrum-971-gpu-lock", "r")) {
+      if (std::fscanf(f, "%d", &v) != 1) v = 0;
+      std::fclose(f);
+    }
+    if ((v != 0) != on) std::cout << "971 GPU lock: " << (v ? "on" : "off") << std::endl;
+    on = v != 0;
+  }
+  return on;
+}
+std::mutex gpu_mu;
+
 // How the CPU thread waits for the GPU (cudaSetDeviceFlags, at library load, before any CUDA
 // context exists): "block" (sleep; the default), "auto" (CUDA's default; with one context on 6
 // cores it spins), "spin" or "yield". With 2 cameras (2026-09-24) blocking added ~0.3 ms and saved
@@ -170,6 +198,7 @@ struct Stats {
   int tags = 0;
   int errors = 0;
   double detect_ms = 0, jni_ms = 0, max_ms = 0, margin = 0, min_margin = 1e9;
+  double lock_wait_ms = 0;  // part of detect_ms spent waiting for gpu_mu
 };
 
 struct DetectorSlot {
@@ -323,6 +352,7 @@ void RecordStats(Stats &st, jlong handle, const cv::Mat &img, const zarray_t *de
       std::cout << ", margin avg " << st.margin / st.tags << " min " << st.min_margin;
     }
     if (st.errors) std::cout << ", errors " << st.errors;
+    if (st.lock_wait_ms > 0) std::cout << ", gpu lock wait " << st.lock_wait_ms / st.frames << " ms";
     std::cout << " [bos]" << std::endl;
     st = Stats{};
   }
@@ -954,6 +984,12 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
       SpectrumInjectStickyCudaFault();
     }
   }
+  std::unique_lock<std::mutex> gpu_lock(gpu_mu, std::defer_lock);
+  if (GpuLockOn()) {
+    gpu_lock.lock();
+    s->stats.lock_wait_ms +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  }
   try {
     absl::Status status = s->gpu->Detect(img.ptr<uint8_t>(), nullptr);
     if (status.ok()) {
@@ -968,6 +1004,7 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
     cudaGetLastError();  // clear a non-sticky error so the rebuild can succeed
     RecordFailure(*s, handle, e.what());
   }
+  if (gpu_lock.owns_lock()) gpu_lock.unlock();
   auto t1 = std::chrono::steady_clock::now();
 
   jobjectArray result = MakeJObjectArray(env, detections);

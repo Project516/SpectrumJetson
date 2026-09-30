@@ -201,7 +201,7 @@ Swap by installing one to `/usr/lib/lib971apriltag.so` and restarting `photonvis
 | Build | Source | Script | Status |
 |---|---|---|---|
 | **4143 + patches** (fallback) | FRC-Team-4143/GpuDetectorJNI `ef9fc1e` (≈971 code of 2024-08) + `patches/gpudetector-0{1,2,3}` | `05-build-gpudetector.sh` (installs) | Running; leak, handle and stale-error fixes applied |
-| **bos / Austin's current** (**installed**, robot config) | frc971/bos `62e93b4` `third_party/971apriltag` = RealtimeRoboticsGroup/aos `frc/orin` detector as of `8736ba62` (2026-03-30) + 971's `absl::Status` returns + `patches/bos-01`; JNI in `detector/` | `07-build-bos-detector.sh` then `08-select-detector.sh bos --mwbd 20` | A/B tested and fault tested (below) |
+| **bos / Austin's current** (**installed**, robot config) | frc971/bos `62e93b4` `third_party/971apriltag` = RealtimeRoboticsGroup/aos `frc/orin` detector as of `8736ba62` (2026-03-30) + 971's `absl::Status` returns + `patches/bos-01` to `bos-03`; JNI in `detector/` | `07-build-bos-detector.sh` then `08-select-detector.sh bos --mwbd 20` | A/B tested and fault tested (below) |
 
 aos is the upstream source of truth. The only detector change in aos since bos
 imported it (2026-04-03) is `c1c3b4607` (M_PI → std::numbers::pi, cosmetic).
@@ -1035,6 +1035,70 @@ came back.
   `{grid, centre, best, width, height, ageMs}`, and 204 before the first reading. The Camera page's
   Focus card shows each cell against its own best since Reset.
 - **Checked:** TopLeft returned readings about 5 times a second at 1280x800.
+
+### Four Thriftiest Cams: CUDA's lock and per-frame event timing (2026-09-29, `bos-03`)
+
+First run with 4 Thriftiest Cams (TopLeft, TopRight, BottomLeft, BottomRight; all 1280x800 MJPEG at
+122 fps, no tags in view, no dashboard streams, hardware JPEG decode on). PhotonVision used 2.2 cores
+and the GPU sat at 40–45%, against 0.8 cores and 17% on 2026-09-26 (two cameras at 61 fps then).
+
+- **Scaling, unplugging one camera at a time** (same boot, 10 s windows):
+
+  | Cameras | Detect | PhotonVision CPU | Cross-core wakeups (IPI1) | GPU |
+  |---|---|---|---|---|
+  | 1 | 1.45 ms | 0.38 cores | 3,000/s | 7% |
+  | 2 | 1.8 ms | 0.65 | 4,100/s | 13% |
+  | 3 | 2.2 ms | 1.1 | 6,500/s | 22% |
+  | 4 | 4.4 ms | 2.2 | 20,000/s | 40% |
+
+- **Where the CPU went:** more than half was kernel time (1.15 of 2.0 cores), in the 4 camera
+  threads. `ipi:ipi_raise` tracing showed ~40 cross-core wakeups per frame, 82% of them futex
+  handoffs, 44% from priority-inheritance unlocks. The 4 camera threads handed a lock around in
+  strict rotation every 15–20 µs. gdb stacks: one camera thread in `cudaEventSynchronize` →
+  `ioctl` (libnvrm_gpu), the others in `futex_lock_pi` inside `cudaEventSynchronize` and
+  `cudaLaunchKernel`. That is libcuda's context lock, which every camera shares (one CUDA context
+  per process).
+- **Ruled out:** dashboard streams (closed: same load), hardware JPEG decode (off: kernel time
+  −0.2 cores, the wakeups −10%), detector threads (1/2/6: no change), CUDA wait mode (`spin`: no
+  change), a reboot (no change).
+- **The cause:** at the end of every frame, `GpuDetector::Detect()` walked 22 CUDA events, calling
+  `cudaEventSynchronize` and `cudaEventElapsedTime` on each, for a `VLOG(1)` timing report that is
+  never printed. 16 of those events are recorded only for that report. That's ~60 calls per frame
+  that take the shared lock for no result.
+- **The fix, `patches/bos-03-no-per-frame-event-timing.patch`:** the timing-only events are
+  recorded, and the report runs, only with `VLOG(1)` on or `1` in `/tmp/spectrum-971-event-timing`
+  (re-read every 2 s, for A/B tests). The 7 events that are real sync points are unchanged.
+- **Measured live, 4 cameras, alternating 3 times, 10 s each:**
+
+  | | Detect | PhotonVision CPU | Wakeups | GPU |
+  |---|---|---|---|---|
+  | Before (timing on) | 3.08 ms | 1.84 cores | 13,700/s | 36.5% |
+  | **`bos-03`** | **2.19 ms** | **1.48** | 12,000/s | 34.8% |
+  | `bos-03` + GPU lock | 2.14 ms | 1.33 | 10,250/s | 35.6% |
+
+  The same ~0.9 ms came off with 3 cameras (2.77 → 1.89 ms).
+- **GPU lock** (`detector/GpuDetectorJNI.cc`, `SPECTRUM_971_GPU_LOCK=1` or `1` in
+  `/tmp/spectrum-971-gpu-lock`, re-read every 2 s; **off by default**): one camera's `Detect()` at a
+  time, so the cameras queue once per frame instead of on every CUDA call. With `bos-03` it saves
+  another ~0.15 cores and costs no latency; before `bos-03` it saved 0.3 cores but added 0.3 ms.
+  The stats line shows `gpu lock wait` when it's on.
+- **The GPU load is real work.** `nsys profile --trace=cuda` (8 s, 3,866 frames, with `bos-03`):
+  0.65 ms of kernels and 0.13 ms of copies and memsets per frame, 31.6 kernel launches and ~58 CUDA
+  calls in all. 0.78 ms × 483 fps ≈ 37%, what GR3D shows. Two kernels are 42% of it, and both work
+  on the whole image whatever the scene: the first `cub::DeviceSelect::If` (149 µs, compacting the
+  mostly-empty `BlobDiff` output) and `BlobDiff` (121 µs).
+- **Restart-to-restart noise is at least partly the scene.** After the cameras were replugged, the
+  same code without `bos-03` gave 2.8 ms and 1.84 cores instead of 4.4 ms and 2.2. The detector's
+  work after `BlobDiff` depends on how many candidate blobs each camera sees, so where the cameras
+  point matters. Compare configurations in one run, alternating, as above.
+- **Also seen:** TopRight came up at 320x240 after one of the restarts (`health-check.sh` FAIL, one
+  of 4 detectors missing; see `photonvision-27`); another restart fixed it. Check that all 4
+  detectors report before trusting a measurement.
+- **Next** (being tried): fold the zero removal into `BlobDiff` (971's own TODO; ~20% of the GPU
+  time), hand the hardware decoder's GPU copy of the frame straight to `Detect()` instead of
+  copying it down and back up (48 µs of GPU and a 270 µs call per frame), and a CUDA graph for the
+  fixed-size first stage. Batching the 4 cameras into one pass was ruled out: they free-run, so a
+  batch waits up to 8 ms for the slowest frame.
 
 ## Changes from the handoff
 
