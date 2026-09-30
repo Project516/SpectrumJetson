@@ -1151,6 +1151,29 @@ and the GPU sat at 40–45%, against 0.8 cores and 17% on 2026-09-26 (two camera
 Board power 9.9 W at the end, against 11.6 W at the start; tj 54.7 °C (fan on the quiet
 profile).
 
+**With tags in view** (same build, cameras facing up at the shop's ceiling lights, tags held
+above them, every camera seeing every tag on every frame, no streams, 3 × 8 s each):
+
+| Same camera pose | Detect avg (worst) | PhotonVision CPU | GPU | Margins |
+|---|---|---|---|---|
+| No tag | 1.85 ms | 1.42 cores | 36.4% | |
+| 1 tag | 2.0 ms (~2.8; one 6.2 spike) | 1.62 | 39% | 26–37 |
+| 2 tags | 2.06 ms (2.5–3.4) | 1.67 | 39.9% | 23–37 |
+
+- **The scene mattered more than the tags.** Facing the ceiling lights, with no tag, cost ~10
+  points of GPU and 0.6 ms more than the earlier desk scene: more candidate blobs.
+- **Tags were cheap.** The first tag (488 decodes a second over 4 cameras) cost +0.2 cores and
+  +0.15 ms; the second +0.05 cores and +0.06 ms. Every camera held 122 fps.
+- **Backlit tags** (held under the lights) decoded at margins 5–9 until they were held still and
+  out of the glare.
+
+#### Extra camera control sliders snapped back (`photonvision-39`)
+
+Contrast, gamma, sharpness and backlight compensation (`photonvision-28`) show the store's value
+one-way (`:model-value`, not `v-model`). But `setExtraControl` sent the change with
+`updateStore = false`, so the camera changed (the preview did) while the slider and its number
+went back to the old value. Now it updates the store.
+
 For comparison, one camera alone took 1.45 ms and 7% GPU at the start.
 
 #### First stage as one CUDA graph (`bos-05`)
