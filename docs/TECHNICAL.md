@@ -1341,6 +1341,39 @@ From the upstream review (`docs/UPSTREAM-PORT.md`, 2026-09-29):
   - The delete dialog names the camera being deleted, not the one selected on the dashboard.
   - Not tested live: there were no disabled configs left to try it with.
 
+#### Start from, Create on every camera, Switch all (`photonvision-46`)
+
+- **`POST /api/settings/createPipeline`** `{name, type | fromCamera + fromPipeline, cameras, switchCamera}`
+  answers `{created: [{camera, index}], skipped: [{camera, reason}]}`. The new-pipeline dialog uses
+  it for every create, blank or not. `VisionModule.createPipeline` does the work:
+  - adds a pipeline of the source's type (or `type`) through `PipelineManager.addPipeline`, so it
+    starts from this camera's defaults;
+  - copies every public field from a deep copy of the source (JSON round trip: `clone()` is
+    shallow and would share the mask, HSV ranges and offset points), except the index and name;
+  - from another camera, also skips `inputImageRotationMode`, the exposure limits and
+    `detectionMask`, and `cameraVideoModeIndex` unless the video mode lists are equal (the same
+    rule as Copy settings, `-25`);
+  - skips a camera that already has a pipeline by that name. Only `switchCamera` switches to it.
+- **Switch all** is client-only: `changeCurrentPipelineIndex(N, true, camera)` for each camera with a
+  pipeline N that isn't in driver mode (-1), calibrating (-2) or focusing (-3). The snackbar names
+  the cameras skipped and any whose pipeline N has a different name.
+- **`uiState`** now also has `pipelines`: every pipeline's saved settings (unwrapped from Jackson's
+  `["type", {...}]`), so tests can check pipelines that aren't running. A pipeline deleted during
+  the read ends the list rather than throwing (the first version threw a NullPointerException).
+- **Tests** (`tests/ui/specs/pipelines.spec.ts`):
+  - A same-camera copy has every saved setting equal to the source.
+  - Create on every camera from TopLeft's `zz-uitest` (Decision Margin 23, 90° orientation) gave
+    "Created 'zz-uitest-all' as pipeline 2 on TopRight, TopLeft; as pipeline 1 on 5th Cam,
+    BottomRight, BottomLeft". Every copy has 23; only TopLeft's has 90°; the others stayed on their
+    pipelines.
+  - Switch all from pipeline 2: "switched TopRight. Not switched: 5th Cam (no pipeline 2),
+    BottomRight (no pipeline 2), BottomLeft (no pipeline 2)".
+  - The test then deletes the copies everywhere and puts every camera back on its pipeline.
+  - A test guard: an entry must carry the pipeline's name. Before the unwrap fix, two error
+    entries compared equal and the exact-copy test passed without checking anything.
+  - A slider sends 20 ms after the last change, so the test waits for the backend before switching
+    tabs. A tab closed within those 20 ms drops the change; a person can't switch that fast.
+
 #### Browser tests (`tests/ui`, `photonvision-45`)
 
 Playwright, run from the laptop in its own Chrome against the live Jetson (`tests/ui/run.sh`, which
@@ -1360,7 +1393,7 @@ didn't show it.
   (the arrow buttons for sliders, the menu for selects), then checks that the page shows the value,
   that the backend changed (a diff of `uiState`, which also names the setting each control
   moves), and that a second browser context shows it. Then it puts the value back and checks all
-  three again. On TopLeft's AprilTagCuda copy: 20 controls in 30 s.
+  three again. On TopLeft's AprilTagCuda copy: 20 controls in 30 s. The whole suite (4 tests) takes 1.2 min.
   - Extra controls store -1 for "camera default", so -1 is compared as the default.
   - "Draw on the stream" is local to one browser and is skipped.
   - Resolutions are skipped (`PV_UI_TEST_VIDEO_MODES=1` includes them).

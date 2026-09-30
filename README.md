@@ -303,7 +303,12 @@ The score depends on the scene and the light, so only compare numbers without mo
 - **Never copied:** orientation, names and each camera's exposure limits. Resolution is only copied between cameras with the same video modes.
 
 **Profiles** (practice field, event field): give every camera the same pipelines at the same numbers, e.g. 0 = Event and 1 = Practice field.
-- Robot code switches them all together (the toggle is in issue #10), and the robot log records which one was active.
+- **Making one** (`photonvision-46`): in the new-pipeline dialog (☰ → +), **Start from** a copy of any camera's pipeline, and tick **Create on every camera**. Each camera gets it as its next number, and the message says which number each got; cameras that already have the same number of pipelines get the same number.
+  - A copy from this camera is exact, like Duplicate.
+  - A copy from another camera keeps each camera's own orientation, exposure limits and mask, and its resolution unless the two cameras offer the same video modes.
+  - Only the camera on the dashboard switches to the new pipeline.
+- **Switching from the dashboard:** ☰ → **Switch every camera to pipeline N** (the ⇄ icon) moves every camera to the number you're on. A camera without that number stays where it is, as do cameras in driver mode or calibrating; the message lists them, and warns when a camera's pipeline at that number has a different name.
+- Robot code switches them all together too (the toggle is in issue #10), and the robot log records which one was active.
 - Copy settings fills in the other cameras after tuning one.
 
 **More camera controls** (`photonvision-28`): the Input tab now has Contrast, Gamma, Sharpness and Backlight Compensation, which stock PhotonVision doesn't show.
@@ -467,7 +472,7 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 
 **Checking on it:** run `scripts/jetson/health-check.sh` for a readiness report. `journalctl -u photonvision -f` shows PhotonVision's live log on the Jetson. The `971 stats` lines show frames per second, detection time and decision margin for each camera. The `971 jpeg` lines (every 10 s) show which JPEG decoder is running and how its checks went.
 
-**After installing a new build:** run `tests/ui/run.sh` on the laptop. It drives the dashboard in Chrome and checks that every slider, switch and menu changes the page, PhotonVision and a second dashboard, and puts each one back. It also tests the mask editor. It takes about a minute and works on a temporary copy of a pipeline, so your settings aren't touched. See [tests/ui](tests/ui/README.md).
+**After installing a new build:** run `tests/ui/run.sh` on the laptop. It drives the dashboard in Chrome and checks that every slider, switch and menu changes the page, PhotonVision and a second dashboard, and puts each one back. It also tests the mask editor, Start from, Create on every camera and Switch all. It takes about a minute and a half and works on a temporary copy of a pipeline, so your settings aren't touched. See [tests/ui](tests/ui/README.md).
 
 **Robot code sees the same health on NetworkTables** (`photonvision-16`), once a second:
 - `/photonvision/jetson/`: GPU load, temperatures, fan speed, power, the JPEG decoder's state, and a **throttle reason** (`OVER-CURRENT` when the supply sags, `HIGH TEMP`, or clocks capped, `photonvision-20`). It's also on the Settings page as **CPU Throttling**.

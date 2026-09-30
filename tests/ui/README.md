@@ -34,6 +34,13 @@ tests/ui/run.sh
   shows it, the backend changed (`/api/spectrum/uiState`), and a second dashboard shows it. Then it
   puts the value back and checks all three again.
 
+- **`mask`:** the mask editor: draw a box on the stream, resize it from two corners, move it, add
+  a second, Delete one, Remove all. Each step checked against the backend and a second dashboard.
+- **`pipelines`:** Start from a copy (exact on the same camera), Create on every camera from
+  another camera's pipeline (settings copied, each camera's orientation kept, other cameras left
+  on their pipelines), and Switch every camera to pipeline N (cameras without N stay put). Creates
+  `zz-uitest-copy` and `zz-uitest-all`, and deletes them from every camera afterwards.
+
 ## Writing a test
 
 - Find controls by their label: `dash.control("slider", "Gamma", card)`. The shared components

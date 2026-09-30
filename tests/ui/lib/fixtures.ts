@@ -15,7 +15,7 @@ export async function pickCamera(request: APIRequestContext): Promise<string> {
   return (cameras.find((c) => c.nickname === "TopLeft") ?? cameras[0]).nickname;
 }
 
-async function deletePipeline(dash: Dashboard, request: APIRequestContext, camera: string, name: string) {
+export async function deletePipeline(dash: Dashboard, request: APIRequestContext, camera: string, name: string) {
   await dash.selectCamera(camera);
   await dash.selectPipeline(name);
   await expect.poll(async () => (await cameraState(request, camera)).currentPipelineSettings.pipelineNickname).toBe(name);

@@ -12,6 +12,8 @@ export interface CameraState {
   pipelineNicknames: string[];
   currentPipelineSettings: Record<string, unknown>;
   extraControls: { key: string; label: string; value: number; default: number }[];
+  /** Every pipeline's saved settings, by index (photonvision-46). */
+  pipelines: Record<string, unknown>[];
 }
 
 export const TEST_PIPELINE = "zz-uitest";
@@ -22,9 +24,13 @@ export function stableLabel(label: string): string {
 
 /** The backend's own view (photonvision-45's /api/spectrum/uiState). */
 export async function uiState(request: APIRequestContext): Promise<CameraState[]> {
-  const response = await request.get("/api/spectrum/uiState");
-  expect(response.ok()).toBeTruthy();
-  return (await response.json()).cameras;
+  // A few tries: a read can land in the middle of a pipeline being deleted.
+  for (let attempt = 1; ; attempt++) {
+    const response = await request.get("/api/spectrum/uiState");
+    if (response.ok()) return (await response.json()).cameras;
+    if (attempt === 3) throw new Error(`/api/spectrum/uiState answered ${response.status()}: ${await response.text()}`);
+    await new Promise((r) => setTimeout(r, 200));
+  }
 }
 
 export async function cameraState(request: APIRequestContext, nickname: string): Promise<CameraState> {
@@ -104,6 +110,13 @@ export class Dashboard {
     await tab.click();
     await expect(tab).toHaveClass(/v-tab--selected/);
     return this.page.locator(".v-card").filter({ has: tab }).last();
+  }
+
+  /** The snackbar's text, once it shows. */
+  async snackbar(): Promise<string> {
+    const bar = this.page.locator(".v-snackbar__content").last();
+    await expect(bar).toBeVisible();
+    return (await bar.innerText()).trim();
   }
 
   async tabNames(): Promise<string[]> {
