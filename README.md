@@ -508,6 +508,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Robot tuning: no auto-updates, headless boot, clocks locked, USB autosuspend off, power-cut safety (data on the SSD within 3 s, system log kept across power cuts)
 - [x] Fan on NVIDIA's quiet profile by default (775 rpm at 43 °C on the bench; `FAN=full 09-robot-tuning.sh` for full speed), 30 s hardware watchdog, reboot on kernel panic, PhotonVision always restarted
 - [x] Camera unplug test: the camera detects again ~1 s after it's plugged back in; the other camera is unaffected (`tests/camera-replug/run.sh`)
+- [x] With 4 cameras (2026-09-29): a camera pulled for 10 s detects again 1.3 s after it's back in, and one yanked and pushed back (out 1 s) loses ~1.5–2 s in all. The other 3 never dropped below 119.7 fps. Two cold power cycles: all 4 detecting 21–22 s after power-on, clean both times
 - [x] Power-cut test: pulled the plug mid-recording. No filesystem errors, the log survived, PhotonVision came back healthy, 1.4 s of video lost (`tests/power-cut/run.sh`)
 - [x] Reboot test: tuning survives a reboot; boot 57 s → 16.5 s, first detection ~20 s after power-on
 - [x] Name the cameras after their ports (TopLeft, TopRight; BottomLeft/BottomRight when added)

@@ -1241,6 +1241,36 @@ every setting (sliders, exposure, masks) until reloaded, and could send them bac
 carries the camera's name. Checked: a change in one tab showed up in a second tab within 2 s, and
 a mask box added from one browser appeared live on another.
 
+#### Unplugging a camera, and cold boots, with 4 cameras (2026-09-29)
+
+All on the finished build (patches up to `photonvision-44`, `bos-07`). Logs recorded with
+`journalctl -f` and the kernel log.
+- **TopRight pulled for ~10 s, then plugged back into the same port:**
+  - Frames stopped at the kernel's "USB disconnect". cscore retried opening it every 0.3 s.
+  - Plugged back in, the kernel enumerated it in 0.2 s (and the payload cap re-applied).
+  - cscore reconnected, restored 1280x800 at 120 fps and its settings, and it was detecting 1.3 s
+    after going back in, at the full 122 fps by 2.2 s.
+  - The other 3 cameras: minimum 121.0 fps, average 122.0.
+- **TopLeft yanked and pushed straight back (out 1.0 s):**
+  - The kernel re-enumerated it 0.23 s after it went back in.
+  - cscore reconnected 1.35 s after the frames stopped. Its first open raced the kernel finishing
+    setup and failed a dequeue, and the second succeeded 0.4 s later.
+  - One partial second of detections was lost (37 fps), then 122.
+  - The other 3: minimum 119.7 fps.
+  - The watchdog never had to act: cscore's own reconnect handles a camera that leaves USB.
+- **Two cold power cycles** (power cut ~5 s):
+
+  | | Linux ready | All 4 detecting |
+  |---|---|---|
+  | Boot 1 | 16.7 s | 21.8 s |
+  | Boot 2 | 16.1 s | 21.1 s |
+
+  Both times all 4 cameras came up at 1280x800 and 122 fps, with GPU input 100%, 4 first-stage
+  graphs recorded, and no capture errors, detector failures, hardware decoder off, S_FMT EBUSY,
+  or `ConcurrentModificationException`. `health-check.sh` said READY. That's the same ~20 s to
+  detecting as with 2 cameras, so tonight's startup work (the capture lock, graph recording)
+  costs no measurable boot time.
+
 #### Upstream fixes and a real reconnect for stuck cameras (`photonvision-42` to `-44`)
 
 From the upstream review (`docs/UPSTREAM-PORT.md`, 2026-09-29):
