@@ -1382,6 +1382,22 @@ hid mismatches such as TopRight's pipeline 1 being "Fuel Test". Test: the dropdo
 `uiState`'s `pipelineNicknames` numbered from 0. The test helpers read and pick pipelines by name
 inside "N: name". Suite: 5 tests, 1.5 min, all passing.
 
+#### Idle mode switch and Robot state card (`photonvision-50`)
+
+- `IdleMode` settings `{idleWhileDisabled, idleFps}` live in
+  `/opt/photonvision/spectrum-robot-state.json` (`SPECTRUM_IDLE_FPS` is only the default).
+  `GET/POST /api/robotState` returns them with `robotConnected`, `enabled`, `autonomous`,
+  `fmsAttached` and `idleNow`. The GC-on-disable listener is registered even with idle off.
+- Settings > **Robot state**: what PhotonVision sees of the robot, the switch, and the idle rate
+  (5-60 fps). Dashboard: while idling, "Robot disabled: cameras idle at 30 fps, full speed on
+  enable" under the FPS, with a **Full speed** button. Both poll `/api/robotState` (1 s / 2 s).
+- `health-check.sh`: PASS "idle while disabled: 30 fps per camera", or WARN while it's off.
+- Test (`tests/ui/specs/idle.spec.ts`): starts `tests/fake-robot` over SSH (50 s disabled, ended
+  early with `/tmp/fake-robot-stop` so later tests don't see a robot). With the robot disabled, the
+  notice shows and the FPS reads under 40 (29). Full speed turns idle off and the FPS goes over
+  100. The Settings switch turns it back on. The setting is restored afterwards. 9 s. Suite: 7
+  tests, 1.5 min.
+
 #### Idle while disabled, GC on disable (`photonvision-49`)
 
 - **`IdleMode`:** `active()` is true while NetworkTables is connected and the Driver Station's

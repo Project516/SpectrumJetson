@@ -37,7 +37,15 @@ if ! (exec 3<>/dev/tcp/127.0.0.1/5800) 2>/dev/null; then
     tunnel_pid=""
   done
   [[ -n $tunnel_pid ]] || { echo "Couldn't open a tunnel to the Jetson ($HOSTS)" >&2; exit 1; }
+  export PV_UI_JETSON=$host
   echo "Tunnel to the Jetson open on localhost:5800"
+fi
+
+# Tests that run something on the Jetson (the fake robot) need its address.
+if [[ -z ${PV_UI_JETSON:-} ]]; then
+  for host in $HOSTS; do
+    ssh -o ConnectTimeout=4 -o BatchMode=yes -i "$KEY" "spectrum3847@$host" true 2>/dev/null && { export PV_UI_JETSON=$host; break; }
+  done
 fi
 
 # Belt and braces over Playwright's own globalTimeout (8 min): nothing here runs past 10 min.

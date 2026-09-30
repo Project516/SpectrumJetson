@@ -216,6 +216,12 @@ if grep -q "NT connected to" <<<"$last_nt"; then
 else
   warn "not connected to the robot (${team:-no team set}); expected off the robot"
 fi
+# photonvision-49/50: idle mode (30 fps per camera while the robot is disabled) switched off?
+idle=$(timeout 5 python3 -c 'import json,urllib.request; s=json.load(urllib.request.urlopen("http://localhost:5800/api/robotState", timeout=3)); print("on %g" % s["idleFps"] if s["idleWhileDisabled"] else "off")' 2>/dev/null || true)
+case $idle in
+  on*) pass "idle while disabled: ${idle#on } fps per camera" ;;
+  off) warn "idle while disabled is off: cameras run at full speed while the robot is disabled (Settings > Robot state)" ;;
+esac
 ips=$(ip -4 -br addr | awk '$1 !~ /^(lo|l4tbr0|usb|docker)/ && $3 != "" {print $1" "$3}' | paste -sd',' | sed 's/,/, /g')
 echo "        addresses: ${ips:-none}"
 if nmcli -t -f DEVICE,TYPE,STATE dev 2>/dev/null | grep -q ":wifi:connected"; then

@@ -4,7 +4,8 @@
 // Run ON THE JETSON, reached by PhotonVision as its robot (see tests/fake-robot/run.sh):
 //   java -cp /opt/photonvision/photonvision.jar FakeRobot.java disabled:30 enabled:30 disabled:30
 // Each phase is STATE:SECONDS, STATE one of disabled, enabled, auto, and any of those with "fms-"
-// in front (FMS attached). Prints "phase <n> <state> <unix ms>" as each one starts.
+// in front (FMS attached). Prints "phase <n> <state> <unix ms>" as each one starts. Touching
+// /tmp/fake-robot-stop ends the run early.
 import edu.wpi.first.networktables.NetworkTableInstance;
 import org.photonvision.jni.LibraryLoader;
 
@@ -24,7 +25,11 @@ public class FakeRobot {
         return w;
     }
 
+    // Touch this file to end the run early (tests/ui's idle test does, over SSH).
+    static final java.io.File STOP = new java.io.File("/tmp/fake-robot-stop");
+
     public static void main(String[] args) throws Exception {
+        STOP.delete();
         LibraryLoader.loadWpiLibraries();
         var nt = NetworkTableInstance.create();
         nt.startServer("/tmp/fake-robot-nt.json");
@@ -47,7 +52,15 @@ public class FakeRobot {
             control.set(word(p[0]));
             nt.flush();
             System.out.println("phase " + i + " " + p[0] + " " + System.currentTimeMillis());
-            Thread.sleep((long) (Double.parseDouble(p[1]) * 1000));
+            long until = System.currentTimeMillis() + (long) (Double.parseDouble(p[1]) * 1000);
+            while (System.currentTimeMillis() < until) {
+                if (STOP.exists()) {
+                    System.out.println("stopped early " + System.currentTimeMillis());
+                    i = args.length;
+                    break;
+                }
+                Thread.sleep(100);
+            }
         }
         System.out.println("done " + System.currentTimeMillis());
         nt.close();

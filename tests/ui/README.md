@@ -44,6 +44,10 @@ tests/ui/run.sh
 - **`streams`:** a hidden tab (another tab in front, or minimised) disconnects its streams, and they
   come back when shown. Skipped if another dashboard is watching the camera.
 
+- **`idle`:** starts the fake robot on the Jetson (`tests/fake-robot`, over SSH), then checks the
+  dashboard's idle notice and ~30 FPS while it's disabled, the Full speed button, and the Settings
+  switch. Skipped without SSH to the Jetson.
+
 **Limits:** 10 s per click, 2 min per test, 8 min per run; `run.sh` stops anything past 10 min. The
 run fails if a camera ends on a different pipeline than it started on, or a `zz-uitest` pipeline is
 left behind, and says which.
