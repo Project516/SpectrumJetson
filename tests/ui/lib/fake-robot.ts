@@ -24,6 +24,8 @@ export interface RobotState {
   eventProfileOnFms: boolean;
   eventPipeline: number;
   lastEventSwitch: string;
+  farSearch: boolean;
+  farSweepsPerSecond: number;
 }
 
 export async function robotState(request: APIRequestContext): Promise<RobotState> {

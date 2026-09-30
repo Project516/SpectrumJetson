@@ -61,6 +61,9 @@ tests/ui/run.sh
 - **`camera-controls`:** the Input tab's tag contrast readout matches `/api/tagContrast`, and there's
   no Camera Gain slider on a camera without gain.
 
+- **`far-search`:** Settings > Robot state's far-tag search: its status, and no full-size searches
+  while it's switched off.
+
 **Limits:** 10 s per click, 2 min per test, 8 min per run; `run.sh` stops anything past 10 min. The
 run fails if a camera ends on a different pipeline than it started on, or a `zz-uitest` pipeline is
 left behind (or a `zz-uitest` snapshot), and says which.

@@ -258,6 +258,12 @@ case $idle in
   on*) pass "idle while disabled: ${idle#on } fps per camera" ;;
   off) warn "idle while disabled is off: cameras run at full speed while the robot is disabled (Settings > Robot state)" ;;
 esac
+# photonvision-55: far-tag search (full-size searches while no camera has a good view).
+far=$(timeout 5 python3 -c 'import json,urllib.request; s=json.load(urllib.request.urlopen("http://localhost:5800/api/robotState", timeout=3)); print("on %g %s" % (s["farSweepsPerSecond"], s.get("farSearchSweeps", "?")) if s["farSearch"] else "off")' 2>/dev/null || true)
+case $far in
+  on*) set -- $far; pass "far-tag search on: up to $2 full-size searches a second while no camera has a good view ($3 so far)" ;;
+  off) echo "        far-tag search off (Settings > Robot state): tags under ~20 px aren't searched for" ;;
+esac
 # photonvision-51: the event pipeline, and what each camera has at that number.
 event=$(timeout 5 python3 - <<'PY' 2>/dev/null || true
 import json, urllib.request

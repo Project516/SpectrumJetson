@@ -1473,6 +1473,71 @@ flags. 5 cameras, ceiling scene:
 - The GC on disable (`photonvision-49`, 27 ms while disabled) stays.
 - PhotonVision allocates about 2.6 MB/s (young 37 MB -> 19 MB every ~7 s).
 
+#### Far-tag search (`detector/far_search.cc`, `photonvision-55`)
+
+bos hard-codes `quad_decimate` 2 (quads found on a 640x400 image; refinement and decoding still use
+the full image). Measured 2026-09-24: ~20 px is the smallest tag found reliably, against ~12 px on
+the full-size image, which costs ~2.75x the GPU every frame. This searches the full-size image only
+when the robot is short of a good pose:
+
+- **Policy** (all cameras share it: they're one process). A camera has a *good view* with at least
+  2 tags of 40 px or more and decision margin 30 or more (`GoodView`; near tags, a solid multi-tag
+  pose; judged from the detections, not PhotonVision's multi-tag, which needs a calibration three
+  cameras don't have yet). No good view on any camera for 250 ms = *starved*: then one camera at a
+  time (round robin: the active camera whose last full-size search is oldest), at most
+  `farSweepsPerSecond` (30) across all, runs a **full-size search**: its frame upscaled 2x
+  (nearest neighbour, plain C++), through one shared 2560x1600 971 detector, so the half-size
+  search sees every pixel. Tags it finds that the normal search didn't are **tracked** with
+  160x160 crops upscaled to 320x320 (a detector per camera), one crop per camera frame, until
+  they're 24 px or more in the normal search's results or unseen for 300 ms. The moment any
+  camera has a good view, no searches or crops, and the tracks are dropped.
+- **Guards:** after a full-size search taking T, the next waits at least 5 T (at most ~20% of the
+  time, however slow the scene makes them). The shared detector is built on the first frame
+  (~200 ms), not on the first search. Far-search detectors have their own tag family: adding a
+  family to a detector stores that detector's decode table in it, so sharing the camera's would
+  overwrite and on destroy free the camera detector's table. The detection mask is applied to
+  far tags by their centre. No OpenCV functions (PhotonVision's JVM has its own OpenCV; a second
+  one's symbols could clash): the upscale and crop are plain loops.
+- **Coordinates:** X = U/2 in the upscaled image. The AprilTag library's decimation convention
+  suggested X = U/2 + 0.25; `far_search_test` measured the full-size corners +0.24 px off with that
+  (the 971 detector puts pixel edges at whole numbers), and -0.01 / -0.02 px (worst 0.125) with 0.
+  The homography is scaled with it (H' = T H) and the crops' camera matrix follows each crop.
+- **Bench test** (`tests/far-search/run.sh`, `detector/far_search_test.cc`, on the Jetson; real
+  tag36h11 tags from `apriltag_to_image`, 7 deg, blurred, camera-like noise):
+
+  | | Result |
+  |---|---|
+  | Smallest tag found 4 of 4 times | normal 18 px, far search **10 px (1.8x)** |
+  | Corners, full-size against normal | -0.010 / -0.017 px mean, 0.125 px worst |
+  | 2 near 70 px tags + a far 14 px one, 1 s | 0 full-size searches, 0 extra tags |
+  | Near tags hidden | starved after 246 ms; far tag found then, and on 92 of 92 frames after as it moved 1.5 px a frame (the normal search alone: 92 of 122) |
+  | Near tags back | 0 extra tags at once |
+  | Budget | 21 full-size searches in the 0.75 s starved (30 a second) |
+  | Off | nothing extra |
+
+  The first version of the test used raw per-pixel noise: through the upscale every speck was a
+  candidate quad and a search took 94 ms. Camera-like noise (smoothed, as JPEG does) takes 4-6 ms,
+  as the real recordings measured before.
+- **Live** (5 cameras, bench, no tags in view, so searching the whole time; 60 s each):
+
+  | | Off | On |
+  |---|---|---|
+  | fps | 122 all | 122 all |
+  | GPU | 16.5% | 19.4% |
+  | Board | 9.7 W | 10.1 W |
+  | Frame age at result | 12.08 ms | 12.29 ms |
+  | Worst detect per second | ~1.0 ms | ~2.0 ms (sharing the GPU with a search) |
+
+  27 full-size searches a second, 2.7 ms each; `971 far search 10 s:` lines in the log. While any
+  camera has a good view it's off, so this is the most it costs.
+- **Settings:** `farSearch` (default on) and `farSweepsPerSecond` in `spectrum-robot-state.json`,
+  Settings > Robot state; `GpuDetectorJNI.setFarSearch` / `farSearchStatus` (retried at most every
+  5 s until the library is loaded). `/api/robotState` has the counters; `health-check.sh` reports
+  it. Browser test `far-search.spec.ts`: the status, and no searches while off.
+- **Not tested yet:** real far tags (on a field, or a long hallway), and the replay tool
+  (`fieldcal_detect`) doesn't use it yet. The previous library is at
+  `/usr/lib/lib971apriltag.so.before-far-search` on the Jetson.
+
 #### Tag contrast and the Gain slider (`photonvision-54`)
 
 - **`TagContrast`:** for each detection the GPU AprilTag pipeline keeps (after the decision margin

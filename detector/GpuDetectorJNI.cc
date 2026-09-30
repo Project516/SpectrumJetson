@@ -51,6 +51,7 @@
 
 #include <cuda_runtime.h>
 #include <jpeglib.h>
+#include "far_search.h"
 #include "nvjpg_decoder.h"
 #include <wpi/RawFrame.h>
 #include <wpi/timestamp.h>
@@ -380,6 +381,67 @@ jobject MakeJObject(JNIEnv *env, const apriltag_detection_t *detect) {
                         static_cast<jfloat>(detect->decision_margin), harr.obj(),
                         static_cast<jdouble>(detect->c[0]), static_cast<jdouble>(detect->c[1]),
                         carr.obj());
+}
+
+// SpectrumJetson: the same from a copied detection (far_search.h), for results with far-search tags.
+jobject MakeJObject(JNIEnv *env, const far_search::Det &d) {
+  static jmethodID constructor =
+      env->GetMethodID(detectionCls, "<init>", "(Ljava/lang/String;IIF[DDD[D)V");
+  if (!constructor) return nullptr;
+  wpi::java::JLocal<jstring> fam{env, wpi::java::MakeJString(env, d.family->name)};
+  wpi::java::JLocal<jdoubleArray> harr{
+      env, wpi::java::MakeJDoubleArray(env, {reinterpret_cast<const jdouble *>(d.H.data()), d.H.size()})};
+  wpi::java::JLocal<jdoubleArray> carr{
+      env, wpi::java::MakeJDoubleArray(env, {reinterpret_cast<const jdouble *>(d.p.data()), d.p.size()})};
+  return env->NewObject(detectionCls, constructor, fam.obj(), static_cast<jint>(d.id),
+                        static_cast<jint>(d.hamming), static_cast<jfloat>(d.margin), harr.obj(),
+                        static_cast<jdouble>(d.c[0]), static_cast<jdouble>(d.c[1]), carr.obj());
+}
+
+// A line every 10 s while the far search has done anything since the last one.
+void ReportFarSearch() {
+  static std::mutex mu;
+  static auto next = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  static far_search::Counters last{};
+  std::lock_guard<std::mutex> lock(mu);
+  const auto now = std::chrono::steady_clock::now();
+  if (now < next) return;
+  next = now + std::chrono::seconds(10);
+  const auto c = far_search::GetCounters();
+  const long sweeps = c.sweeps - last.sweeps, crops = c.crops - last.crops, tags = c.far_tags - last.far_tags;
+  const long starved = c.starved_ms - last.starved_ms;
+  if (sweeps || crops || tags || starved) {
+    std::cout << "971 far search 10 s: starved " << starved / 1000.0 << " s, " << sweeps
+              << " full-size searches (" << (sweeps ? (c.sweep_ms - last.sweep_ms) / sweeps : 0)
+              << " ms each), " << crops << " crops ("
+              << (crops ? (c.crop_ms - last.crop_ms) / crops : 0) << " ms each), " << tags
+              << " far tags" << std::endl;
+  }
+  last = c;
+}
+
+jobjectArray MakeJObjectArray(JNIEnv *env, const std::vector<far_search::Det> &dets) {
+  jobjectArray jarr = env->NewObjectArray(static_cast<jsize>(dets.size()), detectionCls, nullptr);
+  if (!jarr) return nullptr;
+  for (size_t i = 0; i < dets.size(); ++i) {
+    wpi::java::JLocal<jobject> elem{env, MakeJObject(env, dets[i])};
+    env->SetObjectArrayElement(jarr, static_cast<jsize>(i), elem.obj());
+  }
+  return jarr;
+}
+
+// The detection mask (setMask) applied to far-search tags by their centre: the far search's own
+// detectors have no mask.
+bool MaskKeeps(const DetectorSlot &s, int width, int height, double cx, double cy) {
+  const size_t n = s.mask_rects.size() / 4;
+  if (s.mask_mode == 0 || n == 0) return true;
+  bool inside = false;
+  for (size_t i = 0; i < n && !inside; ++i) {
+    const double x = s.mask_rects[4 * i] * width, y = s.mask_rects[4 * i + 1] * height;
+    const double w = s.mask_rects[4 * i + 2] * width, h = s.mask_rects[4 * i + 3] * height;
+    inside = cx >= x && cx < x + w && cy >= y && cy < y + h;
+  }
+  return s.mask_mode == 1 ? !inside : inside;
 }
 
 jobjectArray MakeJObjectArray(JNIEnv *env, const zarray_t *detections) {
@@ -1088,6 +1150,7 @@ JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_destroyGpuDetect
   }
   std::lock_guard<std::mutex> lock(s->mu);
   std::shared_lock<CudaCaptureLock> cuda(cuda_capture_lock);
+  far_search::Forget(static_cast<int>(handle));
   delete s->gpu;
   s->gpu = nullptr;
   if (s->td) apriltag_detector_destroy(s->td);
@@ -1320,7 +1383,29 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
   if (gpu_lock.owns_lock()) gpu_lock.unlock();
   auto t1 = std::chrono::steady_clock::now();
 
-  jobjectArray result = MakeJObjectArray(env, detections);
+  // SpectrumJetson: the far-tag search (far_search.h): only while no camera has a good view. Its
+  // time is kept out of "detect" (the far search keeps its own totals).
+  std::vector<far_search::Det> far;
+  if (!failed && detections) {
+    const int64_t now_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(t1.time_since_epoch()).count();
+    far = far_search::Process(static_cast<int>(handle), img, far_search::Copy(detections), s->td,
+                              s->camera_matrix, s->dist_coeffs, now_us);
+    far.erase(std::remove_if(far.begin(), far.end(),
+                             [&](const far_search::Det &d) {
+                               return !MaskKeeps(*s, img.cols, img.rows, d.c[0], d.c[1]);
+                             }),
+              far.end());
+    ReportFarSearch();
+  }
+  jobjectArray result;
+  if (far.empty()) {
+    result = MakeJObjectArray(env, detections);
+  } else {
+    auto all = far_search::Copy(detections);
+    all.insert(all.end(), far.begin(), far.end());
+    result = MakeJObjectArray(env, all);
+  }
   auto t2 = std::chrono::steady_clock::now();
   if (last_capture_us) {
     const double age = (static_cast<double>(wpi::Now()) - static_cast<double>(last_capture_us)) / 1000;
@@ -1332,6 +1417,29 @@ JNIEXPORT jobjectArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_processi
   }
   RecordStats(s->stats, handle, img, detections, failed, t0, t1, t2);
   return result;
+}
+
+// ---- Far-tag search (far_search.h) --------------------------------------------------------------
+
+// SpectrumJetson: GpuDetectorJNI.setFarSearch(boolean enabled, double sweepsPerSecond), from
+// Settings > Robot state (IdleMode in photonvision-55).
+JNIEXPORT void JNICALL Java_org_photonvision_jni_GpuDetectorJNI_setFarSearch(JNIEnv *, jclass,
+                                                                            jboolean enabled,
+                                                                            jdouble sweeps_per_s) {
+  far_search::SetConfig({enabled == JNI_TRUE, sweeps_per_s});
+}
+
+// double[] farSearchStatus(): {enabled, starved now, full-size searches, crops, far tags returned,
+// seconds starved, ms in full-size searches, ms in crops}, all since PhotonVision started.
+JNIEXPORT jdoubleArray JNICALL Java_org_photonvision_jni_GpuDetectorJNI_farSearchStatus(JNIEnv *env,
+                                                                                       jclass) {
+  const auto c = far_search::GetCounters();
+  const double v[8] = {far_search::GetConfig().enabled ? 1.0 : 0.0, c.starved ? 1.0 : 0.0,
+                       static_cast<double>(c.sweeps), static_cast<double>(c.crops),
+                       static_cast<double>(c.far_tags), c.starved_ms / 1000.0, c.sweep_ms, c.crop_ms};
+  jdoubleArray arr = env->NewDoubleArray(8);
+  if (arr) env->SetDoubleArrayRegion(arr, 0, 8, v);
+  return arr;
 }
 
 // ---- Status for NetworkTables (JetsonStatusJNI) -------------------------------------------------
