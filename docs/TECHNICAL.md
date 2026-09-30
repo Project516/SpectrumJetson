@@ -1281,26 +1281,41 @@ unchanged), so after a reboot that port is 256 again unless it's set on the USB 
   All five held 121–122 fps. The largest frames were 52–76 KB. BottomLeft's 75.5 KB used 88% of its
   allocation ("fits 1.1x"), and three cameras were at 80–88%. At 90% or more a camera compresses
   harder instead of dropping frames. A 6th camera doesn't fit at this cap.
-- **Load** (cameras facing the ceiling lights, no tag, 2 streams still open, 3 × 10 s), against 4
-  cameras in the same scene:
+- **Load** (cameras facing the ceiling lights, no tag, 3 × 10 s), against 4 cameras in the same
+  scene. The first 5-camera run still had 2 streams "open": dead connections from the laptop's
+  unplugged USB-C link (below). The clean run was after a PhotonVision restart, with none:
 
-  | | 4 cameras | 5 cameras |
-  |---|---|---|
-  | Frames/s | 488 | 610 |
-  | Detect avg (worst) | 1.85 ms | 2.4 ms (3.7–5.1) |
-  | GPU | 36.4% | 45.6% |
-  | PhotonVision CPU | 1.42 cores | 1.89 cores (incl. 2 streams) |
-  | Frame age at result | 13.5 ms | 14.0 ms |
-  | NVJPG decode | ~3.0 ms | 3.3 ms (606 frames/s) |
-  | Board power, tj | ~10.6 W | 11.2 W, 56.8 °C |
+  | | 4 cameras | 5 cameras, 2 dead streams | **5 cameras, clean** |
+  |---|---|---|---|
+  | Frames/s | 488 | 610 | 610 |
+  | Detect avg (worst) | 1.85 ms | 2.4 ms (3.7–5.9) | **2.1 ms** |
+  | GPU | 36.4% | 45.5% | **44.4%** |
+  | PhotonVision CPU | 1.42 cores | 1.9 cores | **1.87 cores** |
+  | Frame age at result | 13.5 ms | 14.0 ms | **13.3 ms** |
+  | NVJPG decode | ~3.0 ms | 3.3 ms | **2.8 ms** |
+  | Board power, tj | ~10.6 W | 11.2 W, 56.8 °C | **11.1 W, 56.5 °C** |
 
 - **Scaling is linear now:** GPU +25% for +25% frames. The next limits are USB (full) and the two
   NVJPG engines (queueing more), not the GPU or CPU.
 - **The hub** (with a built-in ASIX AX88179 gigabit Ethernet) logged register errors (`Failed to
   write reg ... -32`) the whole time. That's harmless for the cameras, but it floods the kernel
   log; use a plain USB 2.0 hub on the robot.
-- **Fanless:** 11.2 W is close to the 12 W fanless test (~73 °C with the plate), so test fanless
+- **Fanless:** 11.1 W is close to the 12 W fanless test (~73 °C with the plate), so test fanless
   with 5 cameras before relying on it.
+- **Dead viewers kept their streams for ~15 minutes.** The laptop's USB-C link was unplugged with
+  a dashboard open, and its two stream connections stayed "established" with ~78 KB queued each.
+  cscore still counted them as viewers, so PhotonVision kept resizing and encoding those frames
+  for nobody. Linux gives up on an unanswering peer only after `tcp_retries2` retransmissions
+  (default 15, ~15 min with data queued). `ss -K` can't close them on this kernel. That happens
+  whenever a laptop leaves without closing the dashboard: lid shut, cable pulled, Wi-Fi gone,
+  driver station swapped.
+- **Fix: `09-robot-tuning.sh` step 11**, `net.ipv4.tcp_retries2 = 5` in
+  `/etc/sysctl.d/90-spectrum-tcp.conf` (gives up after 0.2 s × (2⁶ − 1) ≈ 12.6 s; `--undo` restores
+  15). It applies to every connection: NT reconnects by itself, and an SSH session dies if the
+  network is out for over ~13 s with data waiting. **Tested:** a dashboard open over Wi-Fi, then
+  the laptop's Wi-Fi switched off. The Jetson dropped its two stream connections 11.4 s and 12.9 s
+  later (clocks lined up from NetworkManager's log and `date` on both). The Wi-Fi came back after
+  9 s, but the drops came 2–4 s after the radio did, before the laptop could have rejoined.
 
 #### Upstream fixes and a real reconnect for stuck cameras (`photonvision-42` to `-44`)
 
