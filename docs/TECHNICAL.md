@@ -1473,6 +1473,23 @@ flags. 5 cameras, ceiling scene:
 - The GC on disable (`photonvision-49`, 27 ms while disabled) stays.
 - PhotonVision allocates about 2.6 MB/s (young 37 MB -> 19 MB every ~7 s).
 
+#### Match Ready page (`photonvision-52`)
+
+- `GET /api/healthCheck` runs `health-check.sh` (through `/opt/photonvision/health-check.sh`, a
+  link to the repo's copy made by `06-install-fork-jar.sh`; `SPECTRUM_HEALTH_CHECK` overrides)
+  under `timeout 60`, one run at a time, reusing a run less than 3 s old. It parses the script's
+  own output (`== Section`, `PASS/WARN/FAIL text`, other lines as info, the final `READY` /
+  `NOT READY` line), so the page and SSH always agree. 3.7 s as root. `health-check.sh` finds
+  `usb-bandwidth.py` through `readlink -f`, so it works through the link.
+- The page (`/#/ready`, "Match Ready" in the sidebar): the verdict, the WARN and FAIL lines first,
+  a tile per camera from the results the dashboard already receives (pipeline "N: name" and type,
+  fps against the mode's rate, latency, targets, calibrated at the current resolution for AprilTag
+  and ArUco pipelines; low fps isn't flagged while idling), the robot line from `/api/robotState`,
+  and every section folded. Re-runs every 30 s while open.
+- Test (`tests/ui/specs/ready.spec.ts`): the verdict matches the endpoint's, the sections include
+  PhotonVision / Cameras / Robot connection / System, each camera's tile shows its pipeline and a
+  non-zero fps, and Check again brings a newer run. Suite: 9 tests, 2.3 min.
+
 #### Event pipeline when the field connects (`photonvision-51`)
 
 - Settings `eventProfileOnFms` (default off) and `eventPipeline` join idle mode's in

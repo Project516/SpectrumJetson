@@ -51,6 +51,9 @@ tests/ui/run.sh
 - **`event`:** the event pipeline when the field connects: a profile on every camera, the Settings
   card, the fake robot with the FMS attached, a dashboard override that sticks, and Switch now.
 
+- **`ready`:** the Match Ready page: its verdict matches the health check, a live tile per camera,
+  Check again.
+
 **Limits:** 10 s per click, 2 min per test, 8 min per run; `run.sh` stops anything past 10 min. The
 run fails if a camera ends on a different pipeline than it started on, or a `zz-uitest` pipeline is
 left behind, and says which.

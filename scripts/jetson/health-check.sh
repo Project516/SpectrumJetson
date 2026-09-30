@@ -190,7 +190,8 @@ udt=$(cat /sys/module/usbcore/parameters/initial_descriptor_timeout 2>/dev/null 
 [[ $udt == 1000 ]] || warn "USB retries time out after $udt ms, not 1000 (rerun 09-robot-tuning.sh)"
 # USB bandwidth and connection trouble in the last 10 minutes, with what to do about it
 # (usb-bandwidth.py: each camera's reservation, what failed, and the fix).
-UB=$(dirname "$0")/usb-bandwidth.py
+# readlink: also run through /opt/photonvision/health-check.sh (the Match ready page, photonvision-52)
+UB=$(dirname "$(readlink -f "$0")")/usb-bandwidth.py
 if [[ -x $UB ]]; then
   ub=$(python3 "$UB" --json 2>/dev/null || true)
   if [[ -n $ub ]]; then
