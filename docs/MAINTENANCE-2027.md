@@ -88,6 +88,8 @@ Then GCC 11 and CUDA 12.6 on the Jetson are enough for the native side for as lo
 
 ## The robot side
 
+**Built (2026-10-01): [SpectrumVision](../robot-vision/README.md)**, in `robot-vision/`. It's a library that wraps PhotonLib, not a replacement, with builds for WPILib 2026 (roboRIO) and 2027 alpha-6 (SystemCore) from one source. What's below is the reasoning behind it.
+
 **Recommendation: a library that wraps PhotonLib, not a replacement.**
 
 **Why not replace PhotonLib:**

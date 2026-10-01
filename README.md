@@ -588,13 +588,15 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 - **Don't turn on "Publish protobuf"** in the networking settings: it sends every result a second time.
 - **Robot loop time:** NetworkTables' sending and receiving run on its own C++ thread, not in the robot loop. What does run in the loop is PhotonLib decoding results and `addVisionMeasurement`; if that shows up in loop time, read the cameras on a separate thread and hand the loop finished measurements.
 
-**What robot code must do** (from the 2026-10-01 audit, [docs/AUDIT-2026-10.md](docs/AUDIT-2026-10.md)):
-- **Stay on PhotonLib v2027.0.0-alpha-2 and WPILib 2027 alpha-6** for October. Later PhotonLib changes the message format (PhotonLib then refuses our results). WPILib alpha-7 changes time-sync units without an error. Log `PhotonPipelineResult.photonStruct.getInterfaceUUID()` at startup and alert if it isn't `4b2ff16a…`. ([docs/MAINTENANCE-2027.md](docs/MAINTENANCE-2027.md))
+**Robot code: use [SpectrumVision](robot-vision/README.md)** (`robot-vision/`), our robot-side library on top of PhotonLib, for WPILib 2026 (roboRIO) and 2027 alpha-6 (SystemCore). It reads every camera's frames, solves them (multi-tag, or one tag's position plus the gyro), gates out bad ones with named, tunable gates, gives each a standard deviation, and sends them to WPILib's or CTRE's estimator in capture-time order. It uses this Jetson's per-tag quality, health topics and excluded tags, and works with stock PhotonVision too. `robot-vision/install.sh <robot project> 2026|2027` copies it in.
+
+**What robot code must do** (from the 2026-10-01 audit, [docs/AUDIT-2026-10.md](docs/AUDIT-2026-10.md); SpectrumVision handles the ones marked *):
+- **Stay on PhotonLib v2027.0.0-alpha-2 and WPILib 2027 alpha-6** for October. Later PhotonLib changes the message format (PhotonLib then refuses our results). WPILib alpha-7 changes time-sync units without an error. Log `PhotonPipelineResult.photonStruct.getInterfaceUUID()` at startup and alert if it isn't `4b2ff16a…` (* SpectrumVision alerts on any mismatch with the coprocessor's format). ([docs/MAINTENANCE-2027.md](docs/MAINTENANCE-2027.md))
 - **Use the Jetson's camera names** (`TopLeft`, `TopRight`, …), exactly as the dashboard shows them.
-- **Call `setEnabled(true)` on every camera at robot init.** A camera robot code disabled stays disabled if robot code restarts (PhotonVision keeps it in memory), and returns empty results.
-- **Drop the tags in `/photonvision/excludedTagsActive`.** They're left out of multi-tag, but still sent as single-tag targets.
+- **Call `setEnabled(true)` on every camera at robot init** (*). A camera robot code disabled stays disabled if robot code restarts (PhotonVision keeps it in memory), and returns empty results.
+- **Drop the tags in `/photonvision/excludedTagsActive`** (*). They're left out of multi-tag, but still sent as single-tag targets.
 - **The event profile wins at field connect.** With "switch to the event pipeline when the FMS connects" on, a pipeline robot code chose before the field connected is replaced. Set it again after `DriverStation.isFMSAttached()` if robot code picks pipelines.
-- **After a NetworkTables reconnect**, results in the first ~1 s can carry an unsynced timestamp: skip results whose `metadata.timeSinceLastPong` is large.
+- **After a NetworkTables reconnect**, results in the first ~1 s can carry an unsynced timestamp: skip results whose `metadata.timeSinceLastPong` is large (*: the `timeSynced` gate).
 - **The robot's control word:** both formats work. A 2026 roboRIO publishes `/FMSInfo/FMSControlData`, and WPILib 2027 publishes the `/FMSInfo/ControlWord` struct (`photonvision-62`). Before this, PhotonVision read a 2027 robot as always disabled, so cameras idled at ~30 fps through matches.
 
 **Camera settings go in the robot log too** (`photonvision-24`), so you can tell what a camera was set to in any match.
@@ -617,6 +619,7 @@ The detailed technical reference, with exact versions, commits and measurements,
 | `scripts/host/` | Run on the laptop: prepare and flash the Jetson (01, 02), build the PhotonVision fork jar (03), back up and restore the SSD (04, 05), copy and export Rewind recordings (`rewind-pull.sh`, `rewind-export.py`) |
 | `scripts/jetson/` | Run on the Jetson, in order: verify (01), CUDA (02), PhotonVision service (03), allwpilib (04), 4143 detector (05), install jar (06), current detector (07), pick detector (08), robot tuning (09), camera driver bandwidth cap (11), install a YOLO model (12), field-calibration replay tool (13), USB controller watchdog (14), plus `health-check.sh` and `usb-bandwidth.py` (what each camera reserves on USB, and the fix) |
 | `patches/` | Our fixes to other people's code, applied by the build scripts |
+| `robot-vision/` | SpectrumVision, the robot-side library (PhotonLib wrapper: solvers, gates, trust, alerts, testing), WPILib 2026 and 2027 builds; [robot-vision/README.md](robot-vision/README.md) |
 | `detector/` | Our JNI wrapper and CMake build for Austin's current CUDA detector (and the MJPEG decoders, CPU and hardware, the TensorRT object detector, and `fieldcal_detect`, which replays Rewind recordings through the detector) |
 | `tools/fieldcal/` | Field calibration: tag positions and camera mounts from a recording of the robot pushed to still spots ([README](tools/fieldcal/README.md)) |
 | `tools/fieldmodel/`, `assets/field-models/` | The 3D field model for the Field Calibration page, converted from *FIRST*'s field CAD ([README](tools/fieldmodel/README.md)) |

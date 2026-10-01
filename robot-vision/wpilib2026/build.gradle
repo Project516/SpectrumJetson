@@ -1,0 +1,46 @@
+// The roboRIO build: WPILib 2026, PhotonLib 2026. Sources: src/main + src/compat2026.
+def wpilib = '2026.2.1'
+def photon = 'v2026.3.4'
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
+
+repositories {
+    maven { url = 'https://frcmaven.wpi.edu/artifactory/release' }
+    maven { url = 'https://maven.photonvision.org/releases' }
+    mavenCentral()
+}
+
+sourceSets {
+    main { java { srcDirs = ['../src/main/java', '../src/compat2026/java'] } }
+    // The examples that need only WPILib (the tuning test runs as a test; the others compile).
+    test { java { srcDirs = ['../src/test/java'] ; srcDir '../examples'; include 'org/**', '**/VisionTuningTest.java', '**/WpilibSwerveVision.java' } }
+}
+
+dependencies {
+    // What a 2026 robot project already has (GradleRIO + the PhotonLib vendordep): compileOnly for
+    // the library, and on the test classpath. The tests are plain Java (no native libraries).
+    def wpi = [
+        "edu.wpi.first.wpilibj:wpilibj-java:$wpilib", "edu.wpi.first.wpimath:wpimath-java:$wpilib",
+        "edu.wpi.first.wpiutil:wpiutil-java:$wpilib", "edu.wpi.first.ntcore:ntcore-java:$wpilib",
+        "edu.wpi.first.hal:hal-java:$wpilib", "edu.wpi.first.apriltag:apriltag-java:$wpilib",
+        "edu.wpi.first.wpiunits:wpiunits-java:$wpilib", "edu.wpi.first.cscore:cscore-java:$wpilib",
+        "edu.wpi.first.cameraserver:cameraserver-java:$wpilib",
+        "edu.wpi.first.thirdparty.frc2025.opencv:opencv-java:4.10.0-3",
+        "org.photonvision:photonlib-java:$photon", "org.photonvision:photontargeting-java:$photon",
+        "org.ejml:ejml-simple:0.44.0", "com.fasterxml.jackson.core:jackson-annotations:2.19.2",
+        "com.fasterxml.jackson.core:jackson-core:2.19.2", "com.fasterxml.jackson.core:jackson-databind:2.19.2",
+        "us.hebi.quickbuf:quickbuf-runtime:1.4",
+    ]
+    wpi.each { compileOnly it; testImplementation it }
+    testImplementation platform('org.junit:junit-bom:5.10.1')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// The drop-in copy for a robot project: org/spectrum3847/vision/** (main + compat).
+tasks.register('sourceDrop', Zip) {
+    archiveFileName = 'SpectrumVision-wpilib2026-src.zip'
+    destinationDirectory = layout.buildDirectory.dir('drop')
+    from('../src/main/java') { include 'org/**' }
+    from('../src/compat2026/java') { include 'org/**' }
+}

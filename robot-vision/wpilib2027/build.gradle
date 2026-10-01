@@ -1,0 +1,56 @@
+// The SystemCore build: WPILib 2027 alpha-6, PhotonLib 2027 alpha-2. Sources: generated from
+// src/main by tools/port2027.py, + src/compat2027. WPILib 2027 comes from the local WPILib
+// install (~/wpilib/2027/maven), as GradleRIO 2027 uses it.
+def wpilib = '2027.0.0-alpha-6'
+def photon = 'v2027.0.0-alpha-2'
+def gen = layout.buildDirectory.dir('generated/port2027')
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+
+repositories {
+    maven { url = uri("${System.getProperty('user.home')}/wpilib/2027/maven") }
+    maven { url = 'https://maven.photonvision.org/releases' }
+    mavenCentral()
+}
+
+def port = tasks.register('port2027', Exec) {
+    inputs.dir('../src/main/java')
+    inputs.dir('../src/test/java')
+    inputs.file('../tools/port2027.py')
+    inputs.file('../examples/VisionTuningTest.java')
+    outputs.dir(gen)
+    commandLine 'python3', "${rootDir}/tools/port2027.py", gen.get().asFile.path
+}
+
+sourceSets {
+    main { java { srcDirs = [gen.map { it.dir('main/java') }, '../src/compat2027/java'] } }
+    test { java { srcDirs = [gen.map { it.dir('test/java') }] } }
+}
+tasks.named('compileJava') { dependsOn port }
+tasks.named('compileTestJava') { dependsOn port }
+
+dependencies {
+    def wpi = [
+        "org.wpilib.wpilibj:wpilibj-java:$wpilib", "org.wpilib.wpimath:wpimath-java:$wpilib",
+        "org.wpilib.wpiutil:wpiutil-java:$wpilib", "org.wpilib.ntcore:ntcore-java:$wpilib",
+        "org.wpilib.hal:hal-java:$wpilib", "org.wpilib.apriltag:apriltag-java:$wpilib",
+        "org.wpilib.wpiunits:wpiunits-java:$wpilib", "org.wpilib.cscore:cscore-java:$wpilib",
+        "org.wpilib.cameraserver:cameraserver-java:$wpilib", "org.wpilib.datalog:datalog-java:$wpilib",
+        "org.wpilib.thirdparty.opencv:opencv-java:2027-4.13.0-3",
+        "org.photonvision:photonlib-java:$photon", "org.photonvision:photontargeting-java:$photon",
+        "org.ejml:ejml-simple:0.44.0", "us.hebi.quickbuf:quickbuf-runtime:1.4",
+        "io.avaje:avaje-jsonb:3.11", "io.avaje:avaje-json-core:3.11",
+    ]
+    wpi.each { compileOnly it; testImplementation it }
+    testImplementation platform('org.junit:junit-bom:5.10.1')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.register('sourceDrop', Zip) {
+    dependsOn port
+    archiveFileName = 'SpectrumVision-wpilib2027-src.zip'
+    destinationDirectory = layout.buildDirectory.dir('drop')
+    from(gen.map { it.dir('main/java') }) { include 'org/**' }
+    from('../src/compat2027/java') { include 'org/**' }
+}

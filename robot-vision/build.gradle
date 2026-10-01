@@ -1,0 +1,14 @@
+// Shared by both builds; each sets its WPILib/PhotonLib versions and Java version.
+subprojects {
+    apply plugin: 'java-library'
+    group = 'org.spectrum3847'
+    version = '0.1.0'
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.compilerArgs += ['-Xlint:unchecked']
+    }
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+        testLogging { events 'failed'; exceptionFormat 'full'; showStandardStreams = false }
+    }
+}
