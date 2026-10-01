@@ -68,6 +68,8 @@ restore_settings() {
 prebuilt_install() {
   local b=$PREBUILT dir=$HOME/restore
   mkdir -p "$dir"
+  # A fresh JetPack has no curl (found 2026-10-01: --prebuilt latest failed on it).
+  command -v curl >/dev/null || sudo apt-get install -y curl >/dev/null || return 1
   if [[ $b == latest ]]; then
     b=$(curl -fsSL https://api.github.com/repos/Spectrum3847/SpectrumJetson/releases/latest \
         | python3 -c "import json,sys; print(next(a['browser_download_url'] for a in json.load(sys.stdin)['assets'] if a['name'].startswith('spectrum-jetson-prebuilt-') and a['name'].endswith('.tar.gz')))") \
@@ -112,7 +114,7 @@ prebuilt_install() {
 STEPS=(
   "verify|600|$HERE/01-verify.sh </dev/null"
   "jetpack|3600|$HERE/02-jetpack.sh"
-  "tools|600|sudo apt-get install -y smartmontools gdisk rsync && sudo smartctl -A /dev/nvme0 | tee $LOGS/ssd-smart-at-install.txt"
+  "tools|600|sudo apt-get install -y smartmontools gdisk rsync curl && sudo smartctl -A /dev/nvme0 | tee $LOGS/ssd-smart-at-install.txt"
   "photonvision|1200|$HERE/03-photonvision.sh"
   "data-partitions|600|$HERE/10-data-partition.sh"
   "allwpilib|5400|$HERE/04-build-allwpilib.sh"
