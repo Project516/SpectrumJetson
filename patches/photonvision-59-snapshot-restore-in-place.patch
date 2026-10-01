@@ -1,0 +1,16 @@
+diff --git a/photon-core/src/main/java/org/photonvision/common/configuration/SettingsSnapshots.java b/photon-core/src/main/java/org/photonvision/common/configuration/SettingsSnapshots.java
+index cec99106..2fa35a01 100644
+--- a/photon-core/src/main/java/org/photonvision/common/configuration/SettingsSnapshots.java
++++ b/photon-core/src/main/java/org/photonvision/common/configuration/SettingsSnapshots.java
+@@ -189,7 +189,10 @@ public final class SettingsSnapshots {
+         }
+         for (Path p : EXTRA_FILES) {
+             Path saved = dir.resolve("extra").resolve(p.getFileName());
+-            if (Files.exists(saved)) Files.copy(saved, p, StandardCopyOption.REPLACE_EXISTING);
++            // photonvision-59: write into the existing file, don't replace it. With the data
++            // partitions (10-data-partition.sh) spectrum-robot-state.json is a bind mount, and
++            // replacing a mounted file fails with "Device or resource busy".
++            if (Files.exists(saved)) Files.write(p, Files.readAllBytes(saved));
+         }
+         logger.info("Restored settings snapshot '" + meta.name + "' (" + id + "); restarting");
+         new Thread(

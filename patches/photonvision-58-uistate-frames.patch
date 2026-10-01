@@ -1,0 +1,36 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 4213dc33..0c16833a 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -76,6 +76,9 @@ import org.photonvision.vision.target.TrackedTarget;
+  * provide info on settings changes. VisionModuleManager holds a list of all current vision modules.
+  */
+ public class VisionModule {
++    /** SpectrumJetson (photonvision-58): frames this camera has processed since PhotonVision started. */
++    public final java.util.concurrent.atomic.AtomicLong framesProcessed = new java.util.concurrent.atomic.AtomicLong();
++
+     private final Logger logger;
+     protected final PipelineManager pipelineManager;
+     protected final VisionSource visionSource;
+@@ -184,6 +187,9 @@ public class VisionModule {
+         addResultConsumer(
+                 (result) ->
+                         lastPipelineResultBestTarget = result.hasTargets() ? result.targets.get(0) : null);
++        // SpectrumJetson (photonvision-58): frames processed since start, for the test suite to tell
++        // which cameras are streaming (the change between two reads a second apart).
++        addResultConsumer((result) -> framesProcessed.incrementAndGet());
+         // SpectrumJetson: this camera's health, and the Jetson's, on NetworkTables (photonvision-16).
+         addResultConsumer(
+                 new CameraHealthPublisher(
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index b6e93624..3b2a099d 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -497,6 +497,7 @@ public class RequestHandler {
+             camera.put("currentPipelineSettings", ui.currentPipelineSettings);
+             camera.put("extraControls", ui.extraControls);
+             camera.put("streamViewers", module.streamViewers());
++            camera.put("framesProcessed", module.framesProcessed.get()); // photonvision-58
+             // Every pipeline's saved settings, not only the running one's (photonvision-46).
+             var pipelines = new ArrayList<Object>();
+             for (int i = 0; i < ui.pipelineNicknames.size(); i++) {

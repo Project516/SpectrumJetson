@@ -1,4 +1,5 @@
 import { test, expect, removeEverywhere, restoreRunning } from "../lib/fixtures";
+import { notAllStreaming } from "../lib/cameras";
 import { cameraState, changeControl, uiState, type CameraState, type Dashboard } from "../lib/pv";
 import type { APIRequestContext } from "@playwright/test";
 
@@ -67,6 +68,7 @@ test("Create on every camera from another camera's pipeline, then Switch all", a
   camera,
   pipeline
 }) => {
+  test.skip(!!notAllStreaming(), notAllStreaming());
   await removeEverywhere(dash, request, [ALL], camera);
   await dash.selectPipeline("zz-uitest");
   // A distinctive source: decision margin 23, and an orientation the other cameras mustn't take.

@@ -12,6 +12,7 @@ tests/ui/run.sh
 - **Takes** a few minutes. Prints one line per control, with the backend setting each one moved.
 - **Needs** the Jetson on the USB link or Wi-Fi (`run.sh` opens the SSH tunnel), and a
   PhotonVision built with `photonvision-45` or later.
+- **Runs on the cameras that are streaming.** Setup measures each camera's frame rate (`framesProcessed`, `photonvision-58`; streaming means more than 15 fps, since a camera that's gone still yields ~10 empty results a second). Tests run on those. The ones that change every camera (Create on every camera with Switch all, and the event pipeline) skip if any camera isn't streaming: PhotonVision changes an unplugged camera's saved setup too, and nothing can put it back until it's plugged in. Teardown checks that unplugged cameras' saved pipelines are untouched, and Match Ready must say NOT READY and name them.
 - **Touches nothing you set up.** Each test copies the camera's current pipeline to a temporary
   `zz-uitest`, works on that, deletes it, and switches back. A run that was killed half way leaves
   `zz-uitest` behind; the next run deletes it first. Nothing is reset.
@@ -21,7 +22,7 @@ tests/ui/run.sh
 
 | Setting | Default | |
 |---|---|---|
-| `PV_UI_CAMERA` | TopLeft, or the first camera | camera to test on |
+| `PV_UI_CAMERA` | TopLeft, or the first streaming camera | camera to test on |
 | `PV_UI_HEADED=1` | off | show the browser |
 | `PV_UI_TEST_VIDEO_MODES=1` | off | also switch resolutions (it reopens the camera) |
 | `PV_URL` | `http://localhost:5800` | another PhotonVision |

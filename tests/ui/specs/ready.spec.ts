@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { uiState } from "../lib/pv";
+import { cameraInventory } from "../lib/cameras";
 
 // photonvision-52: the Match Ready page shows health-check.sh's verdict and checks, and a live tile
 // per camera; "Check again" runs the checks again.
@@ -16,14 +17,24 @@ test("Match Ready: verdict, a live tile per camera, Check again", async ({ page,
     expect.arrayContaining(["PhotonVision", "Cameras", "Robot connection", "System"])
   );
 
+  const { absent } = cameraInventory();
   for (const c of await uiState(request)) {
     const tile = page.getByTestId(`ready-camera-${c.nickname}`);
     await expect(tile).toBeVisible();
     await expect(tile).toContainText(`${c.currentPipelineIndex}: ${c.pipelineNicknames[c.currentPipelineIndex]}`);
+    if (absent.includes(c.nickname)) continue; // checked below: it must make the verdict NOT READY
     // Live frames: a non-zero fps within a few seconds.
     await expect
       .poll(async () => parseInt((/(\d+)\s*fps/.exec(await tile.innerText()) ?? [])[1] ?? "0"), { timeout: 10_000, message: c.nickname })
       .toBeGreaterThan(0);
+  }
+  // A camera that isn't streaming must not pass: NOT READY, and the Cameras section names it.
+  if (absent.length) {
+    expect(api.verdict).toMatch(/^NOT READY/);
+    const cams = api.sections.find((s: { name: string }) => s.name === "Cameras");
+    for (const name of absent) {
+      expect(JSON.stringify(cams), `Cameras section should name ${name}`).toContain(name);
+    }
   }
   await page.screenshot({ path: test.info().outputPath("match-ready.png"), fullPage: true });
 

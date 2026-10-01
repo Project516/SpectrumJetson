@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { FakeRobot, JETSON, robotState } from "../lib/fake-robot";
 import { cameraState, Dashboard, uiState } from "../lib/pv";
 import { pickCamera, removeEverywhere, restoreRunning } from "../lib/fixtures";
+import { notAllStreaming } from "../lib/cameras";
 
 // photonvision-51: "Event pipeline when the field connects". A profile (zz-uitest-all on every
 // camera) is the event pipeline; the fake robot connects disabled, then the FMS attaches: every
@@ -12,6 +13,7 @@ const ALL = "zz-uitest-all";
 
 test("event pipeline when the field connects; overrides stick; Switch now", async ({ page, request }) => {
   test.skip(!JETSON, "needs PV_UI_JETSON (tests/ui/run.sh sets it) to start the fake robot");
+  test.skip(!!notAllStreaming(), notAllStreaming());
   const saved = await robotState(request);
   test.skip(saved.robotConnected, "a robot is already connected");
   const home = await pickCamera(request);

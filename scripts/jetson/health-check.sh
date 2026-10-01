@@ -145,6 +145,21 @@ for chunk in re.split(r'(?m)^\\{', text):
         if m: print(m.group(1)); break
 " 2>/dev/null
 }
+# Every camera PhotonVision knows (its settings name a USB port) that isn't on USB now: the loop
+# below only sees cameras that are there, so an unplugged or stuck one used to pass unnoticed
+# (2026-10-01: BottomLeft gone from port 2.2, and Match Ready said nothing about it).
+while IFS=$'\t' read -r name port; do
+  [[ -n $port ]] || continue
+  ls /dev/v4l/by-path/*usb-0:"$port":1.0-video-index0 >/dev/null 2>&1 \
+    || fail "$name isn't on USB (its port $port is empty): replug it, or power-cycle the robot if it's a stuck Thriftiest Cam"
+done < <(sqlite3 "$DB" "select config_json from cameras;" 2>/dev/null | python3 -c "
+import sys, re
+text = sys.stdin.read()
+for chunk in re.split(r'(?m)^\{', text):
+    n = re.search(r'\"nickname\" : \"([^\"]*)\"', chunk)
+    p = re.search(r'usb-0:([0-9.]+):1\.0', chunk)
+    if n and p: print(n.group(1) + '\t' + p.group(1))
+" 2>/dev/null)
 cams=0
 for intf in /sys/bus/usb/drivers/uvcvideo/*:1.0; do
   [[ -e $intf ]] || continue

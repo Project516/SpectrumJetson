@@ -24,6 +24,16 @@ export default async function globalTeardown() {
     const leftovers = c.pipelineNicknames.filter((n) => n.startsWith("zz-uitest"));
     if (leftovers.length) problems.push(`${c.nickname} still has ${leftovers.join(", ")}`);
   }
+  // Unplugged cameras: their saved pipelines must be exactly as they were.
+  let absent: Record<string, unknown> = {};
+  try {
+    absent = JSON.parse(readFileSync(".state/absent-pipelines.json", "utf8"));
+  } catch {}
+  const full = (await (await fetch(`${base}/api/spectrum/uiState`)).json()).cameras as { nickname: string; pipelines: unknown }[];
+  for (const [name, was] of Object.entries(absent)) {
+    const now = full.find((c) => c.nickname === name)?.pipelines;
+    if (JSON.stringify(now) !== JSON.stringify(was)) problems.push(`${name} (not streaming) had its saved pipelines changed`);
+  }
   // Test snapshots (photonvision-53), and a "field connected" one taken during the run by the fake field.
   const snaps = (await (await fetch(`${base}/api/snapshots`)).json()) as { name: string; reason: string }[];
   for (const s of snaps) if (s.name.includes("zz-uitest")) problems.push(`snapshot '${s.name}' left behind`);

@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from "fs";
+import { measureCameras } from "./cameras";
 
 // Refuse to run against a robot that's connected, and make sure our build is the one answering.
 export default async function globalSetup() {
@@ -22,18 +23,23 @@ export default async function globalSetup() {
   mkdirSync(".state", { recursive: true });
   writeFileSync(".state/start-pipelines.json", JSON.stringify(start, null, 2));
   const rewind = await (await fetch(`${base}/api/rewind`)).json();
-  // Every camera PhotonVision knows must be streaming. Tests like "Create on every camera" also
-  // change the saved setup of an unplugged camera, and nothing can clean that up until it's back:
-  // a run on 2026-10-01 with no cameras plugged in left test pipelines in three cameras' settings.
-  const fps = new Map<string, number>((rewind.cameras ?? []).map((c: { camera: string; fps: number }) => [c.camera, c.fps]));
-  const idle = cameras.map((c) => c.nickname).filter((n) => !((fps.get(n) ?? 0) > 0));
-  if (idle.length && process.env.PV_UI_TEST_WITHOUT_ALL_CAMERAS !== "1") {
-    throw new Error(
-      `No frames from ${idle.join(", ")}. Plug every camera in first: the tests change every ` +
-        "camera's pipelines, and can't put an unplugged camera's back. " +
-        "(PV_UI_TEST_WITHOUT_ALL_CAMERAS=1 to run anyway.)"
-    );
+  // Which cameras are streaming. Tests run on those; the ones that touch every camera skip if any
+  // isn't (PhotonVision changes an unplugged camera's saved setup too, and nothing can put it back
+  // until it's plugged in: a run on 2026-10-01 left test pipelines in three cameras' settings).
+  const inventory = await measureCameras(base);
+  if (!inventory.streaming.length) {
+    throw new Error("No camera is streaming: plug at least one in (the tests need frames).");
   }
+  writeFileSync(".state/cameras.json", JSON.stringify(inventory, null, 2));
+  if (inventory.absent.length) {
+    console.log(`Not streaming: ${inventory.absent.join(", ")}. Tests run on ${inventory.streaming.join(", ")}; every-camera tests skip.`);
+  }
+  // Every unplugged camera's saved pipelines, so global-teardown can check nothing touched them.
+  const full = (await (await fetch(`${base}/api/spectrum/uiState`)).json()).cameras as { nickname: string; pipelines: unknown }[];
+  writeFileSync(
+    ".state/absent-pipelines.json",
+    JSON.stringify(Object.fromEntries(full.filter((c) => inventory.absent.includes(c.nickname)).map((c) => [c.nickname, c.pipelines])))
+  );
   if (rewind.robotConnected && process.env.PV_UI_TEST_ON_ROBOT !== "1") {
     throw new Error(
       "The Jetson is connected to a robot. These tests switch pipelines and move camera settings; " +
