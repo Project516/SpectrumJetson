@@ -1,0 +1,527 @@
+diff --git a/photon-client/src/components/settings/RobotStateCard.vue b/photon-client/src/components/settings/RobotStateCard.vue
+index 368e72f0..ef0c69f9 100644
+--- a/photon-client/src/components/settings/RobotStateCard.vue
++++ b/photon-client/src/components/settings/RobotStateCard.vue
+@@ -122,6 +122,34 @@ onBeforeUnmount(() => clearInterval(timer));
+         </template>
+       </p>
+       <v-divider class="my-3" />
++      <pv-switch
++        :model-value="robotState.quietAfterMatch"
++        :disabled="busy"
++        label="Quiet after a match"
++        tooltip="Power cuts only damage an SSD while it's being written. When a match ends (field connected, teleop, then disabled), the Jetson stops writing to the SSD: Rewind stops and logs go to memory. The cameras keep running. Any enable ends it within a fraction of a second."
++        :label-cols="4"
++        @update:model-value="(v) => set({ quietAfterMatch: !!v })"
++      />
++      <pv-slider
++        :model-value="robotState.quietAfterDisabledSeconds"
++        :disabled="busy"
++        label="Quiet after disabled for (s)"
++        tooltip="Also go quiet after the robot has been disabled this long, on or off the field (pit, practice). 0 = never."
++        :min="0"
++        :max="600"
++        :step="10"
++        :slider-cols="8"
++        @update:model-value="(v) => set({ quietAfterDisabledSeconds: v })"
++      />
++      <p class="text-caption pb-1" data-testid="quiet-status">
++        <template v-if="robotState.quietNow">Quiet now ({{ robotState.quietReason }}): the SSD isn't being written.</template>
++        <template v-else>Writing normally.</template>
++        <template v-if="robotState.quietLastLeaveMs >= 0"> Last switch back to writing took {{ robotState.quietLastLeaveMs }} ms.</template>
++        <template v-if="!robotState.quietHelper"> The quiet-mode helper isn't installed (10-data-partition.sh).</template>
++        <template v-if="robotState.quietError"> Problem: {{ robotState.quietError }}</template>
++        Robot code can decide instead with /photonvision/jetson/quiet.
++      </p>
++      <v-divider class="my-3" />
+       <pv-switch
+         :model-value="robotState.eventProfileOnFms"
+         :disabled="busy"
+diff --git a/photon-client/src/lib/RobotState.ts b/photon-client/src/lib/RobotState.ts
+index b76b7245..2a1ce5e1 100644
+--- a/photon-client/src/lib/RobotState.ts
++++ b/photon-client/src/lib/RobotState.ts
+@@ -24,6 +24,14 @@ export interface RobotState {
+   farSearchTags?: number;
+   farSearchStarvedSeconds?: number;
+   farSearchSweepMs?: number;
++  // photonvision-56
++  quietAfterMatch: boolean;
++  quietAfterDisabledSeconds: number;
++  quietNow: boolean;
++  quietReason: string;
++  quietError: string;
++  quietHelper: boolean;
++  quietLastLeaveMs: number;
+ }
+ 
+ export interface RobotStateChange {
+@@ -34,6 +42,8 @@ export interface RobotStateChange {
+   switchNow?: boolean;
+   farSearch?: boolean;
+   farSweepsPerSecond?: number;
++  quietAfterMatch?: boolean;
++  quietAfterDisabledSeconds?: number;
+ }
+ 
+ export const robotState = ref<RobotState | null>(null);
+diff --git a/photon-core/src/main/java/org/photonvision/common/logging/Logger.java b/photon-core/src/main/java/org/photonvision/common/logging/Logger.java
+index 8bad3579..ad1d20ee 100644
+--- a/photon-core/src/main/java/org/photonvision/common/logging/Logger.java
++++ b/photon-core/src/main/java/org/photonvision/common/logging/Logger.java
+@@ -126,6 +126,22 @@ public class Logger {
+         currentAppenders.add(new FileLogAppender(logFilePath));
+     }
+ 
++    // SpectrumJetson (photonvision-56): quiet mode closes the log file so the scratch partition can
++    // go read-only; the console and UI logs carry on. Resuming opens a new file (a new name, so
++    // nothing is overwritten). The appender list itself is left alone: other threads walk it while
++    // logging.
++    public static synchronized void pauseFileLogging() {
++        for (var a : currentAppenders) {
++            if (a instanceof FileLogAppender f) f.pause();
++        }
++    }
++
++    public static synchronized void resumeFileLogging() {
++        for (var a : currentAppenders) {
++            if (a instanceof FileLogAppender f) f.resume(PathManager.getInstance().getLogPath());
++        }
++    }
++
+     public static void closeAllLoggers() {
+         currentAppenders.forEach(LogAppender::shutdown);
+         currentAppenders.clear();
+@@ -328,8 +344,9 @@ public class Logger {
+                                 "FileLogAppender",
+                                 () -> {
+                                     try {
+-                                        if (wantsFlush) {
+-                                            out.flush();
++                                        var o = out;
++                                        if (wantsFlush && o != null) {
++                                            o.flush();
+                                             wantsFlush = false;
+                                         }
+                                     } catch (IOException ignored) {
+@@ -342,9 +359,34 @@ public class Logger {
+             }
+         }
+ 
++        /** photonvision-56: close the file (quiet mode); log() drops file output until resume. */
++        synchronized void pause() {
++            if (out == null) return;
++            try {
++                out.flush();
++                out.close();
++            } catch (IOException ignored) {
++            }
++            out = null;
++            paused = true;
++        }
++
++        synchronized void resume(Path logFilePath) {
++            if (!paused) return;
++            paused = false;
++            try {
++                out = new FileOutputStream(logFilePath.toFile());
++            } catch (FileNotFoundException e) {
++                System.err.println("Unable to log to file " + logFilePath);
++            }
++        }
++
++        private boolean paused = false;
++
+         @Override
+-        public void log(String message, LogLevel level) {
++        public synchronized void log(String message, LogLevel level) {
+             message += "\n";
++            if (out == null) return;
+             try {
+                 out.write(message.getBytes());
+                 wantsFlush = true;
+diff --git a/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
+index d5a91082..7dbdb8db 100644
+--- a/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
++++ b/photon-core/src/main/java/org/photonvision/rewind/RewindManager.java
+@@ -238,6 +238,20 @@ public class RewindManager {
+         return true;
+     }
+ 
++    /**
++     * photonvision-56: whether someone wants a recording right now: the web UI's Record now or
++     * field calibration (bench recording), or robot code's /photonvision/rewind/record. Quiet mode
++     * never starts while this is true, and leaves if it becomes true: recording is writing on
++     * purpose. Doesn't create the manager.
++     */
++    public static boolean recordingRequested() {
++        var m = INSTANCE;
++        if (m == null) return false;
++        if (m.manual) return true;
++        var sub = m.recordSub;
++        return sub != null && NetworkTablesManager.getInstance().getNTInst().isConnected() && sub.get();
++    }
++
+     // ---- the 5 Hz tick
+ 
+     private synchronized void tick() {
+@@ -253,17 +267,22 @@ public class RewindManager {
+                             && current.reason().equals("robot")
+                             && now - lastRobotRecordTrueUs < DISCONNECT_GRACE_US;
+ 
+-            if (now - lastDiskCheckUs > 10_000_000L) {
++            // photonvision-56: never while quiet mode has the scratch partition read-only (and no
++            // tidying either: deleting old recordings is a write too).
++            boolean quiet = org.photonvision.vision.processes.QuietMode.quiet();
++            if (!quiet && now - lastDiskCheckUs > 10_000_000L) {
+                 lastDiskCheckUs = now;
+                 manageDisk();
+             }
+ 
+-            boolean want = (robotWants || robotGrace || manual) && !diskLow;
++            boolean want = (robotWants || robotGrace || manual) && !diskLow && !quiet;
+             if (want && current == null) {
+                 openSession(now, robotWants || robotGrace ? "robot" : "bench");
+             } else if (!want && current != null) {
+                 closeSession(
+-                        diskLow
++                        quiet
++                                ? "quiet mode"
++                                : diskLow
+                                 ? "disk low"
+                                 : current.reason().equals("bench")
+                                         ? "bench recording stopped"
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/IdleMode.java b/photon-core/src/main/java/org/photonvision/vision/processes/IdleMode.java
+index b87fb3cf..398b0db3 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/IdleMode.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/IdleMode.java
+@@ -56,6 +56,10 @@ public final class IdleMode {
+         /** photonvision-55: full-size searches for far tags while no camera has a good view. */
+         public boolean farSearch = true;
+         public double farSweepsPerSecond = 30;
++        /** photonvision-56: stop writing to the SSD once a match ends... */
++        public boolean quietAfterMatch = true;
++        /** ...or after this long disabled (0 = never). */
++        public int quietAfterDisabledSeconds = 60;
+     }
+ 
+     private static final Path SETTINGS_FILE = Path.of("/opt/photonvision/spectrum-robot-state.json");
+@@ -105,7 +109,24 @@ public final class IdleMode {
+             Integer eventPipeline,
+             Boolean farSearch,
+             Double farSweepsPerSecond) {
++        return update(idleWhileDisabled, idleFps, eventProfileOnFms, eventPipeline, farSearch, farSweepsPerSecond, null, null);
++    }
++
++    public static synchronized Settings update(
++            Boolean idleWhileDisabled,
++            Double idleFps,
++            Boolean eventProfileOnFms,
++            Integer eventPipeline,
++            Boolean farSearch,
++            Double farSweepsPerSecond,
++            Boolean quietAfterMatch,
++            Integer quietAfterDisabledSeconds) {
+         var s = new Settings();
++        s.quietAfterMatch = quietAfterMatch != null ? quietAfterMatch : settings.quietAfterMatch;
++        s.quietAfterDisabledSeconds =
++                quietAfterDisabledSeconds != null
++                        ? Math.max(0, Math.min(3600, quietAfterDisabledSeconds))
++                        : settings.quietAfterDisabledSeconds;
+         s.idleWhileDisabled = idleWhileDisabled != null ? idleWhileDisabled : settings.idleWhileDisabled;
+         s.idleFps = idleFps != null ? Math.max(1, Math.min(120, idleFps)) : settings.idleFps;
+         s.eventProfileOnFms = eventProfileOnFms != null ? eventProfileOnFms : settings.eventProfileOnFms;
+@@ -214,6 +235,9 @@ public final class IdleMode {
+         m.put("lastEventSwitch", lastEventSwitch);
+         m.put("farSearch", settings.farSearch);
+         m.put("farSweepsPerSecond", settings.farSweepsPerSecond);
++        m.put("quietAfterMatch", settings.quietAfterMatch);
++        m.put("quietAfterDisabledSeconds", settings.quietAfterDisabledSeconds);
++        m.putAll(QuietMode.status());
+         var far = farSearchStatus();
+         if (far != null && far.length >= 8) {
+             m.put("farSearchStarved", far[1] > 0);
+@@ -231,6 +255,7 @@ public final class IdleMode {
+         var ds = NetworkTablesManager.getInstance().getDriverStation();
+         if (ds == null) return;
+         listening = true;
++        QuietMode.start(); // photonvision-56
+         logger.info(
+                 periodNanos > 0
+                         ? "Idle mode: " + settings.idleFps + " fps per camera while the robot is disabled"
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java b/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java
+new file mode 100644
+index 00000000..f9689d63
+--- /dev/null
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java
+@@ -0,0 +1,244 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.vision.processes;
++
++import edu.wpi.first.networktables.BooleanPublisher;
++import edu.wpi.first.networktables.BooleanSubscriber;
++import edu.wpi.first.networktables.StringPublisher;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.concurrent.TimeUnit;
++import org.photonvision.common.dataflow.networktables.NetworkTablesManager;
++import org.photonvision.common.logging.LogGroup;
++import org.photonvision.common.logging.Logger;
++
++/**
++ * SpectrumJetson (photonvision-56): quiet mode. Power cuts only hurt an SSD while it's being written,
++ * and a robot is switched off minutes after every match. So once a match has ended (field connected,
++ * teleop enabled, then disabled), or the robot has been disabled for quietAfterDisabledSeconds, the
++ * Jetson stops writing to its scratch partition: Rewind stops, PhotonVision's log file closes (the
++ * log keeps going to the console and the UI), and /usr/local/bin/spectrum-quiet moves the system log
++ * to RAM and remounts the scratch partition read-only. The cameras keep running and tags are still
++ * found. Any enable leaves quiet mode at once.
++ *
++ * <p>Robot code can decide instead: {@code /photonvision/jetson/quiet} (boolean, robot sets) forces
++ * it on or off while published. The Jetson publishes {@code quietNow} and {@code quietReason}.
++ *
++ * <p>A recording someone asked for always wins: while field calibration, the web UI's Record now or
++ * robot code's {@code /photonvision/rewind/record} wants one, quiet mode doesn't start, and it ends
++ * if it was on.
++ *
++ * <p>The settings partition isn't touched: it's only written when a setting changes, and then
++ * straight to the SSD. Off the robot (no NetworkTables connection) nothing happens.
++ */
++public final class QuietMode {
++    private static final Logger logger = new Logger(QuietMode.class, LogGroup.General);
++    private static final Path HELPER = Path.of("/usr/local/bin/spectrum-quiet");
++
++    private static volatile boolean quiet = false;
++    private static volatile String reason = "";
++    private static volatile String lastError = "";
++    private static volatile boolean matchEnded = false;
++    private static volatile long disabledSinceMs = 0;
++    private static volatile long retryAfterMs = 0;
++    private static volatile boolean started = false;
++
++    private static BooleanSubscriber robotSays;
++    private static BooleanPublisher quietPub;
++    private static StringPublisher reasonPub;
++
++    private QuietMode() {}
++
++    /** True while the scratch partition must not be written (Rewind checks this). */
++    public static boolean quiet() {
++        return quiet;
++    }
++
++    public static java.util.Map<String, Object> status() {
++        var m = new java.util.HashMap<String, Object>();
++        m.put("quietNow", quiet);
++        m.put("quietReason", reason);
++        m.put("quietError", lastError);
++        m.put("quietHelper", Files.isExecutable(HELPER));
++        m.put("quietLastLeaveMs", lastLeaveMs);
++        return m;
++    }
++
++    /** Called from IdleMode once NetworkTables and the driver-station listener exist. */
++    public static synchronized void start() {
++        if (started) return;
++        var ntm = NetworkTablesManager.getInstance();
++        var ds = ntm.getDriverStation();
++        if (ds == null) return;
++        started = true;
++        var t = ntm.getNTInst().getTable("/photonvision/jetson");
++        robotSays = t.getBooleanTopic("quiet").subscribe(false);
++        quietPub = t.getBooleanTopic("quietNow").publish();
++        reasonPub = t.getStringTopic("quietReason").publish();
++        quietPub.set(false);
++        reasonPub.set("");
++        ds.addTransitionListener(
++                (old, now) -> {
++                    if (now.m_enabled()) {
++                        matchEnded = false;
++                        disabledSinceMs = 0;
++                        // Leave quiet mode now, not at the next 200 ms check, so a recording robot
++                        // code starts at enable loses as little as possible. Off this thread.
++                        if (quiet && !robotSays.exists()) wake();
++                    } else if (old.m_enabled()) {
++                        disabledSinceMs = System.currentTimeMillis();
++                        // The end of a match: teleop on the field, then disabled.
++                        if (!old.m_autonomous() && now.m_fmsAttached()) matchEnded = true;
++                    }
++                });
++        var th = new Thread(QuietMode::loop, "SpectrumQuietMode");
++        th.setDaemon(true);
++        th.start();
++        logger.info("Quiet mode ready: the SSD stops being written after a match, or after "
++                + IdleMode.getSettings().quietAfterDisabledSeconds + " s disabled");
++    }
++
++    private static final Object wakeLock = new Object();
++
++    private static void wake() {
++        synchronized (wakeLock) {
++            wakeLock.notifyAll();
++        }
++    }
++
++    private static void loop() {
++        while (true) {
++            try {
++                step();
++                synchronized (wakeLock) {
++                    wakeLock.wait(200);
++                }
++            } catch (InterruptedException e) {
++                return;
++            } catch (Exception e) {
++                logger.error("Quiet mode", e);
++            }
++        }
++    }
++
++    /** What quiet mode should be now, and why ("" = not quiet). */
++    private static String wanted() {
++        // A recording someone asked for (field calibration, Record now, robot code) always wins:
++        // never quiet while one is wanted, even if robot code also asks for quiet.
++        if (org.photonvision.rewind.RewindManager.recordingRequested()) {
++            wasRecording = true;
++            return "";
++        }
++        if (wasRecording) {
++            // A requested recording just ended: the disabled-for timer starts again from now, so a
++            // long field calibration recording doesn't go quiet the moment it stops. (A match that
++            // ended still goes quiet: that recording was the robot's, during the match.)
++            wasRecording = false;
++            disabledSinceMs = System.currentTimeMillis();
++        }
++        var ntm = NetworkTablesManager.getInstance();
++        var ds = ntm.getDriverStation();
++        // Off the robot nothing starts; a connection lost while quiet (radio, field) stays quiet.
++        if (!ntm.getNTInst().isConnected() || ds == null) return quiet ? reason : "";
++        var word = ds.current();
++        // Robot code decides while it publishes the topic.
++        if (robotSays.exists()) return robotSays.get() ? "robot code asked" : "";
++        if (word.m_enabled()) return "";
++        var s = IdleMode.getSettings();
++        if (s.quietAfterMatch && matchEnded) return "the match ended";
++        if (disabledSinceMs == 0) disabledSinceMs = System.currentTimeMillis();
++        if (s.quietAfterDisabledSeconds > 0
++                && System.currentTimeMillis() - disabledSinceMs >= s.quietAfterDisabledSeconds * 1000L) {
++            return "disabled for " + s.quietAfterDisabledSeconds + " s";
++        }
++        return "";
++    }
++
++    private static volatile boolean wasRecording = false;
++
++    private static void step() throws InterruptedException {
++        String want = wanted();
++        if (!want.isEmpty() && !quiet && System.currentTimeMillis() >= retryAfterMs) enter(want);
++        else if (want.isEmpty() && quiet) leave();
++    }
++
++    private static void enter(String why) throws InterruptedException {
++        if (!Files.isExecutable(HELPER)) {
++            lastError = HELPER + " isn't installed (10-data-partition.sh)";
++            retryAfterMs = System.currentTimeMillis() + 60_000;
++            return;
++        }
++        // Rewind stops at its next loop, and its recorder threads close their files on their next
++        // frame; then the log file closes. Only then can the partition go read-only.
++        quiet = true;
++        reason = why;
++        TimeUnit.MILLISECONDS.sleep(1500);
++        logger.info("Quiet mode on (" + why + "): closing the log file, scratch partition to read-only");
++        Logger.pauseFileLogging();
++        String out = run("on");
++        if (out != null) {
++            Logger.resumeFileLogging();
++            quiet = false;
++            reason = "";
++            lastError = out;
++            retryAfterMs = System.currentTimeMillis() + 10_000;
++            logger.error("Quiet mode: couldn't make the scratch partition read-only, trying again in 10 s: " + out);
++            return;
++        }
++        lastError = "";
++        quietPub.set(true);
++        reasonPub.set(why);
++    }
++
++    private static volatile long lastLeaveMs = -1;
++
++    private static void leave() {
++        long t0 = System.nanoTime();
++        String out = run("off");
++        if (out != null) {
++            lastError = out;
++            logger.error("Quiet mode: couldn't make the scratch partition writable again: " + out);
++        }
++        Logger.resumeFileLogging();
++        quiet = false;
++        reason = "";
++        quietPub.set(false);
++        reasonPub.set("");
++        lastLeaveMs = (System.nanoTime() - t0) / 1_000_000;
++        logger.info("Quiet mode off in " + lastLeaveMs + " ms: the scratch partition is writable");
++    }
++
++    /** Runs the helper; null when it worked, else what went wrong. */
++    private static String run(String arg) {
++        try {
++            var p = new ProcessBuilder(HELPER.toString(), arg).redirectErrorStream(true).start();
++            if (!p.waitFor(20, TimeUnit.SECONDS)) {
++                p.destroyForcibly();
++                return "spectrum-quiet " + arg + " took over 20 s";
++            }
++            String text = new String(p.getInputStream().readAllBytes()).trim();
++            return p.exitValue() == 0 ? null : text.isEmpty() ? "exit " + p.exitValue() : text;
++        } catch (IOException e) {
++            return e.getMessage();
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++            return "interrupted";
++        }
++    }
++}
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index f205110b..b6e93624 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -618,7 +618,9 @@ public class RequestHandler {
+             Integer eventPipeline,
+             Boolean switchNow,
+             Boolean farSearch,
+-            Double farSweepsPerSecond) {}
++            Double farSweepsPerSecond,
++            Boolean quietAfterMatch,
++            Integer quietAfterDisabledSeconds) {}
+ 
+     /** SpectrumJetson (photonvision-50): idle mode's settings and the robot's state. */
+     public static void onRobotStateRequest(Context ctx) {
+@@ -639,7 +641,9 @@ public class RequestHandler {
+                     req.eventProfileOnFms(),
+                     req.eventPipeline(),
+                     req.farSearch(),
+-                    req.farSweepsPerSecond());
++                    req.farSweepsPerSecond(),
++                    req.quietAfterMatch(),
++                    req.quietAfterDisabledSeconds());
+             // photonvision-51: "Switch now" on Settings > Robot state, to test the event profile.
+             if (Boolean.TRUE.equals(req.switchNow())) {
+                 IdleMode.switchAllTo(IdleMode.getSettings().eventPipeline, "Switch now (Settings)");

@@ -317,6 +317,12 @@ else
     warn "no last-good settings committed (10-data-partition.sh --commit-settings after tuning)"
   fi
 fi
+# Quiet mode (photonvision-56): the SSD isn't being written after a match.
+if [[ -f /run/spectrum-quiet ]]; then
+  pass "quiet mode: scratch partition read-only ($(cat /run/spectrum-quiet)); any enable ends it"
+elif grep -q x-spectrum-data /etc/fstab 2>/dev/null && [[ ! -x /usr/local/bin/spectrum-quiet ]]; then
+  warn "quiet mode's helper isn't installed (re-run 10-data-partition.sh)"
+fi
 # Read-only system partition (ro-root.sh).
 if [[ $(findmnt -n -o FSTYPE /) == overlay ]]; then
   pass "system partition read-only (ro-root on; $(( $(df --output=used -k / | tail -1) / 1024 )) MB in its RAM layer)"

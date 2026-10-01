@@ -181,6 +181,8 @@ fi
 
 echo "==> 4. Fallback for a damaged partition (runs at every boot, before PhotonVision)"
 sudo install -m 755 "$(dirname "$0")/spectrum-data-fallback.sh" /usr/local/bin/spectrum-data-fallback
+# Quiet mode's helper (photonvision-56): PhotonVision runs it to stop and start writing to scratch.
+sudo install -m 755 "$(dirname "$0")/spectrum-quiet.sh" /usr/local/bin/spectrum-quiet
 sudo tee /etc/systemd/system/spectrum-data-fallback.service >/dev/null <<'UNIT'
 [Unit]
 Description=SpectrumJetson: stand-ins for a data partition that didn't mount (10-data-partition.sh)

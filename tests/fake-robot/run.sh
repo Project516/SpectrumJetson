@@ -43,7 +43,7 @@ start=$(date +%s)
 sudo rm -f "$TEGRA"
 sudo tegrastats --interval 1000 --logfile "$TEGRA" >/dev/null 2>&1 &
 tegra_pid=$!
-"$JAVA" -cp /opt/photonvision/photonvision.jar "$HERE/FakeRobot.java" "${PHASES[@]}" 2>&1 | grep -v "^\[" > "$LOG" &
+"$JAVA" -cp /opt/photonvision/photonvision.jar "$HERE/FakeRobot.java" "${PHASES[@]}" 2>&1 | grep --line-buffered -v "^\[" > "$LOG" &   # line-buffered: watchers read the phases as they happen
 robot_pid=$!
 echo "Fake robot at $ROBOT_IP: ${PHASES[*]}"
 wait "$robot_pid" || true
