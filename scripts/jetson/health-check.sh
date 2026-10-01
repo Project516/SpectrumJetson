@@ -354,7 +354,8 @@ else
     *) warn "data fallback didn't run this boot (spectrum-data-fallback.service)" ;;
   esac
   case $ds in
-    *scratch=ok*) pass "scratch partition mounted ($(df -h --output=avail /data/scratch 2>/dev/null | tail -1 | xargs) free)" ;;
+    # (Through Rewind's bind mount: /data is root-only, and this runs without sudo.)
+    *scratch=ok*) pass "scratch partition mounted ($(df -h --output=avail /opt/photonvision/rewind 2>/dev/null | tail -1 | xargs) free)" ;;
     *scratch=missing*) fail "scratch partition didn't mount: not recording, logs in RAM (copy off what you need, then 10-data-partition.sh --reformat-scratch)" ;;
   esac
   if [[ -d /opt/photonvision/.last-good-settings ]]; then
