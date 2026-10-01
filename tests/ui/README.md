@@ -12,6 +12,7 @@ tests/ui/run.sh
 - **Takes** a few minutes. Prints one line per control, with the backend setting each one moved.
 - **Needs** the Jetson on the USB link or Wi-Fi (`run.sh` opens the SSH tunnel), and a
   PhotonVision built with `photonvision-45` or later.
+- **No cameras? Use fake ones.** On the Jetson, `scripts/jetson/fake-cameras.sh start` plays a Rewind recording (by default a generated session with AprilTags) into virtual cameras and runs PhotonVision on throwaway settings, so nothing you set up is touched; then run the suite as usual from the laptop, and `fake-cameras.sh stop` afterwards. 11 of 12 tests ran on two fake cameras on 2026-10-01; tests of camera controls and USB bandwidth see no such controls and pass or skip accordingly.
 - **Runs on the cameras that are streaming.** Setup measures each camera's frame rate (`framesProcessed`, `photonvision-58`; streaming means more than 15 fps, since a camera that's gone still yields ~10 empty results a second). Tests run on those. The ones that change every camera (Create on every camera with Switch all, and the event pipeline) skip if any camera isn't streaming: PhotonVision changes an unplugged camera's saved setup too, and nothing can put it back until it's plugged in. Teardown checks that unplugged cameras' saved pipelines are untouched, and Match Ready must say NOT READY and name them.
 - **Touches nothing you set up.** Each test copies the camera's current pipeline to a temporary
   `zz-uitest`, works on that, deletes it, and switches back. A run that was killed half way leaves

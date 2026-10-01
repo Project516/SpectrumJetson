@@ -75,8 +75,21 @@ start() {
   for d in photonvision_config snapshots; do
     sudo mkdir -p "$RUN/$d"
     findmnt -n "$RUN/$d" >/dev/null || sudo mount -t tmpfs -o size=256M fakecam "$RUN/$d"
-    sudo mount --bind "$RUN/$d" "$PV/$d"
   done
+  # The throwaway settings start as a copy of the real database with no cameras in it: the team
+  # number and network settings come along (or PhotonVision wouldn't look for the robot), no real
+  # camera's setup does. A consistent copy (SQLite backup), from the real file, before the binds.
+  sudo python3 - "$PV/photonvision_config/photon.sqlite" "$RUN/photonvision_config/photon.sqlite" <<'PYDB'
+import sqlite3, sys
+src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+dst.execute("DELETE FROM cameras")
+dst.commit()
+dst.execute("VACUUM")
+print("throwaway settings: network/team settings kept, cameras removed")
+PYDB
+  for d in photonvision_config snapshots; do sudo mount --bind "$RUN/$d" "$PV/$d"; done
   sudo systemctl start photonvision
   wait_pv
   echo "==> Adopting the fake cameras"

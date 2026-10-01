@@ -127,6 +127,7 @@ STEPS=(
   "yolo-model|1800|[[ -z '$MODEL' ]] && echo 'no --model: skipped' || $HERE/12-install-yolo-model.sh '$MODEL' Fuel Fuel"
   "fieldcal-tool|1800|$HERE/13-build-fieldcal-detect.sh --install"
   "usb-watchdog|300|$HERE/14-usb-watchdog.sh --install"
+  "fake-cameras|900|sudo apt-get install -y v4l2loopback-dkms v4l2loopback-utils && if [[ -f $HOME/build/bos-detector/CMakeCache.txt ]]; then cmake --build $HOME/build/bos-detector --target far_search_test --parallel 3; else echo 'prebuilt install: no synthetic-tag generator; fake-cameras.sh plays real Rewind recordings'; fi"
   "robot-tuning|900|FAN=${FAN:-quiet} $HERE/09-robot-tuning.sh"
   "restore-settings|300|restore_settings"
 )

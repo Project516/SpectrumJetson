@@ -40,7 +40,9 @@ test("idle while disabled, and the Full speed / Settings switches", async ({ pag
       await expect.poll(async () => (await robotState(request)).idleNow).toBe(false);
       expect((await robotState(request)).idleWhileDisabled).toBe(false);
       await expect(notice).toBeHidden({ timeout: 5_000 });
-      await expect.poll(() => shownFps(dash), { timeout: 10_000, message: "full speed" }).toBeGreaterThan(100);
+      // Well above the 30 fps idle rate: 122 on a Thriftiest Cam, a fake camera's recording rate
+      // (60 for the synthetic session) under scripts/jetson/fake-cameras.sh.
+      await expect.poll(() => shownFps(dash), { timeout: 10_000, message: "full speed" }).toBeGreaterThan(45);
     });
 
     await test.step("back on from Settings > Robot state", async () => {

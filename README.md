@@ -148,6 +148,12 @@ With the stock heatsink's fan sealed under an aluminium plate and thermal tape (
 
 That's the pessimistic case: at an event the robot is off except in queue, on the field and for short pit checks, so every match starts much cooler. `tests/thermal/event-sim.sh --arm`, then a power cut and a cold start, measures that case. Earlier plate tests that seemed to level off at ~73 °C were held there by the kernel switching the fan on at its 74 °C trip.
 
+## Fake cameras (testing without hardware)
+
+`scripts/jetson/fake-cameras.sh start [recording]` makes virtual cameras (`v4l2loopback`) that play a Rewind recording frame for frame at its original rate, looping; with no recording given it generates one with AprilTags (`detector/far_search_test --write-session`). PhotonVision opens them like USB cameras, so the real path runs: cscore, our MJPEG decode, the GPU detector. While they run, PhotonVision uses throwaway settings in RAM (a copy of the real database's network and team settings, no cameras), so **your real cameras' settings are never touched**; `fake-cameras.sh stop` puts everything back, and so does a start that fails.
+
+Uses: the browser test suite on a Jetson with no cameras plugged in (`tests/ui`), replaying a match recording through a new build, and bench load or thermal tests. Fake cameras have no exposure or gain controls and no USB bandwidth, so those features can't be tested this way. Needs `sudo apt install v4l2loopback-dkms` (`install.sh --only fake-cameras`).
+
 ## Storage and power cuts
 
 **The first SSD died from power cuts** (2026-09-30). The Jetson stopped booting: the kernel couldn't read the root filesystem's journal ("critical medium error", "JBD2: recovery failed"). The drive's own health report told the story: an **Inland TN320** (a budget drive with no DRAM cache and no power-loss protection), **15 hours** of use, 22 power cycles, **21 of them unsafe** (power cut, no shutdown), and **285 media errors**: areas of flash it could no longer read. Its wear was 0%.
