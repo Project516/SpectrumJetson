@@ -66,13 +66,14 @@ commit_settings() {
   local db=$SET/photonvision_config/photon.sqlite
   sudo mkdir -p "$LAST_GOOD"
   # A consistent copy of the live database (PhotonVision may be writing it), then the rest.
-  if [[ -f $db ]]; then
+  if sudo test -f "$db"; then   # sudo: /data is root-only, so a plain -f test never sees it
     sudo python3 -c 'import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close()' \
       "$db" "$LAST_GOOD/photon.sqlite.new"
   fi
   sudo rsync -a --delete --exclude photonvision_config/logs --exclude 'photon.sqlite*' "$SET/" "$LAST_GOOD/"
   sudo mkdir -p "$LAST_GOOD/photonvision_config"
-  [[ -f $LAST_GOOD/photon.sqlite.new ]] && sudo mv "$LAST_GOOD/photon.sqlite.new" "$LAST_GOOD/photonvision_config/photon.sqlite"
+  sudo test -f "$LAST_GOOD/photon.sqlite.new" || { echo "STOP: couldn't copy $db" >&2; exit 1; }
+  sudo mv "$LAST_GOOD/photon.sqlite.new" "$LAST_GOOD/photonvision_config/photon.sqlite"
   date '+%Y-%m-%d %H:%M' | sudo tee "$LAST_GOOD/.committed" >/dev/null
   sync
   echo "Committed the current settings as the fallback ($(sudo du -sh "$LAST_GOOD" | cut -f1))."
@@ -81,7 +82,7 @@ commit_settings() {
 
 # By GPT partition name (PARTLABEL, up to 36 characters), not the ext4 label: ext4 labels stop at
 # 16 characters, and SPECTRUM_SETTINGS (17) was silently cut short, so a LABEL= mount never matched.
-part_of() { blkid -t PARTLABEL="$1" -o device 2>/dev/null | head -1 || true; }
+part_of() { sudo blkid -t PARTLABEL="$1" -o device 2>/dev/null | head -1 || true; }   # sudo: as a user, blkid only sees its cache
 
 reformat() {  # $1 label, $2 mount point
   local dev; dev=$(part_of "$1")

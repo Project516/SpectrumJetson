@@ -3,8 +3,8 @@
 # PhotonVision starts. If a data partition didn't mount (a power cut damaged it past what fsck
 # could repair), it puts something safe in its place so PhotonVision still runs the match:
 #
-#   scratch missing:  PhotonVision's logs go to RAM, and Rewind gets a tiny RAM folder, so it
-#                     finds no free space and doesn't record. The system log goes to RAM by itself.
+#   scratch missing:  PhotonVision's logs and the system log go to RAM, and Rewind gets a tiny RAM
+#                     folder, so it finds no free space and doesn't record.
 #   settings missing: PhotonVision runs on the last-good settings committed to the system partition
 #                     (10-data-partition.sh --commit-settings; ro-root on does it), through a RAM
 #                     overlay: the real pipelines and calibrations, but changes aren't kept. With
@@ -58,6 +58,9 @@ if ! mountpoint -q "$SCR"; then
   scratch=missing
   ram "$PV/photonvision_config/logs" 64M
   ram "$PV/rewind" 1M
+  # Without this the system log would write to the empty /var/log/journal on the system partition.
+  # This runs before systemd-journal-flush moves the log out of /run, so it lands in RAM.
+  ram /var/log/journal 64M
 fi
 
 echo "settings=$settings scratch=$scratch" > "$STATUS"

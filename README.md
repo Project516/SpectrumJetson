@@ -145,6 +145,8 @@ So the SSD is now split three ways (`02-flash-nvme.sh` and `scripts/jetson/10-da
 | Settings, 2 GB | pipelines, calibrations, field calibration, snapshots, robot-state switches | only when someone changes a setting, and straight to the SSD (`sync`, `data=journal`) | the Jetson runs the match on the last-good copy kept on the system partition (`10-data-partition.sh --commit-settings`); Match Ready says so |
 | Scratch, the rest | Rewind recordings, PhotonVision's logs, the system log | all the time | the Jetson still boots and runs; recording pauses and logs go to RAM. Nothing is deleted: copy off what you need, then `10-data-partition.sh --reformat-scratch` |
 
+**Tested** (`tests/storage-fallback/run.sh scratch|settings`, 2026-10-01): with either partition's superblock destroyed, the Jetson boots and PhotonVision serves. With scratch gone, its logs, the system log and Rewind go to RAM, and nothing lands on the system partition. With settings gone, it runs on the committed copy, with identical database contents. `e2fsck -b 32768` then repairs the partition with its files intact. Still to test: real power cuts on this layout, on a healthy SSD.
+
 **Choosing an SSD:** use a known brand with a DRAM cache, or better an industrial drive with power-loss protection. Avoid DRAM-less budget drives. `health-check.sh` reports the drive's media errors and unsafe shutdowns; any media error means replace it. The installer saves the drive's health report at install time (`~/install-logs/ssd-smart-at-install.txt`).
 
 ## Bugs we found and fixed
