@@ -317,6 +317,10 @@ else
     warn "no last-good settings committed (10-data-partition.sh --commit-settings after tuning)"
   fi
 fi
+# Thermal limit (spectrum-fan-guard, FAN=off): cameras capped while the chip is hot.
+if [[ -f /run/spectrum-thermal-limit ]]; then
+  fail "thermal limit: cameras capped ($(cat /run/spectrum-thermal-limit)); it lifts below 88 C"
+fi
 # Quiet mode (photonvision-56): the SSD isn't being written after a match.
 if [[ -f /run/spectrum-quiet ]]; then
   pass "quiet mode: scratch partition read-only ($(cat /run/spectrum-quiet)); any enable ends it"
@@ -376,7 +380,7 @@ if [[ -n $tach ]]; then
   done
 fi
 profile=$(sed -n 's/^[[:space:]]*FAN_DEFAULT_PROFILE[[:space:]]*//p' /etc/nvfancontrol.conf 2>/dev/null | head -1)
-if systemctl is-active --quiet spectrum-fan-guard; then fanmode="off (fanless), full speed at 90 C"
+if systemctl is-active --quiet spectrum-fan-guard; then fanmode="off (fanless), cameras capped at 95 C"
 elif systemctl is-active --quiet nvfancontrol; then fanmode="NVIDIA fan control, ${profile:-?} profile"
 elif [[ ${fan:-0} -ge 250 ]]; then fanmode="full speed (jetson_clocks)"
 else fanmode="fixed at pwm ${fan:-?}/255"; fi
@@ -389,7 +393,7 @@ elif [[ $fanmode == "full speed (jetson_clocks)" && $rpm -lt 4500 ]]; then
 elif [[ $fanmode == off* && ${fan:-0} -eq 0 ]]; then
   pass "fan: $fanmode, pwm 0/255, $rpm rpm"
 elif [[ $fanmode == off* ]]; then
-  warn "fan: $fanmode, on now (pwm ${fan}/255, $rpm rpm): the chip reached 90 C"
+  warn "fan: $fanmode, but it's running (pwm ${fan}/255, $rpm rpm): FAN_ON_HOT, or something else drives it"
 elif [[ $fanmode == NVIDIA* || $fanmode == full* ]]; then
   # The quiet profile (09-robot-tuning.sh's default) speeds up as the chip warms; FAN=full is full speed.
   pass "fan: $fanmode, pwm ${fan:-?}/255, $rpm rpm"

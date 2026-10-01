@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# SpectrumJetson (09-robot-tuning.sh FAN=off): keeps the fan stopped for a fanless heatsink, but
-# runs it at full speed if the hottest sensor reaches ON_C, until it is back under OFF_C. The chip
-# itself throttles at 99 C and shuts down at 104.5 C; this steps in well before either.
+# SpectrumJetson (09-robot-tuning.sh FAN=off): fanless heatsink. The fan stays stopped: in our setup
+# it's sealed under the heatsink plate and moves no air (2026-10-01), so running it only wears it.
+# Instead, if the hottest sensor reaches ON_C, this sets /run/spectrum-thermal-limit, and
+# PhotonVision (photonvision-57) caps every camera's frame rate until it's back under OFF_C. The
+# chip itself throttles at 99 C and shuts down at 104.5 C; this steps in before either.
+# FAN_ON_HOT=1 also runs the fan at full speed while hot, for a heatsink the fan can move air through.
 # Installed as /usr/local/bin/spectrum-fan-guard and run by spectrum-fan-guard.service.
-ON_C=${ON_C:-90} OFF_C=${OFF_C:-80}
+ON_C=${ON_C:-95} OFF_C=${OFF_C:-88}
+FLAG=/run/spectrum-thermal-limit
 pwm=$(ls /sys/devices/platform/pwm-fan*/hwmon/hwmon*/pwm1 2>/dev/null | head -1)
 [[ -n $pwm ]] || { echo "no pwm-fan found"; exit 1; }
 # The kernel drives the fan too: tj-thermal has "active" trips (35, 74, 95 C) bound to the pwm-fan
@@ -16,7 +20,8 @@ for z in /sys/class/thermal/thermal_zone*; do
   grep -qx active "$z"/trip_point_*_type 2>/dev/null || continue
   echo user_space > "$z/policy" 2>/dev/null && echo "$(cat "$z/type"): fan control taken from the kernel (user_space)"
 done
-want=0 hot_state=0
+rm -f "$FLAG"
+hot_state=0
 while true; do
   hot=0
   for z in /sys/class/thermal/thermal_zone*/temp; do
@@ -25,12 +30,16 @@ while true; do
   done
   c=$((hot / 1000))
   if (( hot_state == 0 && c >= ON_C )); then
-    hot_state=1 want=255
-    echo "hottest sensor ${c} C: fan on (full speed) until under ${OFF_C} C"
+    hot_state=1
+    echo "hot since $(date +%T) at ${c} C" > "$FLAG"
+    echo "hottest sensor ${c} C: thermal limit on (PhotonVision caps the cameras) until under ${OFF_C} C"
   elif (( hot_state == 1 && c < OFF_C )); then
-    hot_state=0 want=0
-    echo "hottest sensor ${c} C: fan off again"
+    hot_state=0
+    rm -f "$FLAG"
+    echo "hottest sensor ${c} C: thermal limit off"
   fi
+  want=0
+  [[ ${FAN_ON_HOT:-0} == 1 && $hot_state == 1 ]] && want=255
   # Re-asserted every loop, so nothing else (nvfancontrol, a manual test) leaves it changed.
   [[ $(cat "$pwm") == "$want" ]] || echo "$want" > "$pwm"
   sleep 2

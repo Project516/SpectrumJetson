@@ -185,7 +185,7 @@ if [[ $FAN == off ]]; then
   sudo install -m 755 "$(dirname "$0")/spectrum-fan-guard.sh" "$FAN_GUARD"
   sudo tee "$FAN_GUARD_UNIT" >/dev/null <<UNIT
 [Unit]
-Description=Fan off for the fanless heatsink, full speed at 90 C (SpectrumJetson FAN=off)
+Description=Fanless heatsink: fan off, frame-rate cap at 95 C (SpectrumJetson FAN=off)
 After=nvfancontrol.service jetson-clocks.service
 Conflicts=nvfancontrol.service
 

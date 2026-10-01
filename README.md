@@ -132,7 +132,21 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 
 **Safe deploys.** `06-install-fork-jar.sh` refuses to install a jar that isn't a valid zip, and it keeps the previous working jar as `photonvision.jar.prev`. We added that after a truncated jar took PhotonVision down (see the bugs section).
 
-**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, USB autosuspend off for cameras, power-cut safety (data on the SSD within 3 s, the system log kept across power cuts), the fan on NVIDIA's quiet profile (`FAN=full` for full speed), a 30 s hardware watchdog (also while rebooting, where it was 10 minutes), reboot on kernel panic, PhotonVision restarted on any exit, OpenCV's worker threads sleeping instead of spinning, 1 s USB retries (a stuck camera held up the others on its hub for ~65 s each), and dropping a network connection whose other end has vanished after ~13 s instead of ~15 minutes (a dashboard laptop that left without closing kept its camera streams encoding for nobody). The system log keeps up to 2 GB. After it, the Jetson boots in 16.5 s instead of 57 s, and both cameras are detecting about 20 s after power-on. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
+**Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, USB autosuspend off for cameras, power-cut safety (data on the SSD within 3 s, the system log kept across power cuts), the fan on NVIDIA's quiet profile (`FAN=full` for full speed, `FAN=off` for a fanless heatsink: see [Fanless](#fanless-heatsink-plate)), a 30 s hardware watchdog (also while rebooting, where it was 10 minutes), reboot on kernel panic, PhotonVision restarted on any exit, OpenCV's worker threads sleeping instead of spinning, 1 s USB retries (a stuck camera held up the others on its hub for ~65 s each), and dropping a network connection whose other end has vanished after ~13 s instead of ~15 minutes (a dashboard laptop that left without closing kept its camera streams encoding for nobody). The system log keeps up to 2 GB. After it, the Jetson boots in 16.5 s instead of 57 s, and both cameras are detecting about 20 s after power-on. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
+
+## Fanless (heatsink plate)
+
+With the stock heatsink's fan sealed under an aluminium plate and thermal tape (so it can't move air), `FAN=off 09-robot-tuning.sh` keeps the fan stopped and takes it away from the kernel, which would otherwise switch it on at 74 °C. If the chip reaches **95 °C**, `spectrum-fan-guard` sets a flag and PhotonVision caps every camera at **60 fps** until it's under 88 °C (`photonvision-57`; Match Ready and Settings > Robot state show it). The chip itself throttles at 99 °C and shuts down at 104 °C.
+
+**Measured on the bench, 2026-10-01** (5 cameras, 4 on AprilTags at 122 fps, plate only, no airflow, lights on):
+
+| Load | Result |
+| --- | --- |
+| Full rate, continuously | 89.4 °C after 18 min and still rising ~0.3 °C/min (stopped; projected ~95-98 °C). Never needed: matches are 2:30. |
+| Idle at 30 fps (disabled), after that | Settles at **81 °C**, 8.7 W |
+| Three matches (auto 15 s + teleop 2:15, 8 min queue at idle between), from that idle | Peaks **86.2, 87.1, 87.6 °C**: each match adds 4-5 °C, and the queue brings it back to ~83 °C. 11.6 W during a match. |
+
+That's the pessimistic case: at an event the robot is off except in queue, on the field and for short pit checks, so every match starts much cooler. `tests/thermal/event-sim.sh --arm`, then a power cut and a cold start, measures that case. Earlier plate tests that seemed to level off at ~73 °C were held there by the kernel switching the fan on at its 74 °C trip.
 
 ## Storage and power cuts
 
