@@ -6,6 +6,16 @@
 ON_C=${ON_C:-90} OFF_C=${OFF_C:-80}
 pwm=$(ls /sys/devices/platform/pwm-fan*/hwmon/hwmon*/pwm1 2>/dev/null | head -1)
 [[ -n $pwm ]] || { echo "no pwm-fan found"; exit 1; }
+# The kernel drives the fan too: tj-thermal has "active" trips (35, 74, 95 C) bound to the pwm-fan
+# cooling device, and at 74 C it set the fan to 88 every few seconds while this set it back to 0,
+# so the fan pulsed (seen 2026-10-01). Take the fan away from the kernel: user_space policy on every
+# zone with an active trip. Critical trips (104 C shutdown) still act under any policy, and the CPU
+# and GPU slow down at 99 C through their own zones. 09-robot-tuning.sh FAN=quiet|full puts
+# step_wise back.
+for z in /sys/class/thermal/thermal_zone*; do
+  grep -qx active "$z"/trip_point_*_type 2>/dev/null || continue
+  echo user_space > "$z/policy" 2>/dev/null && echo "$(cat "$z/type"): fan control taken from the kernel (user_space)"
+done
 want=0 hot_state=0
 while true; do
   hot=0

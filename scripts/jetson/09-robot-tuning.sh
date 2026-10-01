@@ -169,6 +169,15 @@ sudo systemd-tmpfiles --create --prefix /var/log/journal
 sudo systemctl restart systemd-journald
 sudo journalctl --flush
 
+# FAN=off's guard takes the fan away from the kernel's thermal zones (user_space policy); the other
+# modes give it back.
+give_fan_back() {
+  for z in /sys/class/thermal/thermal_zone*; do
+    grep -qx active "$z"/trip_point_*_type 2>/dev/null || continue
+    [[ $(cat "$z/policy") == user_space ]] && echo step_wise | sudo tee "$z/policy" >/dev/null
+  done
+  return 0
+}
 if [[ $FAN == off ]]; then
   echo "==> 7. Fan off (fanless), full speed only if the chip reaches 90 C"
   sudo systemctl disable --now nvfancontrol
@@ -193,10 +202,12 @@ UNIT
   sudo systemctl restart spectrum-fan-guard.service
 elif [[ $FAN == full ]]; then
   sudo systemctl disable --now spectrum-fan-guard.service 2>/dev/null || true
+  give_fan_back
   echo "==> 7. Fan at full speed (jetson_clocks --fan, in step 4's service)"
   sudo systemctl restart jetson-clocks.service
 else
   sudo systemctl disable --now spectrum-fan-guard.service 2>/dev/null || true
+  give_fan_back
   echo "==> 7. Fan on NVIDIA's quiet profile (nvfancontrol)"
   sudo systemctl restart jetson-clocks.service   # clocks only now
   sudo systemctl enable nvfancontrol
