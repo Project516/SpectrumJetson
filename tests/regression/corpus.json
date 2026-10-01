@@ -1,0 +1,41 @@
+{
+  "detector_args": [
+    "--mwbd",
+    "20"
+  ],
+  "sessions": {
+    "ceiling-4cam": {
+      "about": "Real cameras (TopLeft, TopRight, BottomRight, 5th Cam) seeing the shop ceiling lights, no tags: false positives; 15 s at 30 fps",
+      "blessed": {
+        "commit": "5ac6c42+regression-wip",
+        "date": "2026-10-01",
+        "detections": 0
+      },
+      "bytes": 104310065,
+      "files": 9,
+      "sha256": "c753e49210148cd1c2f5c46f955570038432d1fd94e9a951430a9d942b840294"
+    },
+    "fieldcal-synth": {
+      "about": "Rendered 4-camera field-calibration drive (tools/fieldcal), real lens calibration, truth.json has the true tag poses; 2628 frames",
+      "blessed": {
+        "commit": "5ac6c42+regression-wip",
+        "date": "2026-10-01",
+        "detections": 3314
+      },
+      "bytes": 348301720,
+      "files": 11,
+      "sha256": "0e21c70bb25f2a4b27405001390b693cfd1f6a64ab3e8c761cc49f5800771565"
+    },
+    "synthetic-near-far": {
+      "about": "far_search_test session: CamA sees near tags the first and last second and a 14 px far tag all along",
+      "blessed": {
+        "commit": "5ac6c42+regression-wip",
+        "date": "2026-10-01",
+        "detections": 361
+      },
+      "bytes": 9401216,
+      "files": 4,
+      "sha256": "057afd5c5a4942c09078dab23b071fa56b05d35472b3571ef874f61e2a63ad55"
+    }
+  }
+}

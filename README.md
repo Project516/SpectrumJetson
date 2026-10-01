@@ -552,6 +552,19 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 
 **After installing a new build:** run `tests/ui/run.sh` on the laptop. It drives the dashboard in Chrome and checks that every slider, switch and menu changes the page, PhotonVision and a second dashboard, and puts each one back. It also tests the mask editor, Start from, Create on every camera, Switch all and hidden-tab streams. It takes about a minute and a half and works on a temporary copy of a pipeline, so your settings aren't touched. See [tests/ui](tests/ui/README.md).
 
+**Detector regression check** (`tests/regression/run.sh`, on the Jetson): replays a fixed corpus of recordings through the detector as built now, far-tag search on as live, and compares every detection with the last accepted output (`tests/regression/golden/`). It runs before every prebuilt bundle (`make-prebuilt-bundle.sh` refuses on a change; `SKIP_REGRESSION=1` to override).
+- **What it catches:** any detection lost, gained or moved by more than 0.001 px, in any change to the detector: bos, our `bos-*` patches, the JNI build, far search, or new detector settings. Replays are bit-for-bit repeatable.
+- **The corpus** (`tests/regression/corpus.json`, checksummed, so a damaged recording reports as that and not as a detector change):
+  - `fieldcal-synth`: a rendered 4-camera drive with a real lens model (2,628 frames, 3,314 detections);
+  - `synthetic-near-far`: near tags and a 14 px far tag (361 detections);
+  - `ceiling-4cam`: four real cameras looking at the shop lights, no tags (false positives: 0).
+  - Real tag footage and match recordings go in as we record them: `run.sh --add NAME /opt/photonvision/rewind/sessions/SESSION --about "..."`.
+- **Where it lives:** on the Jetson at `/opt/photonvision/rewind/regression` (scratch partition, beside Rewind's sessions; Rewind's quota never touches it), with a copy on the laptop at `~/spectrum-regression-corpus`. `--add` holds quiet mode off while it writes.
+- **A change you meant** (a detector improvement): read the report, then `run.sh --bless`, copy `corpus.json` and `golden/` back to the laptop and commit them.
+- **Time:** about 25 s for the whole corpus.
+- **Not covered:** PhotonVision's Java side (poses, multi-tag, tag quality); the fork's tests and `tests/tag-quality` cover that.
+- **Checked by:** a run with min white-black difference 5 instead of 20 reported 24 detections lost, 16 new and 3 moved in `fieldcal-synth`, and 0 false positives on the ceiling.
+
 **Robot code sees the same health on NetworkTables** (`photonvision-16`), once a second:
 - `/photonvision/jetson/`: GPU load, temperatures, fan speed, power, the JPEG decoder's state, and a **throttle reason** (`OVER-CURRENT` when the supply sags, `HIGH TEMP`, or clocks capped, `photonvision-20`). It's also on the Settings page as **CPU Throttling**.
 - `/photonvision/<camera>/health/`: fps, pipeline time, latency, and failed JPEG decodes.

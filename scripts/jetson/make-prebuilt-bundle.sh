@@ -14,13 +14,15 @@
 #   MANIFEST  repo commit, L4T and CUDA versions, the patch list, and every file's SHA-256
 #   NOTICES.md and the license texts (release/): where each file comes from, and its license
 #
-# It refuses if this repo copy has uncommitted changes: a bundle must match a commit.
+# It refuses if this repo copy has uncommitted changes: a bundle must match a commit. It also
+# refuses if the detector regression check (tests/regression) finds any detection changed since
+# the goldens were accepted; SKIP_REGRESSION=1 skips that, for a bundle you know differs.
 # The camera driver isn't in it: it's built for the exact kernel, in 41 s, by install.sh.
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 JAR=/opt/photonvision/photonvision.jar
 while [[ $# -gt 0 ]]; do
-  case $1 in --jar) JAR=$2; shift 2 ;; *) sed -n '2,17p' "$0"; exit 2 ;; esac
+  case $1 in --jar) JAR=$2; shift 2 ;; *) sed -n '2,19p' "$0"; exit 2 ;; esac
 done
 
 # The repo copy on the Jetson is an rsync of the laptop's, without .git: the laptop passes the
@@ -28,6 +30,13 @@ done
 commit=$(cat "$REPO/.spectrum-commit" 2>/dev/null || true)
 [[ -n $commit ]] || { echo "No $REPO/.spectrum-commit: sync this repo with scripts/host/setup-jetson.sh" >&2; exit 1; }
 [[ $commit != *-dirty ]] || { echo "STOP: the repo was synced with uncommitted changes ($commit): commit, sync, then bundle" >&2; exit 1; }
+if [[ ${SKIP_REGRESSION:-0} != 1 ]]; then
+  echo "==> Detector regression check (tests/regression)"
+  "$REPO/tests/regression/run.sh" || {
+    echo "STOP: detections changed against the goldens. Bless them if intended (tests/regression/run.sh --bless), commit, sync, then bundle; or SKIP_REGRESSION=1." >&2
+    exit 1
+  }
+fi
 l4t=$(head -1 /etc/nv_tegra_release | sed -E 's/.*R([0-9]+).*REVISION: ([0-9.]+).*/\1.\2/')
 cuda=$(/usr/local/cuda/bin/nvcc --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')
 tag=v$(date +%Y.%m.%d)-${commit:0:7}
