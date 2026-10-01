@@ -1,0 +1,46 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceManager.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceManager.java
+index 21089642..f3836f0f 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceManager.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionSourceManager.java
+@@ -208,6 +208,20 @@ public class VisionSourceManager {
+      *
+      * @param cameraInfo
+      */
++    /**
++     * SpectrumJetson (photonvision-60): connected cameras that no VisionModule uses yet, as Camera
++     * Matching lists them, for /api/spectrum/uiState. Fake cameras (tools/fakecam, v4l2loopback)
++     * are adopted from this list with assignUnmatchedCamera.
++     */
++    public synchronized List<PVCameraInfo> unmatchedConnectedCameras() {
++        var used = vmm.getModules().stream()
++                .map(m -> m.getCameraConfiguration().matchedCameraInfo.uniquePath())
++                .toList();
++        return filterAllowedDevices(getConnectedCameras()).stream()
++                .filter(c -> !used.contains(c.uniquePath()))
++                .toList();
++    }
++
+     public synchronized boolean assignUnmatchedCamera(PVCameraInfo cameraInfo) {
+         // Check if the camera is already in use by another module
+         if (vmm.getModules().stream()
+diff --git a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+index 3b2a099d..eaddfcde 100644
+--- a/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
++++ b/photon-server/src/main/java/org/photonvision/server/RequestHandler.java
+@@ -517,7 +517,15 @@ public class RequestHandler {
+         }
+         try {
+             ctx.contentType("application/json");
+-            ctx.result(kObjectMapper.writeValueAsString(Map.of("cameras", cameras)));
++            // photonvision-60: connected cameras not in use yet, in the form assignUnmatchedCamera takes.
++            // Each one is written as a PVCameraInfo: a plain List loses Jackson's type wrapper
++            // ({"PVUsbCameraInfo": {...}}), and the assign endpoint can't read it back without it.
++            var unmatched = new ArrayList<Object>();
++            var writer = kObjectMapper.writerFor(org.photonvision.vision.camera.PVCameraInfo.class);
++            for (var info : VisionSourceManager.getInstance().unmatchedConnectedCameras()) {
++                unmatched.add(kObjectMapper.readTree(writer.writeValueAsString(info)));
++            }
++            ctx.result(kObjectMapper.writeValueAsString(Map.of("cameras", cameras, "unmatchedCameras", unmatched)));
+         } catch (JsonProcessingException e) {
+             ctx.status(500);
+             ctx.result("Could not serialize the camera settings: " + e.getMessage());
