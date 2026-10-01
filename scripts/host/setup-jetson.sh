@@ -3,7 +3,10 @@
 #
 #   scripts/host/prestage-rootfs.sh     # once per laptop: sudo, Wi-Fi, SSH key into the image
 #   scripts/host/02-flash-nvme.sh       # Jetson in Force Recovery Mode, ~7 min
-#   scripts/host/setup-jetson.sh [--settings photon.sqlite] [--model model.onnx]
+#   scripts/host/setup-jetson.sh [--prebuilt [bundle]] [--settings photon.sqlite] [--model model.onnx]
+#
+# --prebuilt installs the newest release's prebuilt bundle (or the bundle file/URL given) instead
+# of building allwpilib, the detector and the jar: ~25 minutes shorter, and no Java build here.
 #
 # It waits for the Jetson to boot, copies this repo, the PhotonVision jar (building it if there
 # isn't one in out/), and any settings or model over, then runs scripts/jetson/install.sh there
@@ -18,11 +21,12 @@ source "$REPO_ROOT/config.env"
 JETSON=${JETSON:-192.168.55.1}
 U=$JETSON_USER
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=5 -i "$KEY" "$U@$JETSON")
-SETTINGS="" MODEL=""
+SETTINGS="" MODEL="" PREBUILT=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --settings) SETTINGS=$2; shift 2 ;;
     --model) MODEL=$2; shift 2 ;;
+    --prebuilt) if [[ ${2:-} && $2 != --* ]]; then PREBUILT=$2; shift 2; else PREBUILT=latest; shift; fi ;;
     *) sed -n '2,16p' "$0"; exit 2 ;;
   esac
 done
@@ -39,19 +43,35 @@ ssh-keyscan -T 5 "$JETSON" 2>/dev/null >> ~/.ssh/known_hosts
 "${SSH[@]}" true || { echo "Key login refused: run prestage-rootfs.sh before flashing, or ssh-copy-id -i $KEY.pub $U@$JETSON" >&2; exit 1; }
 
 JAR=$(ls -t "$REPO_ROOT"/out/*linuxarm64.jar 2>/dev/null | head -1 || true)
-if [[ -z $JAR ]]; then
+if [[ -z $JAR && -z $PREBUILT ]]; then
   echo "==> Building the PhotonVision jar"
   timeout 1200 "$REPO_ROOT/scripts/host/03-build-photonvision-fork.sh"
   JAR=$(ls -t "$REPO_ROOT"/out/*linuxarm64.jar | head -1)
 fi
 
-echo "==> Copying the repo, $(basename "$JAR")${SETTINGS:+, settings}${MODEL:+, model}"
+# Which commit the Jetson's copy came from (it has no .git), for make-prebuilt-bundle.sh: "-dirty"
+# if anything but .claude/ differs from it.
+commit=$(git -C "$REPO_ROOT" rev-parse HEAD)
+git -C "$REPO_ROOT" diff --quiet HEAD -- . ':!.claude' || commit=$commit-dirty
+echo "$commit" > "$REPO_ROOT/.spectrum-commit"
+echo "==> Copying the repo ($commit)${PREBUILT:+, prebuilt: $PREBUILT}${PREBUILT:-, $(basename "${JAR:-}")}${SETTINGS:+, settings}${MODEL:+, model}"
 RS=(rsync -a -e "ssh -o BatchMode=yes -i $KEY")
 timeout 600 "${RS[@]}" --delete --exclude out/ --exclude node_modules/ --exclude .claude/ \
   --exclude logs/ --exclude 'tests/ui/.state/' "$REPO_ROOT/" "$U@$JETSON:SpectrumJetson/"
 "${SSH[@]}" 'mkdir -p ~/restore'
-timeout 600 "${RS[@]}" "$JAR" "$U@$JETSON:restore/"
-ARGS=(--jar "restore/$(basename "$JAR")")
+ARGS=()
+if [[ -n $PREBUILT ]]; then
+  if [[ -f $PREBUILT ]]; then   # a bundle on this laptop: copy it (and its checksum) over
+    timeout 600 "${RS[@]}" "$PREBUILT" "$PREBUILT.sha256" "$U@$JETSON:restore/" 2>/dev/null \
+      || timeout 600 "${RS[@]}" "$PREBUILT" "$U@$JETSON:restore/"
+    ARGS+=(--prebuilt "restore/$(basename "$PREBUILT")")
+  else
+    ARGS+=(--prebuilt "$PREBUILT")
+  fi
+else
+  timeout 600 "${RS[@]}" "$JAR" "$U@$JETSON:restore/"
+  ARGS+=(--jar "restore/$(basename "$JAR")")
+fi
 if [[ -n $SETTINGS ]]; then
   timeout 300 "${RS[@]}" "$SETTINGS" "$U@$JETSON:restore/photon.sqlite"
   ARGS+=(--settings restore/photon.sqlite)
