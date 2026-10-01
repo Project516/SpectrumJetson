@@ -1081,7 +1081,11 @@ and the GPU sat at 40–45%, against 0.8 cores and 17% on 2026-09-26 (two camera
   `/tmp/spectrum-971-gpu-lock`, re-read every 2 s; **off by default**): one camera's `Detect()` at a
   time, so the cameras queue once per frame instead of on every CUDA call. With `bos-03` it saves
   another ~0.15 cores and costs no latency; before `bos-03` it saved 0.3 cores but added 0.3 ms.
-  The stats line shows `gpu lock wait` when it's on.
+  The stats line shows `gpu lock wait` when it's on. **Measured before `bos-05`:** with the
+  first-stage graph, holding this lock across the graph recording could deadlock every camera
+  (this camera waiting for the exclusive capture lock, another holding the shared lock while
+  waiting for this one). Since the 2026-10-01 audit it's taken only after the recording; it's
+  still off by default, and health-check warns when `/tmp/spectrum-971-gpu-lock` is set.
 - **The GPU load is real work.** `nsys profile --trace=cuda` (8 s, 3,866 frames, with `bos-03`):
   0.65 ms of kernels and 0.13 ms of copies and memsets per frame, 31.6 kernel launches and ~58 CUDA
   calls in all. 0.78 ms × 483 fps ≈ 37%, what GR3D shows. Two kernels are 42% of it, and both work
@@ -1694,8 +1698,20 @@ when the robot is short of a good pose:
   | disabled | 31 | 7.8 W |
 
   "Robot disabled: garbage collected in 27 ms, heap 24 -> 11 MB" 0.5 s after the second disable.
-- **Not yet checked on 2027 robot code:** that 2027 WPILib still publishes `/FMSInfo/FMSControlData`
-  to coprocessors. If it doesn't, idle mode never engages (it fails safe: full rate).
+- **WPILib 2027 doesn't publish `/FMSInfo/FMSControlData`** (found in the 2026-10-01 audit, checked
+  in alpha-6's `DriverStationBackend.MatchDataSender`). It publishes `/FMSInfo/ControlWord`, a
+  `struct:ControlWord`: one little-endian uint64 with the robot mode in bits 56-57 (1 auto,
+  2 teleop, 3 utility), enabled 58, e-stop 59, FMS attached 60, DS attached 61. Before
+  `photonvision-62`, PhotonVision never saw an enable from a 2027 robot. The all-false default
+  meant "connected and disabled", so every camera ran at the idle rate (~30 fps) through auto and
+  teleop, and quiet mode started 60 s after connecting. This was not the "fail safe" the old note
+  claimed. `photonvision-62` reads both formats (2026 roboRIO and 2027 SystemCore), and treats a
+  robot whose control word never arrived as enabled: full rate, never quiet.
+  - The 2027 struct needs a typed subscriber. A NetworkTables table listener subscribes with no
+    type, and an untyped subscription to a `struct:` topic is disabled (type mismatch), so it never
+    fires. `NTDriverStationTest` (in the fork) covers both formats.
+  - `tests/fake-robot/FakeRobot.java` publishes the 2027 struct by default; set
+    `FAKE_ROBOT_WPILIB=2026` for the roboRIO format.
 - **Deadlines:** the script re-runs itself under `timeout` (the phases plus 60 s), so cleanup still
   runs on a timeout; `FakeRobot` gives up after 30 s without a connection. `tegrastats` is stopped
   with `tegrastats --stop`: killing its `sudo` left it running and holding the script's output

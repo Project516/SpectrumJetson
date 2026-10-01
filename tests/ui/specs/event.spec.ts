@@ -96,7 +96,13 @@ test("event pipeline when the field connects; overrides stick; Switch now", asyn
       await expect(card.getByTestId("last-event-switch")).toContainText("Switch now");
     });
   } finally {
-    await robot?.stop();
+    // A failing stop() must not skip the rest: left on, "switch to the event pipeline on FMS"
+    // would switch every camera's pipeline when the real field connects.
+    try {
+      await robot?.stop();
+    } catch (e) {
+      console.warn("fake robot stop failed (the restores below still run):", e);
+    }
     // The fake field also triggers the day's "field connected" snapshot (photonvision-53): delete
     // it, so a real one is still taken when the real field connects.
     const snaps = (await (await request.get("/api/snapshots")).json()) as { id: string; reason: string; createdAt: number }[];

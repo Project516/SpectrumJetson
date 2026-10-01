@@ -18,7 +18,9 @@
 #                               FAN=full 09-robot-tuning.sh runs it at full speed instead
 #                               (jetson_clocks --fan, ~5,800 rpm). FAN=off is fanless (heatsink
 #                               plate): the fan stays stopped, and spectrum-fan-guard.sh runs it at
-#                               full speed only if the chip reaches 90 C, until it's under 80 C.
+#                               cameras capped at 60 fps from 95 C until under 88 C (the fan
+#                               stays off: sealed under our plate it moves no air; FAN_ON_HOT=1
+#                               runs it while hot, for a heatsink it can blow through).
 #   8. Recover from hangs     - hardware watchdog 30 s (NVIDIA's default 2 min), also while
 #                               rebooting (default 10 min), kernel panic -> reboot in 3 s (default:
 #                               hang forever), PhotonVision restarted on any exit (default: only on
@@ -165,13 +167,22 @@ Storage=persistent
 SyncIntervalSec=5s
 SystemMaxUse=2G
 CONF
-sudo systemd-tmpfiles --create --prefix /var/log/journal
-sudo systemctl restart systemd-journald
-sudo journalctl --flush
+# /var/log/journal is on the scratch partition (10-data-partition.sh), read-only in quiet mode
+# (photonvision-56) after the robot has been disabled a while: then this step stopped the script
+# (systemd-tmpfiles failed). The settings above are written either way; journald reads them at
+# the next boot (or run this again once quiet mode has ended).
+if findmnt -n -o OPTIONS -T /var/log/journal | tr ',' '\n' | grep -qx ro; then
+  echo "    the system log's partition is read-only (quiet mode): applied when it's writable again"
+else
+  sudo systemd-tmpfiles --create --prefix /var/log/journal
+  sudo systemctl restart systemd-journald
+  sudo journalctl --flush
+fi
 
 # FAN=off's guard takes the fan away from the kernel's thermal zones (user_space policy); the other
 # modes give it back.
 give_fan_back() {
+  sudo rm -f /run/spectrum-thermal-limit   # the guard's frame-rate cap, if it was on when stopped
   for z in /sys/class/thermal/thermal_zone*; do
     grep -qx active "$z"/trip_point_*_type 2>/dev/null || continue
     [[ $(cat "$z/policy") == user_space ]] && echo step_wise | sudo tee "$z/policy" >/dev/null
@@ -179,7 +190,7 @@ give_fan_back() {
   return 0
 }
 if [[ $FAN == off ]]; then
-  echo "==> 7. Fan off (fanless), full speed only if the chip reaches 90 C"
+  echo "==> 7. Fan off (fanless); cameras capped at 60 fps from 95 C until under 88 C"
   sudo systemctl disable --now nvfancontrol
   sudo systemctl restart jetson-clocks.service   # clocks only
   sudo install -m 755 "$(dirname "$0")/spectrum-fan-guard.sh" "$FAN_GUARD"
@@ -191,6 +202,7 @@ Conflicts=nvfancontrol.service
 
 [Service]
 ExecStart=$FAN_GUARD
+ExecStopPost=/bin/rm -f /run/spectrum-thermal-limit
 Restart=always
 RestartSec=2
 

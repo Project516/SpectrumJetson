@@ -42,10 +42,13 @@ print(f"Before: {len(before)} cameras streaming on hub {hub}: "
 
 t0 = time.time()
 print(f"Resetting hub {hub}: off for {down:g} s")
-set_auth("0")
-time.sleep(down)
-t_on = time.time()
-set_auth("1")
+# The hub is switched back on whatever happens (Ctrl-C, a timeout): left off, its cameras stay gone.
+try:
+    set_auth("0")
+    time.sleep(down)
+finally:
+    t_on = time.time()
+    set_auth("1")
 
 back = {}
 deadline = t_on + 60

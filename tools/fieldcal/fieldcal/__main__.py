@@ -57,7 +57,11 @@ def detect_session(session_dir: Path, every: int, min_margin: float, cache: Path
     """Tag corners in every ``every``-th frame of every camera: WPILib's detector on all CPU cores
     ("cpu"), or the 971 GPU detector on the Jetson ("971"). Cached in ``cache`` (redone if the
     settings change)."""
-    key = {"every": every, "minMargin": min_margin, "detector": detector}
+    key = {"every": every, "minMargin": min_margin, "detector": detector,
+           # Which recording: without it, a cache left in the same output folder by another
+           # session's solve was reused (audit 2026-10-01). Path plus the frame indexes' sizes.
+           "session": str(Path(session_dir).resolve()),
+           "frames": sum(p.stat().st_size for p in sorted(Path(session_dir).glob("*/*.csv")))}
     if detector == "cpu":
         key.pop("detector")  # caches from before the 971 option
     if cache and cache.exists():

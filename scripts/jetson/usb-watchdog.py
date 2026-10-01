@@ -8,7 +8,9 @@ PhotonVision then reopens the cameras as they come back.
 
 - No reboot: a reboot hung twice (2026-09-25) with cameras stuck on the USB hub, and a reboot
   doesn't cut USB power anyway.
-- Limit: at most one reset a minute.
+- Limit: a minute between resets, counted from the end of the last one. A reset can take ~60 s
+  (a stuck camera holds each port for ~20 s of kernel retries), and the kernel lines it causes are
+  read only after it returns; counted from its start, they could set off a second reset mid-match.
 - Known limit: the reset is like a hub reset. A Thriftiest Cam that a hub reset leaves stuck
   (it stops answering) comes back only when its power is cut: replug it, or power-cycle the robot.
   The Global Shutter cameras come back by themselves.
@@ -85,8 +87,8 @@ def main() -> None:
         if time.time() - last_reset < MIN_INTERVAL_S:
             log("Reset it less than a minute ago: not again yet")
             continue
-        last_reset = time.time()
         reset(seen)
+        last_reset = time.time()  # after: lines logged during the reset arrive now, and are ignored
     raise SystemExit("journalctl stopped")  # systemd restarts us
 
 

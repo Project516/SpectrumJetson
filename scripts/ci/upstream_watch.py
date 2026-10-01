@@ -190,15 +190,27 @@ def report_l4t():
 
 
 def gh(*args, input=None):
-    return subprocess.run(["gh", *args, "--repo", GH_REPO], capture_output=True, text=True, input=input)
+    """Runs gh against this repo; a failure raises (a failed "issue list" used to look like "no
+    issue yet", and the next step opened a duplicate)."""
+    r = subprocess.run(["gh", *args, "--repo", GH_REPO], capture_output=True, text=True, input=input)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh {' '.join(args[:2])} failed: {(r.stderr or r.stdout).strip()[:300]}")
+    return r
 
 
 def sync_issue(report, title):
-    """Open, comment on, or close this upstream's issue."""
-    found = json.loads(gh("issue", "list", "--label", LABEL, "--state", "open", "--json", "number,title,body", "--limit", "50").stdout or "[]")
-    issue = next((i for i in found if i["title"] == title), None)
+    """Open, update, reopen or close this upstream's issue.
+
+    One issue per upstream, found by title among open and closed ones. The marker in its body says
+    what news it holds: the same news again changes nothing, so an issue someone closed by hand
+    (read, nothing to take) stays closed until something newer appears."""
+    found = json.loads(gh("issue", "list", "--label", LABEL, "--state", "all", "--json",
+                          "number,title,body,state", "--limit", "100").stdout or "[]")
+    mine = sorted((i for i in found if i["title"] == title), key=lambda i: i["number"], reverse=True)
+    issue = mine[0] if mine else None
+    is_open = issue is not None and issue["state"] == "OPEN"
     if report is None:
-        if issue:
+        if is_open:
             gh("issue", "close", str(issue["number"]), "--comment", "Caught up: nothing newer than what this repo pins.")
             print(f"  closed #{issue['number']}")
         return
@@ -206,13 +218,15 @@ def sync_issue(report, title):
     body = report["body"] + f"\n\n_Checked by `.github/workflows/upstream-watch.yml`._\n{marker}"
     if issue is None:
         r = gh("issue", "create", "--title", title, "--label", LABEL, "--body-file", "-", input=body)
-        print(f"  opened {r.stdout.strip() or r.stderr.strip()}")
-    elif marker not in issue["body"]:
-        gh("issue", "edit", str(issue["number"]), "--body-file", "-", input=body)
-        gh("issue", "comment", str(issue["number"]), "--body-file", "-", input="Something newer:\n\n" + report["body"])
-        print(f"  updated #{issue['number']} (commented: something newer)")
+        print(f"  opened {r.stdout.strip()}")
+    elif marker in (issue["body"] or ""):
+        print(f"  #{issue['number']} unchanged" + ("" if is_open else " (closed by hand: left closed)"))
     else:
-        print(f"  #{issue['number']} unchanged")
+        gh("issue", "edit", str(issue["number"]), "--body-file", "-", input=body)
+        if not is_open:
+            gh("issue", "reopen", str(issue["number"]))
+        gh("issue", "comment", str(issue["number"]), "--body-file", "-", input="Something newer:\n\n" + report["body"])
+        print(f"  updated #{issue['number']} (commented: something newer" + ("" if is_open else "; reopened") + ")")
 
 
 def main():
@@ -225,7 +239,10 @@ def main():
         ("Upstream: NVIDIA Jetson Linux (L4T / JetPack)", report_l4t),
     ]
     if not DRY:
-        gh("label", "create", LABEL, "--color", "6A2FB8", "--description", "Something we build on has changed", "--force")
+        try:
+            gh("label", "create", LABEL, "--color", "6A2FB8", "--description", "Something we build on has changed", "--force")
+        except RuntimeError as e:
+            print(f"label: {e}")
     failed = 0
     for title, check in checks:
         print(f"== {title}")
@@ -239,7 +256,11 @@ def main():
             continue  # leave its issue as it is
         print("  " + ("nothing new" if report is None else report["body"].replace("\n", "\n  ")))
         if not DRY:
-            sync_issue(report, title)
+            try:
+                sync_issue(report, title)
+            except Exception as e:
+                print(f"  issue update failed: {e}")
+                failed += 1
     sys.exit(1 if failed else 0)
 
 

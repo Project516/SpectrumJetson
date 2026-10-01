@@ -1,0 +1,284 @@
+diff --git a/photon-core/src/main/java/org/photonvision/common/dataflow/networktables/NTDriverStation.java b/photon-core/src/main/java/org/photonvision/common/dataflow/networktables/NTDriverStation.java
+index a9354a40..263a9d73 100644
+--- a/photon-core/src/main/java/org/photonvision/common/dataflow/networktables/NTDriverStation.java
++++ b/photon-core/src/main/java/org/photonvision/common/dataflow/networktables/NTDriverStation.java
+@@ -22,7 +22,10 @@ import edu.wpi.first.networktables.IntegerSubscriber;
+ import edu.wpi.first.networktables.NetworkTable;
+ import edu.wpi.first.networktables.NetworkTableEvent.Kind;
+ import edu.wpi.first.networktables.NetworkTableInstance;
++import edu.wpi.first.networktables.RawSubscriber;
+ import edu.wpi.first.networktables.StringSubscriber;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
+ import java.util.EnumSet;
+ import java.util.List;
+ import java.util.concurrent.CopyOnWriteArrayList;
+@@ -48,6 +51,11 @@ public class NTDriverStation {
+     }
+ 
+     private IntegerSubscriber ntControlWord;
++    // SpectrumJetson (photonvision-62): WPILib 2027 publishes the control word as a struct,
++    // /FMSInfo/ControlWord, and no longer publishes /FMSInfo/FMSControlData (checked in alpha-6's
++    // DriverStationBackend.MatchDataSender). Both are read; whichever the robot publishes wins.
++    private RawSubscriber ntControlWord2027;
++    private volatile boolean wordSeen = false;
+ 
+     private StringSubscriber eventName;
+     private IntegerSubscriber matchNumber;
+@@ -67,6 +75,15 @@ public class NTDriverStation {
+         return lastControlWord;
+     }
+ 
++    /**
++     * True once a control word has arrived from the robot, in either format. Robot-state features
++     * that slow or quiet the Jetson (idle mode, quiet mode) must not act on the all-false default:
++     * a robot whose control word we can't read is treated as enabled (photonvision-62).
++     */
++    public boolean hasControlWord() {
++        return wordSeen;
++    }
++
+     /** Called with (old, new) on every control word change, on NetworkTables' listener thread. */
+     public void addTransitionListener(BiConsumer<NtControlWord, NtControlWord> listener) {
+         transitionListeners.add(listener);
+@@ -80,37 +97,80 @@ public class NTDriverStation {
+         this.matchNumber = fmsTable.getIntegerTopic("MatchNumber").subscribe(0);
+         this.replayNumber = fmsTable.getIntegerTopic("ReplayNumber").subscribe(0);
+ 
+-        this.isRedAlliance = fmsTable.getBooleanTopic("isRedAlliance").subscribe(true);
++        // "IsRedAlliance" is what WPILib publishes (2026 and 2027); upstream had "isRedAlliance", so
++        // the match log always said RED.
++        this.isRedAlliance = fmsTable.getBooleanTopic("IsRedAlliance").subscribe(true);
+         this.stationNumber = fmsTable.getIntegerTopic("StationNumber").subscribe(0);
+ 
++        this.ntControlWord2027 =
++                fmsTable.getRawTopic("ControlWord").subscribe("struct:ControlWord", new byte[0]);
++
+         fmsTable.addListener(
+                 "FMSControlData",
+                 EnumSet.of(Kind.kValueAll),
+                 (table, key, event) -> {
+                     if (event.is(Kind.kValueAll) && event.valueData.value.isInteger()) {
+-                        // Logger totally isnt thread safe but whatevs
+-                        var word = NTDriverStation.getControlWord(event.valueData.value.getInteger());
+-
+-                        printTransition(this.lastControlWord, word);
+-                        printMatchData();
+-                        var old = this.lastControlWord;
+-                        this.lastControlWord = word;
+-                        for (var listener : transitionListeners) {
+-                            try {
+-                                listener.accept(old, word);
+-                            } catch (Exception e) {
+-                                logger.error("Robot state listener failed", e);
+-                            }
+-                        }
++                        onWord(NTDriverStation.getControlWord(event.valueData.value.getInteger()));
++                    }
++                });
++        // Through the typed subscriber, not a table listener: a table listener subscribes with no
++        // type, and NetworkTables disables an untyped subscription to a topic published as
++        // "struct:ControlWord" (type mismatch), so it would never fire.
++        inst.addListener(
++                this.ntControlWord2027,
++                EnumSet.of(Kind.kValueAll),
++                event -> {
++                    if (event.valueData != null && event.valueData.value.isRaw()) {
++                        var word = getControlWord2027(event.valueData.value.getRaw());
++                        if (word != null) onWord(word);
+                     }
+                 });
+ 
+-        // Slight data race here but whatever
+-        NtControlWord word = NTDriverStation.getControlWord(this.ntControlWord.get());
++        // Whatever is there already (the listeners only see changes from here on).
++        var word2027 = getControlWord2027(this.ntControlWord2027.get());
++        if (word2027 != null) {
++            onWord(word2027);
++        } else if (this.ntControlWord.exists()) {
++            onWord(NTDriverStation.getControlWord(this.ntControlWord.get()));
++        } else {
++            printMatchData();
++        }
++    }
+ 
+-        printTransition(this.lastControlWord, word);
++    // On NetworkTables' listener thread (or the constructor's).
++    private synchronized void onWord(NtControlWord word) {
++        wordSeen = true;
++        var old = this.lastControlWord;
++        if (word.equals(old)) return;
++        printTransition(old, word);
+         printMatchData();
+         this.lastControlWord = word;
++        for (var listener : transitionListeners) {
++            try {
++                listener.accept(old, word);
++            } catch (Exception e) {
++                logger.error("Robot state listener failed", e);
++            }
++        }
++    }
++
++    /**
++     * WPILib 2027's ControlWord struct (hal ControlWordStruct): one little-endian uint64, bits 0-55
++     * the opmode hash, 56-57 the robot mode (0 unknown, 1 autonomous, 2 teleoperated, 3 utility),
++     * then enabled (58), e-stop (59), FMS attached (60) and DS attached (61). Utility is 2027's
++     * test mode. Null if the value isn't 8 bytes.
++     */
++    static NtControlWord getControlWord2027(byte[] raw) {
++        if (raw == null || raw.length != 8) return null;
++        long word = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).getLong();
++        int mode = (int) ((word >>> 56) & 3);
++        return new NtControlWord(
++                ((word >>> 58) & 1) != 0,
++                mode == 1,
++                mode == 3,
++                ((word >>> 59) & 1) != 0,
++                ((word >>> 60) & 1) != 0,
++                ((word >>> 61) & 1) != 0);
+     }
+ 
+     private void printTransition(NtControlWord old, NtControlWord newWord) {
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/IdleMode.java b/photon-core/src/main/java/org/photonvision/vision/processes/IdleMode.java
+index 4827f89c..958624cf 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/IdleMode.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/IdleMode.java
+@@ -197,7 +197,9 @@ public final class IdleMode {
+         var ntm = NetworkTablesManager.getInstance();
+         if (!ntm.getNTInst().isConnected()) return false;
+         var ds = ntm.getDriverStation();
+-        return ds != null && !ds.current().m_enabled();
++        // photonvision-62: only on a control word we've actually received. Without one (robot code
++        // whose format we can't read) every camera would sit at the idle rate through the match.
++        return ds != null && ds.hasControlWord() && !ds.current().m_enabled();
+     }
+ 
+     /**
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java b/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java
+index f9689d63..f7eb98c3 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java
+@@ -156,6 +156,9 @@ public final class QuietMode {
+         var ds = ntm.getDriverStation();
+         // Off the robot nothing starts; a connection lost while quiet (radio, field) stays quiet.
+         if (!ntm.getNTInst().isConnected() || ds == null) return quiet ? reason : "";
++        // photonvision-62: no control word received (a format we can't read) counts as enabled,
++        // so the Jetson never goes quiet on a robot it can't tell is disabled.
++        if (!ds.hasControlWord()) return robotSays.exists() && robotSays.get() ? "robot code asked" : "";
+         var word = ds.current();
+         // Robot code decides while it publishes the topic.
+         if (robotSays.exists()) return robotSays.get() ? "robot code asked" : "";
+diff --git a/photon-core/src/test/java/org/photonvision/common/dataflow/networktables/NTDriverStationTest.java b/photon-core/src/test/java/org/photonvision/common/dataflow/networktables/NTDriverStationTest.java
+new file mode 100644
+index 00000000..3656e61b
+--- /dev/null
++++ b/photon-core/src/test/java/org/photonvision/common/dataflow/networktables/NTDriverStationTest.java
+@@ -0,0 +1,107 @@
++/*
++ * Copyright (C) Photon Vision.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++package org.photonvision.common.dataflow.networktables;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import edu.wpi.first.networktables.NetworkTableInstance;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.util.function.BooleanSupplier;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++import org.photonvision.common.LoadJNI;
++
++/** SpectrumJetson (photonvision-62): the robot's control word, in WPILib 2026's and 2027's formats. */
++public class NTDriverStationTest {
++    @BeforeAll
++    public static void init() {
++        LoadJNI.loadLibraries();
++    }
++
++    // WPILib 2027 hal ControlWord: mode in bits 56-57, enabled 58, e-stop 59, FMS 60, DS 61.
++    static byte[] word2027(int mode, boolean enabled, boolean estop, boolean fms, boolean ds) {
++        long w =
++                0x1234L // an opmode hash in the low bits must be ignored
++                        | ((long) mode << 56)
++                        | (enabled ? 1L << 58 : 0)
++                        | (estop ? 1L << 59 : 0)
++                        | (fms ? 1L << 60 : 0)
++                        | (ds ? 1L << 61 : 0);
++        return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(w).array();
++    }
++
++    // Each test makes its own instance and leaves it open (see the finally blocks).
++    static void waitFor(BooleanSupplier ok) throws InterruptedException {
++        long until = System.currentTimeMillis() + 2000;
++        while (!ok.getAsBoolean() && System.currentTimeMillis() < until) Thread.sleep(10);
++        assertTrue(ok.getAsBoolean());
++    }
++
++    @Test
++    public void decodes2027() {
++        var w = NTDriverStation.getControlWord2027(word2027(2, true, false, true, true));
++        assertEquals(new NTDriverStation.NtControlWord(true, false, false, false, true, true), w);
++        w = NTDriverStation.getControlWord2027(word2027(1, true, false, false, true));
++        assertTrue(w.m_enabled() && w.m_autonomous() && !w.m_fmsAttached());
++        w = NTDriverStation.getControlWord2027(word2027(3, false, true, false, true));
++        assertTrue(!w.m_enabled() && w.m_test() && w.m_emergencyStop());
++        assertNull(NTDriverStation.getControlWord2027(new byte[4]));
++        assertNull(NTDriverStation.getControlWord2027(null));
++    }
++
++    @Test
++    public void readsTheStructTopic() throws InterruptedException {
++        var inst = NetworkTableInstance.create();
++        inst.startLocal();
++        try {
++            var pub = inst.getTable("FMSInfo").getRawTopic("ControlWord").publish("struct:ControlWord");
++            var ds = new NTDriverStation(inst);
++            assertFalse(ds.hasControlWord(), "nothing published yet");
++            pub.set(word2027(2, false, false, true, true));
++            waitFor(ds::hasControlWord);
++            assertFalse(ds.current().m_enabled());
++            pub.set(word2027(2, true, false, true, true));
++            waitFor(() -> ds.current().m_enabled());
++            assertTrue(ds.current().m_fmsAttached());
++        } finally {
++            // Not closed: after one closed instance, the next instance's subscriber listeners never
++            // fired here (a test-only effect; PhotonVision has one instance for its whole run).
++            inst.stopLocal();
++        }
++    }
++
++    @Test
++    public void readsThe2026Integer() throws InterruptedException {
++        var inst = NetworkTableInstance.create();
++        inst.startLocal();
++        try {
++            var pub = inst.getTable("FMSInfo").getIntegerTopic("FMSControlData").publish();
++            pub.set(32 | 16); // DS and FMS attached, disabled
++            var ds = new NTDriverStation(inst);
++            waitFor(ds::hasControlWord);
++            assertFalse(ds.current().m_enabled());
++            pub.set(32 | 16 | 1);
++            waitFor(() -> ds.current().m_enabled());
++        } finally {
++            // Not closed: after one closed instance, the next instance's subscriber listeners never
++            // fired here (a test-only effect; PhotonVision has one instance for its whole run).
++            inst.stopLocal();
++        }
++    }
++}

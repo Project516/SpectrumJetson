@@ -169,6 +169,7 @@ int main(int argc, char **argv) {
       const int y0 = std::clamp(static_cast<int>(std::floor(b[1] * mh)), 0, mh);
       const int x1 = std::clamp(static_cast<int>(std::ceil((b[0] + b[2]) * mw)), 0, mw);
       const int y1 = std::clamp(static_cast<int>(std::ceil((b[1] + b[3]) * mh)), 0, mh);
+      if (x1 <= x0 || y1 <= y0) continue;  // no area, or negative size: see ApplyMaskToDetector
       for (int y = y0; y < y1; ++y) {
         std::fill(mask_pixels.begin() + static_cast<size_t>(y) * mw + x0,
                   mask_pixels.begin() + static_cast<size_t>(y) * mw + x1, mask_mode == 2 ? 1 : 0);

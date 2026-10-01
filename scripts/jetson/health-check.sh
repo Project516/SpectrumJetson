@@ -46,6 +46,15 @@ if grep -q "971 library loaded" <<<"$LOG"; then
     grep -q "GPU connections 32" <<<"$loaded" ||
       warn "GPU connections isn't 32 (rerun 08-select-detector.sh, or remove a test drop-in)"
   fi
+  # Test switches the detector and decoder re-read every few seconds. Left behind after a test,
+  # a fault hook keeps failing frames (and a sticky one restarts PhotonVision again after every
+  # restart); the others change how it runs. /tmp is emptied at boot, so a reboot clears them too.
+  for f in /tmp/spectrum-971-fault-every /tmp/spectrum-jpeg-fault; do
+    [[ -e $f ]] && fail "test fault hook $f is set: sudo rm $f"
+  done
+  for f in /tmp/spectrum-971-gpu-lock /tmp/spectrum-971-gpu-input /tmp/spectrum-971-threads /tmp/spectrum-jpeg-decoder; do
+    [[ -e $f ]] && warn "test override $f is set ($(head -c 40 "$f" 2>/dev/null)): remove it unless you meant it"
+  done
 elif grep -q "creategpudetector" <<<"$LOG"; then
   warn "running the 4143 detector build (not Austin's current bos build)"
 else
@@ -134,9 +143,19 @@ nfail=$(journalctl _PID="$P" --no-pager -o cat --since "-60 s" 2>/dev/null | gre
 
 echo "== Cameras"
 DB=/opt/photonvision/photonvision_config/photon.sqlite
+# Each camera's saved settings (config_json), one per line block. Python's sqlite3, read-only: the
+# sqlite3 command isn't in the L4T image or installed by install.sh.
+camera_configs() {
+  python3 - "$DB" <<'PY' 2>/dev/null
+import sqlite3, sys
+db = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True, timeout=2)
+for (cfg,) in db.execute("select config_json from cameras"):
+    print(cfg)
+PY
+}
 # PhotonVision camera nickname bound to a USB port (it matches identical cameras by port).
 cam_name() {
-  sqlite3 "$DB" "select config_json from cameras;" 2>/dev/null | python3 -c "
+  camera_configs | python3 -c "
 import json, sys, re
 text = sys.stdin.read()
 for chunk in re.split(r'(?m)^\\{', text):
@@ -152,7 +171,7 @@ while IFS=$'\t' read -r name port; do
   [[ -n $port ]] || continue
   ls /dev/v4l/by-path/*usb-0:"$port":1.0-video-index0 >/dev/null 2>&1 \
     || fail "$name isn't on USB (its port $port is empty): replug it, or power-cycle the robot if it's a stuck Thriftiest Cam"
-done < <(sqlite3 "$DB" "select config_json from cameras;" 2>/dev/null | python3 -c "
+done < <(camera_configs | python3 -c "
 import sys, re
 text = sys.stdin.read()
 for chunk in re.split(r'(?m)^\{', text):
@@ -210,7 +229,9 @@ UB=$(dirname "$(readlink -f "$0")")/usb-bandwidth.py
 if [[ -x $UB ]]; then
   ub=$(python3 "$UB" --json 2>/dev/null || true)
   if [[ -n $ub ]]; then
-    python3 - "$ub" <<'PY' | while IFS=$'\t' read -r kind line; do [[ $kind == FAIL ]] && fail "$line" || pass "$line"; done
+    # Read through process substitution, not a pipe: fail() in a piped while loop runs in a subshell,
+    # and its count was lost (USB FAIL lines with a READY verdict).
+    while IFS=$'\t' read -r kind line; do [[ $kind == FAIL ]] && fail "$line" || pass "$line"; done < <(python3 - "$ub" <<'PY'
 import json, sys
 s = json.loads(sys.argv[1])
 for a in s.get("advice", []):
@@ -219,6 +240,7 @@ used = ", ".join("bus %d: %d of ~%d bytes" % (b["bus"], b["reservedBytes"], s["b
 if used:
     print("PASS\tUSB bandwidth reserved: %s per microframe (usb-bandwidth.py for details)" % used)
 PY
+)
   fi
 fi
 
@@ -372,9 +394,12 @@ for z in /sys/class/thermal/thermal_zone*; do
   [[ $t -gt $hot ]] && hot=$t hotname=$(cat "$z/type")
 done
 tc=$((hot / 1000))
-# Fanless (09-robot-tuning.sh FAN=off): ~73 C is normal with 5 cameras on the plate, so warn at 80.
-warn_c=70; systemctl is-active --quiet spectrum-fan-guard && warn_c=80
-if [[ $tc -ge 85 ]]; then fail "hottest sensor ${hotname} ${tc} C (throttling territory)"
+# Fanless (09-robot-tuning.sh FAN=off, the fan guard running): idle at 30 fps settles ~80 C on the
+# plate and matches peak 86-88 C (README, Fanless), and the guard caps the cameras at 60 fps from
+# 95 C. So warn at 90 and fail at 95 there; with a fan, warn at 70 and fail at 85.
+warn_c=70 fail_c=85
+systemctl is-active --quiet spectrum-fan-guard && warn_c=90 fail_c=95
+if [[ $tc -ge $fail_c ]]; then fail "hottest sensor ${hotname} ${tc} C (throttling territory)"
 elif [[ $tc -ge $warn_c ]]; then warn "hottest sensor ${hotname} ${tc} C (check the fan and airflow)"
 else pass "hottest sensor ${hotname} ${tc} C"; fi
 avail=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)

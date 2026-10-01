@@ -1,0 +1,708 @@
+diff --git a/photon-client/src/components/cameras/CameraFocusCard.vue b/photon-client/src/components/cameras/CameraFocusCard.vue
+index 594f3b80..c65b9fbe 100644
+--- a/photon-client/src/components/cameras/CameraFocusCard.vue
++++ b/photon-client/src/components/cameras/CameraFocusCard.vue
+@@ -22,6 +22,9 @@ const cellBest = ref<number[]>(Array(9).fill(0));
+ const camera = computed(() => useCameraSettingsStore().currentCameraSettings.uniqueName);
+ 
+ let timer: ReturnType<typeof setTimeout> | undefined;
++// photonvision-63: false once the card is gone. A request still in flight at unmount used to
++// schedule the next poll anyway, so the loop (and the Jetson's focus measurement) never stopped.
++let alive = true;
+ const poll = async (reset = false) => {
+   clearTimeout(timer);
+   if (reset) cellBest.value = Array(9).fill(0);
+@@ -32,7 +35,7 @@ const poll = async (reset = false) => {
+   } catch {
+     reading.value = null;
+   }
+-  if (on.value) timer = setTimeout(() => poll(), 250);
++  if (alive && on.value) timer = setTimeout(() => poll(), 250);
+ };
+ watch(on, (v) => {
+   if (v) poll(true);
+@@ -44,7 +47,10 @@ watch(on, (v) => {
+ watch(camera, () => {
+   if (on.value) poll(true);
+ });
+-onBeforeUnmount(() => clearTimeout(timer));
++onBeforeUnmount(() => {
++  alive = false;
++  clearTimeout(timer);
++});
+ 
+ const share = (v: number, best: number) => (best > 0 ? Math.min(1, v / best) : 0);
+ const centrePct = computed(() => (reading.value ? 100 * share(reading.value.centre, reading.value.best) : 0));
+diff --git a/photon-client/src/views/FieldCalibrationView.vue b/photon-client/src/views/FieldCalibrationView.vue
+index 5d1b869f..20e1da65 100644
+--- a/photon-client/src/views/FieldCalibrationView.vue
++++ b/photon-client/src/views/FieldCalibrationView.vue
+@@ -88,6 +88,8 @@ const resultsRun = ref("");
+ const beep = ref(true);
+ const mapMode = ref<"2d" | "3d">("2d");
+ let timer: ReturnType<typeof setTimeout> | undefined;
++// photonvision-63: see CameraFocusCard: no new poll after the page is left.
++let alive = true;
+ 
+ const layout = computed(() => useSettingsStore().currentFieldLayout);
+ const recording = computed(() => status.value?.state === "RECORDING");
+@@ -99,6 +101,7 @@ const load = async () => {
+     status.value = null;
+   }
+   clearTimeout(timer);
++  if (!alive) return;
+   timer = setTimeout(load, recording.value || status.value?.tuning?.running ? 400 : 2000);
+ };
+ const act = async (body: object, done?: string) => {
+@@ -323,7 +326,10 @@ const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60
+ const solveRecording = ref("");
+ 
+ onMounted(load);
+-onBeforeUnmount(() => clearTimeout(timer));
++onBeforeUnmount(() => {
++  alive = false;
++  clearTimeout(timer);
++});
+ </script>
+ 
+ <template>
+diff --git a/photon-core/src/main/java/org/photonvision/common/configuration/ConfigManager.java b/photon-core/src/main/java/org/photonvision/common/configuration/ConfigManager.java
+index d8fe5762..4883f230 100644
+--- a/photon-core/src/main/java/org/photonvision/common/configuration/ConfigManager.java
++++ b/photon-core/src/main/java/org/photonvision/common/configuration/ConfigManager.java
+@@ -381,6 +381,11 @@ public class ConfigManager {
+         this.flushOnShutdown = false;
+     }
+ 
++    /** SpectrumJetson (photonvision-63): undoes disableFlushOnShutdown, for a restore that failed. */
++    public void enableFlushOnShutdown() {
++        this.flushOnShutdown = true;
++    }
++
+     /** Prevent pending automatic saves */
+     public void setWriteTaskEnabled(boolean enabled) {
+         this.allowWriteTask = enabled;
+diff --git a/photon-core/src/main/java/org/photonvision/common/configuration/SettingsSnapshots.java b/photon-core/src/main/java/org/photonvision/common/configuration/SettingsSnapshots.java
+index 2fa35a01..9523daba 100644
+--- a/photon-core/src/main/java/org/photonvision/common/configuration/SettingsSnapshots.java
++++ b/photon-core/src/main/java/org/photonvision/common/configuration/SettingsSnapshots.java
+@@ -83,6 +83,9 @@ public final class SettingsSnapshots {
+     private SettingsSnapshots() {}
+ 
+     public static synchronized Meta create(String name, String reason) throws IOException {
++        // photonvision-63: between a restore and the restart, a snapshot would save the old
++        // in-memory settings over the restored database (create() calls saveToDisk()).
++        if (restoring) throw new IOException("A restore is in progress; PhotonVision is restarting");
+         Files.createDirectories(ROOT);
+         String id = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+         Path dir = ROOT.resolve(id);
+@@ -173,26 +176,73 @@ public final class SettingsSnapshots {
+      *
+      * @return the automatic "before restoring" snapshot
+      */
++    private static volatile boolean restoring = false;
++
+     public static synchronized Meta restore(String id) throws IOException {
+         Path dir = dirOf(id);
+         Meta meta = json.readValue(dir.resolve("meta.json").toFile(), Meta.class);
+-        Meta before = create("Before restoring '" + meta.name + "'", "before restore");
+         var cm = ConfigManager.getInstance();
++        Path root = cm.configDirectoryFile.toPath();
++        // photonvision-63: the snapshot is staged beside the live settings first. The "Before
++        // restoring" snapshot below prunes old automatic snapshots, which can delete the one being
++        // restored; and staging on the same partition makes the database swap a single rename.
++        Path stage = root.resolve(".restore-staging");
++        deleteTree(stage);
++        copyTree(dir, stage);
++        Meta before;
++        try {
++            before = create("Before restoring '" + meta.name + "'", "before restore");
++        } catch (IOException | RuntimeException e) {
++            deleteTree(stage);
++            throw e;
++        }
+         cm.setWriteTaskEnabled(false);
+         cm.disableFlushOnShutdown();
+-        Path root = cm.configDirectoryFile.toPath();
+-        for (String suffix : List.of("-journal", "-wal", "-shm")) Files.deleteIfExists(root.resolve("photon.sqlite" + suffix));
+-        Files.copy(dir.resolve("photon.sqlite"), root.resolve("photon.sqlite"), StandardCopyOption.REPLACE_EXISTING);
+-        if (Files.isDirectory(dir.resolve("spectrum"))) {
+-            deleteTree(root.resolve("spectrum"));
+-            copyTree(dir.resolve("spectrum"), root.resolve("spectrum"));
++        restoring = true;
++        try {
++            for (String suffix : List.of("-journal", "-wal", "-shm")) Files.deleteIfExists(root.resolve("photon.sqlite" + suffix));
++            // The database: synced, then renamed over the old one. A power cut leaves the old
++            // database or the new one, never a truncated one.
++            Path db = root.resolve("photon.sqlite");
++            Path staged = stage.resolve("photon.sqlite");
++            try (var ch = java.nio.channels.FileChannel.open(staged, java.nio.file.StandardOpenOption.WRITE)) {
++                ch.force(true);
++            }
++            Files.move(staged, db, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
++            if (Files.isDirectory(stage.resolve("spectrum"))) {
++                Path old = root.resolve("spectrum.before-restore");
++                deleteTree(old);
++                if (Files.exists(root.resolve("spectrum"))) Files.move(root.resolve("spectrum"), old);
++                Files.move(stage.resolve("spectrum"), root.resolve("spectrum"));
++                deleteTree(old);
++            }
++        } catch (IOException | RuntimeException e) {
++            // Nothing restarts, so PhotonVision goes on with the settings it has in memory: saves
++            // back on, so those are what's kept (they overwrite a half-restored database).
++            restoring = false;
++            cm.setWriteTaskEnabled(true);
++            cm.enableFlushOnShutdown();
++            cm.requestSave();
++            deleteTree(stage);
++            throw e;
+         }
++        // The extra files (Rewind's and idle mode's settings) are best effort: Rewind's is on the
++        // scratch partition, read-only in quiet mode, and must not fail a restore already done.
+         for (Path p : EXTRA_FILES) {
+-            Path saved = dir.resolve("extra").resolve(p.getFileName());
++            Path saved = stage.resolve("extra").resolve(p.getFileName());
+             // photonvision-59: write into the existing file, don't replace it. With the data
+             // partitions (10-data-partition.sh) spectrum-robot-state.json is a bind mount, and
+             // replacing a mounted file fails with "Device or resource busy".
+-            if (Files.exists(saved)) Files.write(p, Files.readAllBytes(saved));
++            try {
++                if (Files.exists(saved)) Files.write(p, Files.readAllBytes(saved));
++            } catch (IOException e) {
++                logger.warn("Restore: couldn't write " + p + " (" + e.getMessage() + "); kept as it was");
++            }
++        }
++        try {
++            deleteTree(stage);
++        } catch (IOException e) {
++            logger.warn("Restore: couldn't remove " + stage + ": " + e.getMessage());
+         }
+         logger.info("Restored settings snapshot '" + meta.name + "' (" + id + "); restarting");
+         new Thread(
+diff --git a/photon-core/src/main/java/org/photonvision/common/dataflow/networktables/NTDataPublisher.java b/photon-core/src/main/java/org/photonvision/common/dataflow/networktables/NTDataPublisher.java
+index 386ff05d..4df02e7a 100644
+--- a/photon-core/src/main/java/org/photonvision/common/dataflow/networktables/NTDataPublisher.java
++++ b/photon-core/src/main/java/org/photonvision/common/dataflow/networktables/NTDataPublisher.java
+@@ -159,6 +159,8 @@ public class NTDataPublisher implements CVPipelineResultConsumer {
+         if (pipelineIndexListener != null) pipelineIndexListener.remove();
+         if (driverModeListener != null) driverModeListener.remove();
+         if (fpsLimitListener != null) fpsLimitListener.remove();
++        // photonvision-63: this one too, or each call (the constructor makes two) left one behind.
++        if (isEnabledListener != null) isEnabledListener.remove();
+ 
+         ts.updateEntries();
+ 
+diff --git a/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java b/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
+index dafd75be..475f465a 100644
+--- a/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
++++ b/photon-core/src/main/java/org/photonvision/fieldcal/CameraSettingsTuner.java
+@@ -84,6 +84,9 @@ public class CameraSettingsTuner {
+         final List<StepResult> results = new ArrayList<>();
+         final Map<String, String> notes = new LinkedHashMap<>();
+         TreeSet<Integer> baselineTags = new TreeSet<>();
++        // photonvision-63: the pipeline the sweep tuned, so Apply writes to it even if the camera
++        // has switched pipeline since (robot code, Switch all, the event profile, a 2nd dashboard).
++        int tunedPipeline = -1;
+         Map<Integer, double[]> baselineCentres = new HashMap<>();
+         StepResult baseline;
+         String problem = "";
+@@ -274,6 +277,7 @@ public class CameraSettingsTuner {
+             if (!m.getEnabled()) continue;
+             if (only != null && !only.isEmpty() && !only.equals(m.getNickname())) continue;
+             var c = new Cam(m);
++            c.tunedPipeline = m.getCurrentPipelineIndex();
+             if (locked != null && locked.get(c.name) != null) c.locked = Set.copyOf(locked.get(c.name));
+             active.put(c.name, c);
+             cams.put(c.name, c);
+@@ -528,7 +532,11 @@ public class CameraSettingsTuner {
+         for (var c : cams.values()) {
+             if (only != null && !only.isEmpty() && !only.equals(c.name)) continue;
+             if (c.recommended.isEmpty()) continue;
+-            CVPipelineSettings ps = c.module.getCurrentPipelineSettings();
++            CVPipelineSettings ps =
++                    c.tunedPipeline >= 0
++                            ? c.module.getPipelineSettingsAt(c.tunedPipeline)
++                            : c.module.getCurrentPipelineSettings();
++            if (ps == null) continue; // that pipeline was deleted since
+             for (var e : c.recommended.entrySet()) {
+                 int v = (int) Math.round(e.getValue());
+                 switch (e.getKey()) {
+@@ -545,9 +553,12 @@ public class CameraSettingsTuner {
+                     default -> {}
+                 }
+             }
+-            c.module.reapplyPipelineCameraSettings();
++            // The camera's controls only change if the tuned pipeline is the one running.
++            if (c.tunedPipeline < 0 || c.tunedPipeline == c.module.getCurrentPipelineIndex()) {
++                c.module.reapplyPipelineCameraSettings();
++            }
+             c.module.saveAndBroadcastAll();
+-            changed.add(c.name + " (pipeline " + c.module.getCurrentPipelineIndex() + ")");
++            changed.add(c.name + " (pipeline " + (c.tunedPipeline >= 0 ? c.tunedPipeline : c.module.getCurrentPipelineIndex()) + ")");
+         }
+         logger.info("Field calibration: applied tuned settings to " + changed);
+         return changed;
+diff --git a/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java b/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java
+index 934aab42..77dda2c6 100644
+--- a/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java
++++ b/photon-core/src/main/java/org/photonvision/rewind/RewindRecorder.java
+@@ -179,15 +179,33 @@ public class RewindRecorder {
+     private void openSession(RewindManager.Session s, long t) throws IOException {
+         closeOutput();
+         session = s;
+-        cameraDir = s.dir().resolve(RewindManager.safeName(nickname.get()));
++        Path dir = s.dir().resolve(RewindManager.safeName(nickname.get()));
++        boolean reopening = dir.equals(cameraDir);
++        cameraDir = dir;
+         Files.createDirectories(cameraDir);
+-        segmentIndex = 0;
+-        framesWritten = 0;
+-        bytesWritten = 0;
++        // photonvision-63: reopened after a write error (closeOutput), the same session goes on
++        // in a new segment. Starting again at 0000 truncated the segments already written.
++        segmentIndex = nextSegmentIndex(cameraDir);
++        if (!reopening) {
++            framesWritten = 0;
++            bytesWritten = 0;
++        }
+         openSegment(t);
+         logger.info("Rewind: recording to " + cameraDir);
+     }
+ 
++    /** One past the highest NNNN.mjpeg already in {@code dir} (0 for a new camera folder). */
++    private static int nextSegmentIndex(Path dir) throws IOException {
++        int next = 0;
++        try (var files = Files.list(dir)) {
++            for (Path f : (Iterable<Path>) files::iterator) {
++                String n = f.getFileName().toString();
++                if (n.matches("[0-9]{4}\\.mjpeg")) next = Math.max(next, Integer.parseInt(n.substring(0, 4)) + 1);
++            }
++        }
++        return next;
++    }
++
+     private void openSegment(long t) throws IOException {
+         closeFiles();
+         String base = String.format("%04d", segmentIndex++);
+diff --git a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+index f063e55c..457b8b94 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
++++ b/photon-core/src/main/java/org/photonvision/vision/frame/provider/USBFrameProvider.java
+@@ -400,7 +400,7 @@ public class USBFrameProvider extends CpuImageProcessor {
+     private boolean hardwareJpegDecode() {
+         try {
+             return GpuDetectorJNI.hardwareJpegDecode();
+-        } catch (UnsatisfiedLinkError e) {
++        } catch (LinkageError e) { // photonvision-63: after the first, callers get NoClassDefFoundError
+             directBgr.unavailable("The detector library has no hardware colour decode; using cscore's");
+             return false;
+         }
+@@ -614,7 +614,7 @@ public class USBFrameProvider extends CpuImageProcessor {
+             int rc;
+             try {
+                 rc = GpuDetectorJNI.decodeMjpegGray(frame.getNativeObj(), gray.getNativeObjAddr());
+-            } catch (UnsatisfiedLinkError e) {
++            } catch (LinkageError e) { // photonvision-63: after the first, callers get NoClassDefFoundError
+                 gray.release();
+                 directGray.unavailable("No MJPEG->gray decoder in the detector library; using cscore's conversion");
+                 return new CapturedFrame(new CVMat(), settables.getFrameStaticProperties(), 0);
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java b/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
+index a5fdfd7e..4501dab1 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/CameraHealthPublisher.java
+@@ -88,20 +88,25 @@ public class CameraHealthPublisher implements CVPipelineResultConsumer {
+     public void accept(CVPipelineResult result) {
+         long now = System.nanoTime();
+         if (windowStartNs == 0) windowStartNs = now;
+-        double ms = result.getProcessingMillis();
+-        count++;
+-        total++;
+-        sumMs += ms;
+-        maxMs = Math.max(maxMs, ms);
+-        sumLatencyMs += result.getLatencyMillis();
++        // photonvision-63: the blank results a disabled, unplugged or stuck camera sends (capture
++        // time 0) aren't frames. Counted, they made a disabled camera read ~50 fps and averaged the
++        // Jetson's uptime into latencyMs. The window still closes on them, so fps falls to 0.
++        if (result.getImageCaptureTimestampNanos() != 0) {
++            double ms = result.getProcessingMillis();
++            count++;
++            total++;
++            sumMs += ms;
++            maxMs = Math.max(maxMs, ms);
++            sumLatencyMs += result.getLatencyMillis();
++        }
+ 
+         double window = (now - windowStartNs) / 1e9;
+         if (window < 1.0) return;
+         ensurePublishers();
+         fps.set(count / window);
+-        pipelineMs.set(sumMs / count);
++        pipelineMs.set(count > 0 ? sumMs / count : 0);
+         pipelineMsMax.set(maxMs);
+-        latencyMs.set(sumLatencyMs / count);
++        latencyMs.set(count > 0 ? sumLatencyMs / count : 0);
+         frames.set(total);
+         failures.set(decodeFailures.getAsLong());
+         recoveryCount.set(recoveries.getAsLong());
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/CameraSettingsPublisher.java b/photon-core/src/main/java/org/photonvision/vision/processes/CameraSettingsPublisher.java
+index 4fae4249..d8c2215e 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/CameraSettingsPublisher.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/CameraSettingsPublisher.java
+@@ -68,10 +68,21 @@ public class CameraSettingsPublisher {
+     private StringPublisher publisher = null;
+     private boolean loggedFailure = false;
+ 
++    private final String taskName;
++
+     public CameraSettingsPublisher(VisionModule module) {
+         this.module = module;
+-        String id = module.getCameraConfiguration().uniqueName;
+-        TimedTaskManager.getInstance().addTask("CameraSettings-" + id, this::publish, 2000, PERIOD_MS);
++        taskName = "CameraSettings-" + module.getCameraConfiguration().uniqueName;
++        TimedTaskManager.getInstance().addTask(taskName, this::publish, 2000, PERIOD_MS);
++    }
++
++    /**
++     * photonvision-63: called when the camera's module stops. Without it the old module kept
++     * publishing its (stale) settings after a camera was deactivated, and, since addTask ignores a
++     * second task with the same name, a reactivated camera's new module never published at all.
++     */
++    public void stop() {
++        TimedTaskManager.getInstance().cancelTask(taskName);
+     }
+ 
+     private void publish() {
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+index 0c16833a..35c99f22 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionModule.java
+@@ -218,7 +218,7 @@ public class VisionModule {
+                                 .onResult(visionSource.getSettables().getConfiguration().nickname, result));
+         // SpectrumJetson: this camera's settings, and the Jetson's, as JSON for the robot log
+         // (photonvision-24).
+-        new CameraSettingsPublisher(this);
++        settingsPublisher = new CameraSettingsPublisher(this);
+         JetsonSettingsPublisher.start();
+ 
+         // SpectrumJetson: a brand-new camera gets the team's tuned settings (TeamCameraDefaults)
+@@ -438,9 +438,13 @@ public class VisionModule {
+         streamRunnable.start();
+     }
+ 
++    // photonvision-63: kept so stop() can end its timed task.
++    private CameraSettingsPublisher settingsPublisher;
++
+     public void stop() {
+         visionSource.cameraConfiguration.deactivated = true;
+         visionRunner.stopProcess();
++        if (settingsPublisher != null) settingsPublisher.stop();
+ 
+         try {
+             streamRunnable.interrupt();
+@@ -633,13 +637,19 @@ public class VisionModule {
+         var target = pipelineManager.getPipelineSettings(targetIndex);
+         if (target == null) throw new IllegalArgumentException("This camera has no pipeline " + targetIndex);
+         var copied = new ArrayList<String>();
++        // photonvision-63: every group checked before anything is copied. Checked inside the copy
++        // loop, a refused resolution left the groups before it copied, unsaved and not broadcast.
+         for (String group : groups) {
+-            var fields = COPY_GROUPS.get(group);
+-            if (fields == null) throw new IllegalArgumentException("Unknown settings group " + group);
++            if (group == null || !COPY_GROUPS.containsKey(group)) {
++                throw new IllegalArgumentException("Unknown settings group " + group);
++            }
+             if (group.equals("resolution") && !sameVideoModes) {
+                 throw new IllegalArgumentException(
+                         "The two cameras offer different video modes, so the resolution can't be copied");
+             }
++        }
++        for (String group : groups) {
++            var fields = COPY_GROUPS.get(group);
+             for (String name : fields) {
+                 try {
+                     var from = source.getClass().getField(name);
+@@ -696,6 +706,19 @@ public class VisionModule {
+         if (pipelineManager.getPipelineNicknames().contains(nickname)) {
+             throw new IllegalArgumentException("already has a pipeline called " + nickname);
+         }
++        // photonvision-63: this camera's own values come from the pipeline it runs now. Skipping
++        // them (as before) left the new pipeline's defaults: unrotated, unmasked, mode 0.
++        CVPipelineSettings own = null;
++        if (source != null && !sourceIsThisCamera) {
++            try {
++                own =
++                        JacksonUtils.deserialize(
++                                JacksonUtils.serializeToString(pipelineManager.getCurrentPipelineSettings()),
++                                CVPipelineSettings.class);
++            } catch (IOException e) {
++                throw new IllegalArgumentException("couldn't read this camera's pipeline: " + e.getMessage());
++            }
++        }
+         var added = pipelineManager.addPipeline(source == null ? type : source.pipelineType, nickname);
+         if (added == null) throw new IllegalArgumentException("can't make a " + type + " pipeline");
+         if (source != null) {
+@@ -713,11 +736,23 @@ public class VisionModule {
+                 if (Modifier.isStatic(mods) || Modifier.isFinal(mods)) continue;
+                 String name = field.getName();
+                 if (name.equals("pipelineIndex") || name.equals("pipelineNickname")) continue;
+-                if (!sourceIsThisCamera && CAMERA_OWN_FIELDS.contains(name)) continue;
+-                if (!sourceIsThisCamera && !sameVideoModes && name.equals("cameraVideoModeIndex")) continue;
++                boolean keepOwn =
++                        !sourceIsThisCamera
++                                && (CAMERA_OWN_FIELDS.contains(name)
++                                        || (!sameVideoModes && name.equals("cameraVideoModeIndex")));
+                 try {
+-                    field.set(added, field.get(copy));
+-                } catch (IllegalAccessException e) {
++                    if (!keepOwn) {
++                        field.set(added, field.get(copy));
++                    } else if (own != null) {
++                        // From this camera's current pipeline, if it has the field (a mask, say,
++                        // only exists on some pipeline types); otherwise the new pipeline's default.
++                        try {
++                            field.set(added, own.getClass().getField(name).get(own));
++                        } catch (NoSuchFieldException e) {
++                            // keep the default
++                        }
++                    }
++                } catch (IllegalAccessException | IllegalArgumentException e) {
+                     logger.error("Could not copy " + name, e);
+                 }
+             }
+@@ -1019,7 +1054,14 @@ public class VisionModule {
+                 "Camera "
+                         + (enabled ? "enabled" : "disabled")
+                         + " (NetworkTables enabledRequest, e.g. PhotonCamera.setEnabled)");
+-        saveAndBroadcastAll();
++        // photonvision-63: tell the dashboards, but don't save. enabled isn't a saved setting, and
++        // the save wrote the settings database a second later: robot code that switches cameras
++        // off in disabledInit wrote the SSD just before the robot's power was cut.
++        DataChangeService.getInstance()
++                .publishEvent(
++                        new OutgoingUIEvent<>(
++                                "fullsettings",
++                                UIPhotonConfiguration.programStateToUi(ConfigManager.getInstance().getConfig())));
+     }
+ 
+     /**
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java b/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java
+index 523feb14..c268fd86 100644
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/VisionRunner.java
+@@ -193,106 +193,133 @@ public class VisionRunner {
+ 
+         while (!Thread.interrupted()) {
+             long start = System.currentTimeMillis();
+-            changeSubscriber.processSettingChanges();
+-            synchronized (runnableList) {
+-                for (var runnable : runnableList) {
+-                    try {
+-                        runnable.run();
+-                    } catch (Exception ex) {
+-                        logger.error("Exception running runnable", ex);
++            // SpectrumJetson (photonvision-63): nothing may end this loop but an interrupt. An exception
++            // outside pipeline.run (a setting change, the frame grab, cscore reconnecting a camera, a
++            // native library that failed to load) used to end the thread: that camera went dark until
++            // PhotonVision restarted, and nothing reported it. Errors that leave the JVM unusable
++            // (VirtualMachineError: out of memory, stack overflow) still propagate.
++            try {
++                changeSubscriber.processSettingChanges();
++                synchronized (runnableList) {
++                    for (var runnable : runnableList) {
++                        try {
++                            runnable.run();
++                        } catch (Exception ex) {
++                            logger.error("Exception running runnable", ex);
++                        }
+                     }
++                    runnableList.clear();
+                 }
+-                runnableList.clear();
+-            }
+-
+-            var pipeline = pipelineSupplier.get();
+-
+-            // Tell our camera implementation here what kind of pre-processing we need it to
+-            // be doing
+-            // (pipeline-dependent). I kinda hate how much leak this has...
+-            // TODO would a callback object be a better fit?
+-            var wantedProcessType = pipeline.getThresholdType();
+-
+-            frameSupplier.requestFrameThresholdType(wantedProcessType);
+-            var settings = pipeline.getSettings();
+-            if (settings instanceof AdvancedPipelineSettings advanced) {
+-                var hsvParams =
+-                        new HSVPipe.HSVParams(
+-                                advanced.hsvHue, advanced.hsvSaturation, advanced.hsvValue, advanced.hueInverted);
+-                // TODO who should deal with preventing this from happening _every single loop_?
+-                frameSupplier.requestHsvSettings(hsvParams);
+-            }
+-            frameSupplier.requestFrameRotation(settings.inputImageRotationMode);
+-            frameSupplier.requestFrameCopies(settings.inputShouldShow, settings.outputShouldShow);
+-            frameSupplier.requestBlockForFrames(settings.blockForFrames);
+-
+-            // SpectrumJetson: a disabled camera (PhotonCamera.setEnabled(false)) skips the capture as
+-            // well as the pipeline. Upstream (#2484) still grabs every frame and throws it away, which
+-            // on our USB cameras still costs the MJPEG decode (~3 ms a frame). Robot code sees the same
+-            // as upstream: empty results, and enabled=false. The camera keeps streaming (so Rewind
+-            // keeps recording, and re-enabling is immediate); only this runner stops pulling frames.
+-            if (!enabledSupplier.get()) {
+-                pipelineResultConsumer.accept(new CVPipelineResult(0l, 0, 0, null, new Frame()));
+-                try {
+-                    Thread.sleep(DISABLED_LOOP_MS);
+-                } catch (InterruptedException e) {
+-                    return;
+-                }
+-                continue;
+-            }
+ 
+-            // SpectrumJetson (photonvision-49): while the robot is disabled, at most
+-            // SPECTRUM_IDLE_FPS frames a second; the ones in between are never grabbed (decoded).
+-            if (IdleMode.active() && !IdleMode.waitForNextFrame(lastGrabNanos)) return;
+-            lastGrabNanos = System.nanoTime();
++                var pipeline = pipelineSupplier.get();
+ 
+-            // Grab the new camera frame
+-            var frame = frameSupplier.get();
++                // Tell our camera implementation here what kind of pre-processing we need it to
++                // be doing
++                // (pipeline-dependent). I kinda hate how much leak this has...
++                // TODO would a callback object be a better fit?
++                var wantedProcessType = pipeline.getThresholdType();
+ 
+-            // Frame empty -- no point in trying to do anything more?
+-            if (frame.processedImage.getMat().empty() && frame.colorImage.getMat().empty()) {
+-                // give up without increasing loop count
+-                // Still feed with blank frames just dont run any pipelines
++                frameSupplier.requestFrameThresholdType(wantedProcessType);
++                var settings = pipeline.getSettings();
++                if (settings instanceof AdvancedPipelineSettings advanced) {
++                    var hsvParams =
++                            new HSVPipe.HSVParams(
++                                    advanced.hsvHue, advanced.hsvSaturation, advanced.hsvValue, advanced.hueInverted);
++                    // TODO who should deal with preventing this from happening _every single loop_?
++                    frameSupplier.requestHsvSettings(hsvParams);
++                }
++                frameSupplier.requestFrameRotation(settings.inputImageRotationMode);
++                frameSupplier.requestFrameCopies(settings.inputShouldShow, settings.outputShouldShow);
++                frameSupplier.requestBlockForFrames(settings.blockForFrames);
+ 
+-                frame.release();
+-                pipelineResultConsumer.accept(new CVPipelineResult(0l, 0, 0, null, new Frame()));
+-            } else if (pipeline == pipelineSupplier.get()) {
++                // SpectrumJetson: a disabled camera (PhotonCamera.setEnabled(false)) skips the capture as
++                // well as the pipeline. Upstream (#2484) still grabs every frame and throws it away, which
++                // on our USB cameras still costs the MJPEG decode (~3 ms a frame). Robot code sees the same
++                // as upstream: empty results, and enabled=false. The camera keeps streaming (so Rewind
++                // keeps recording, and re-enabling is immediate); only this runner stops pulling frames.
+                 if (!enabledSupplier.get()) {
+-                    // If we are skipping processing due to the camera being disabled, we still want to send a
+-                    // result with the new frame and settings, just with a null pipeline result
+                     pipelineResultConsumer.accept(new CVPipelineResult(0l, 0, 0, null, new Frame()));
+-                    frame.release();
++                    try {
++                        Thread.sleep(DISABLED_LOOP_MS);
++                    } catch (InterruptedException e) {
++                        return;
++                    }
+                     continue;
+                 }
+ 
+-                // If the pipeline has changed while we are getting our frame we should scrap
+-                // that frame it may result in incorrect frame settings like hsv values
++                // SpectrumJetson (photonvision-49): while the robot is disabled, at most
++                // SPECTRUM_IDLE_FPS frames a second; the ones in between are never grabbed (decoded).
++                if (IdleMode.active() && !IdleMode.waitForNextFrame(lastGrabNanos)) return;
++                lastGrabNanos = System.nanoTime();
+ 
+-                // There's no guarantee the processing type change will occur this tick, so
+-                // pipelines should check themselves
++                // Grab the new camera frame
++                var frame = frameSupplier.get();
++
++                // Frame empty -- no point in trying to do anything more?
++                if (frame.processedImage.getMat().empty() && frame.colorImage.getMat().empty()) {
++                    // give up without increasing loop count
++                    // Still feed with blank frames just dont run any pipelines
++
++                    frame.release();
++                    pipelineResultConsumer.accept(new CVPipelineResult(0l, 0, 0, null, new Frame()));
++                } else if (pipeline == pipelineSupplier.get()) {
++                    if (!enabledSupplier.get()) {
++                        // If we are skipping processing due to the camera being disabled, we still want to send a
++                        // result with the new frame and settings, just with a null pipeline result
++                        pipelineResultConsumer.accept(new CVPipelineResult(0l, 0, 0, null, new Frame()));
++                        frame.release();
++                        continue;
++                    }
++
++                    // If the pipeline has changed while we are getting our frame we should scrap
++                    // that frame it may result in incorrect frame settings like hsv values
++
++                    // There's no guarantee the processing type change will occur this tick, so
++                    // pipelines should check themselves
+ 
+-                try {
+-                    var pipelineResult = pipeline.run(frame, cameraQuirks);
+                     try {
+-                        pipelineResultConsumer.accept(pipelineResult);
++                        var pipelineResult = pipeline.run(frame, cameraQuirks);
++                        try {
++                            pipelineResultConsumer.accept(pipelineResult);
++                        } catch (Exception ex) {
++                            logger.error("Exception on loop " + loopCount, ex);
++                            pipelineResult.release();
++                        }
+                     } catch (Exception ex) {
+-                        logger.error("Exception on loop " + loopCount, ex);
+-                        pipelineResult.release();
++                        // #2511: the frame (and its Mats) was dropped on the floor here
++                        logger.error("Pipeline exception on loop " + loopCount, ex);
++                        frame.release();
+                     }
+-                } catch (Exception ex) {
+-                    // #2511: the frame (and its Mats) was dropped on the floor here
+-                    logger.error("Pipeline exception on loop " + loopCount, ex);
++                    loopCount++;
++                } else {
++                    // SpectrumJetson: the pipeline changed while we grabbed this frame; it is thrown away,
++                    // so free it (upstream leaks it, once per pipeline switch).
+                     frame.release();
+                 }
+-                loopCount++;
+-            } else {
+-                // SpectrumJetson: the pipeline changed while we grabbed this frame; it is thrown away,
+-                // so free it (upstream leaks it, once per pipeline switch).
+-                frame.release();
++                // SpectrumJetson: FPS limit sleep after processing, as before #2484 (which moved it
++                // between the frame grab and the pipeline, adding up to a frame period of latency).
++                waitUntilNextTick(start);
++            } catch (VirtualMachineError e) {
++                throw e;
++            } catch (Throwable t) {
++                long now = System.currentTimeMillis();
++                if (now - lastLoopErrorLogMs > 5000) {
++                    lastLoopErrorLogMs = now;
++                    logger.error("Vision loop error (the camera keeps going)", t);
++                }
++                try {
++                    pipelineResultConsumer.accept(new CVPipelineResult(0l, 0, 0, null, new Frame()));
++                } catch (Throwable ignored) {
++                    // the result consumers failing too: nothing more to tell anyone
++                }
++                try {
++                    Thread.sleep(10);
++                } catch (InterruptedException e) {
++                    return;
++                }
+             }
+-            // SpectrumJetson: FPS limit sleep after processing, as before #2484 (which moved it
+-            // between the frame grab and the pipeline, adding up to a frame period of latency).
+-            waitUntilNextTick(start);
+         }
+     }
+-}
++
++    private long lastLoopErrorLogMs = 0;
++}
+\ No newline at end of file

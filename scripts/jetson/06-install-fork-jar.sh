@@ -30,7 +30,12 @@ fi
 if [[ -f $DEST ]] && unzip -tq "$DEST" >/dev/null 2>&1; then
   sudo cp "$DEST" /opt/photonvision/photonvision.jar.prev
 fi
-sudo install -m 644 "$JAR" "$DEST"
+# Copied beside it and renamed over it, with syncs: a power cut mid-install (a pit update, then the
+# robot switched off) leaves the old jar or the new one, never a truncated one that crash-loops.
+sudo install -m 644 "$JAR" "$DEST.new"
+sync
+sudo mv -f "$DEST.new" "$DEST"
+sync
 
 # Drop-in override instead of editing the installer's unit.
 # PhotonVision manages networking (static IP, hostname) from its UI unless

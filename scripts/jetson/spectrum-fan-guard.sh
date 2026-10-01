@@ -21,6 +21,9 @@ for z in /sys/class/thermal/thermal_zone*; do
   echo user_space > "$z/policy" 2>/dev/null && echo "$(cat "$z/type"): fan control taken from the kernel (user_space)"
 done
 rm -f "$FLAG"
+# The flag must never outlive the guard: a stale one would keep every camera capped at 60 fps until
+# a reboot. The unit's ExecStopPost and 09-robot-tuning.sh remove it too (a SIGKILL skips traps).
+trap 'rm -f "$FLAG"' EXIT
 hot_state=0
 while true; do
   hot=0

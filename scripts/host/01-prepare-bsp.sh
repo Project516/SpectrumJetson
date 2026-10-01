@@ -18,12 +18,17 @@ if [[ $EUID -eq 0 ]]; then
   exit 1
 fi
 
+mkdir -p "$L4T_WORKDIR"
 cd "$L4T_WORKDIR"
+# NVIDIA's two archives (about 2 GB together), downloaded once. A ".part" file is resumed, and only
+# renamed once complete, so an interrupted download is never mistaken for a finished one.
 for f in "$L4T_BSP_TARBALL" "$L4T_ROOTFS_TARBALL"; do
   if [[ ! -s $f ]]; then
-    echo "Missing $L4T_WORKDIR/$f. Download it from:" >&2
-    echo "  $L4T_URL_BASE/$f" >&2
-    exit 1
+    echo "==> Downloading $f from NVIDIA"
+    curl -fL --retry 3 -C - -o "$f.part" "$L4T_URL_BASE/$f" && mv "$f.part" "$f" || {
+      echo "Couldn't download $L4T_URL_BASE/$f: download it into $L4T_WORKDIR by hand, then run this again." >&2
+      exit 1
+    }
   fi
 done
 

@@ -77,8 +77,8 @@ echo "    This takes roughly 10-20 minutes. Do not unplug the Jetson."
 # runs on the Jetson grows it to fill the whole SSD. -S gives it a fixed size instead (and drops
 # the expand mark). The flash tool can't read the SSD's size either (its default is 57 GiB, too
 # small for a 64 GiB APP), so it's told the SSD is ROOTFS_SIZE + 2 GiB: the other partitions take
-# ~1.6 GiB. That fits any SSD from 66 GB up; 10-data-partition.sh then moves the backup GPT to
-# the real end and uses the rest.
+# ~1.6 GiB. 10-data-partition.sh then moves the backup GPT to the real end and uses the rest, so
+# the SSD needs 80 GB or more (64 GiB system, 2 GiB settings, at least 8 GiB scratch).
 ROOTFS_SIZE=${ROOTFS_SIZE:-64GiB}
 if [[ $ROOTFS_SIZE == full ]]; then
   echo "    System partition: the whole SSD"

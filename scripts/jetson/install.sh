@@ -16,10 +16,14 @@
 #   --prebuilt [B]    skip the builds (allwpilib, the detector, the field-calibration tool, the jar):
 #                     install a bundle from make-prebuilt-bundle.sh instead. B is a .tar.gz, a URL,
 #                     or "latest" (the default: this repo's newest GitHub release). ~25 min shorter.
-#   FAN=quiet|full|off   fan mode for 09-robot-tuning.sh (default quiet)
+#   FAN=quiet|full|off   fan mode for 09-robot-tuning.sh (default: config.env's)
 #   CAP=...           camera bandwidth caps for 11-uvcvideo-payload-cap.sh (default per model)
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+# The team's settings (FAN, TEAM_NUMBER, ...), the same file the laptop's scripts use. Variables
+# already set (FAN=off install.sh ...) win: config.env only fills in what's unset.
+# shellcheck source=../../config.env
+[[ -f $HERE/../../config.env ]] && source "$HERE/../../config.env"
 LOGS=$HOME/install-logs
 DONE=$LOGS/done
 mkdir -p "$LOGS"; touch "$DONE"
@@ -41,6 +45,8 @@ if [[ -n $PREBUILT && -z $JAR ]]; then JAR=$PREBUILT_JAR; fi
 [[ -n $JAR ]] || JAR=$(ls -t "$HOME"/restore/*linuxarm64.jar 2>/dev/null | head -1)
 
 sudo -n true 2>/dev/null || { echo "install.sh needs passwordless sudo (see README Step 2)." >&2; exit 1; }
+# Writes on the read-only system (ro-root on) land in RAM and vanish at the next boot.
+[[ $(findmnt -n -o FSTYPE /) != overlay ]] || { echo "The system partition is read-only (ro-root on): scripts/jetson/ro-root.sh off first." >&2; exit 1; }
 timeout 10 ping -c1 -W5 github.com >/dev/null 2>&1 || { echo "No internet: join Wi-Fi first (sudo nmcli --ask dev wifi connect <SSID>)." >&2; exit 1; }
 [[ -n $PREBUILT || -f $JAR ]] || { echo "No PhotonVision jar: pass --jar (build it with scripts/host/03-build-photonvision-fork.sh)." >&2; exit 1; }
 
@@ -96,18 +102,22 @@ prebuilt_install() {
   # The runtime packages the builds would have installed.
   # build-essential: the camera driver is still compiled here, for the exact kernel.
   sudo apt-get install -y openjdk-17-jdk libprotobuf23 libjpeg-turbo8 libtbb12 unzip build-essential >/dev/null || return 1
-  sudo install -m 755 "$t"/usr/local/lib/*.so /usr/local/lib/ && sudo ldconfig
-  mkdir -p "$HOME/build/bos-detector" "$HOME/build/fieldcal-detect"
-  install -m 755 "$t"/build/bos-detector/*.so "$HOME/build/bos-detector/"
+  # Each copy checked: a step that half-installed must fail, not be marked done.
+  sudo install -m 755 "$t"/usr/local/lib/*.so /usr/local/lib/ || return 1
+  sudo ldconfig || return 1
+  mkdir -p "$HOME/build/bos-detector" "$HOME/build/fieldcal-detect" || return 1
+  install -m 755 "$t"/build/bos-detector/*.so "$HOME/build/bos-detector/" || return 1
   # The synthetic-tag generator for fake-cameras.sh (in bundles from 2026-10-01 on).
-  [[ -f $t/build/bos-detector/far_search_test ]] && install -m 755 "$t/build/bos-detector/far_search_test" "$HOME/build/bos-detector/"
-  install -m 755 "$t/build/fieldcal-detect/fieldcal_detect" "$HOME/build/fieldcal-detect/"
-  install -m 644 "$t"/photonvision-spectrum-*-linuxarm64.jar "$PREBUILT_JAR"
+  if [[ -f $t/build/bos-detector/far_search_test ]]; then
+    install -m 755 "$t/build/bos-detector/far_search_test" "$HOME/build/bos-detector/" || return 1
+  fi
+  install -m 755 "$t/build/fieldcal-detect/fieldcal_detect" "$HOME/build/fieldcal-detect/" || return 1
+  install -m 644 "$t"/photonvision-spectrum-*-linuxarm64.jar "$PREBUILT_JAR" || return 1
   # The field-calibration tool's install (13-build-fieldcal-detect.sh --install, minus the build).
-  sudo install -d -m 755 /opt/spectrum/fieldcal/fieldcal
+  sudo install -d -m 755 /opt/spectrum/fieldcal/fieldcal || return 1
   sudo rm -f /opt/spectrum/fieldcal/fieldcal/*.py
-  sudo install -m 644 "$HERE"/../../tools/fieldcal/fieldcal/*.py /opt/spectrum/fieldcal/fieldcal/
-  sudo install -m 755 "$HOME/build/fieldcal-detect/fieldcal_detect" /opt/spectrum/fieldcal/fieldcal_detect
+  sudo install -m 644 "$HERE"/../../tools/fieldcal/fieldcal/*.py /opt/spectrum/fieldcal/fieldcal/ || return 1
+  sudo install -m 755 "$HOME/build/fieldcal-detect/fieldcal_detect" /opt/spectrum/fieldcal/fieldcal_detect || return 1
   rm -rf "$t"
   echo "prebuilt bundle installed: $(basename "$b")"
 }
@@ -130,13 +140,21 @@ STEPS=(
   "fieldcal-tool|1800|$HERE/13-build-fieldcal-detect.sh --install"
   "usb-watchdog|300|$HERE/14-usb-watchdog.sh --install"
   "fake-cameras|900|sudo apt-get install -y v4l2loopback-dkms v4l2loopback-utils && if [[ -f $HOME/build/bos-detector/CMakeCache.txt ]]; then cmake --build $HOME/build/bos-detector --target far_search_test --parallel 3; elif [[ -x $HOME/build/bos-detector/far_search_test ]]; then echo 'synthetic-tag generator from the prebuilt bundle'; else echo 'no synthetic-tag generator (an older bundle): fake-cameras.sh plays real Rewind recordings'; fi"
-  "robot-tuning|900|FAN=${FAN:-quiet} $HERE/09-robot-tuning.sh"
+  "robot-tuning|900|FAN=${FAN:-off} $HERE/09-robot-tuning.sh"
   "restore-settings|300|restore_settings"
 )
 export -f restore_settings prebuilt_install; export SETTINGS PREBUILT PREBUILT_JAR HERE
 
 # --prebuilt swaps the three builds for the bundle; without it the bundle step is skipped.
 if [[ -n $PREBUILT ]]; then SKIP="allwpilib detector fieldcal-tool"; else SKIP="prebuilt"; fi
+# A mistyped --from/--only (or one this install skips) would otherwise run nothing and still
+# print "Setup finished".
+for want in $FROM $ONLY; do
+  known=0
+  for s in "${STEPS[@]}"; do [[ ${s%%|*} == "$want" ]] && known=1; done
+  ((known)) || { echo "No step named '$want'. Steps: $(for s in "${STEPS[@]}"; do printf '%s ' "${s%%|*}"; done)" >&2; exit 2; }
+  [[ " $SKIP " != *" $want "* ]] || { echo "Step '$want' is skipped in this install (${PREBUILT:+--prebuilt}${PREBUILT:-no --prebuilt})." >&2; exit 2; }
+done
 
 started=${FROM:+0}; started=${started:-1}
 for s in "${STEPS[@]}"; do
@@ -148,7 +166,9 @@ for s in "${STEPS[@]}"; do
   if [[ -z $ONLY && -z $FROM ]] && grep -qx "$name" "$DONE"; then echo "== $name: done before"; continue; fi
   echo "== $name (limit $((limit / 60)) min, log $LOGS/$name.log) $(date +%T)"
   t0=$SECONDS
-  timeout -k 30 "$limit" bash -c "$cmd" >"$LOGS/$name.log" 2>&1; rc=$?
+  # errexit and pipefail inside each step: a failing command in the middle (or on the left of a
+  # pipe, like smartctl | tee) fails the step instead of being hidden by the last command's 0.
+  timeout -k 30 "$limit" bash -c "set -eo pipefail; $cmd" >"$LOGS/$name.log" 2>&1; rc=$?
   if [[ $rc -eq 124 || $rc -eq 137 ]]; then
     echo "TIMEOUT: $name ran past $((limit / 60)) min. Last lines of its log:"; tail -15 "$LOGS/$name.log"; exit 1
   elif [[ $rc -ne 0 ]]; then
@@ -160,5 +180,8 @@ for s in "${STEPS[@]}"; do
 done
 
 echo "== health check"
-sudo "$HERE/health-check.sh" 2>&1 | tail -40
+hc=$(sudo "$HERE/health-check.sh" 2>&1); hc_rc=$?
+tail -40 <<<"$hc"
 echo "Setup finished. Reboot once (sudo reboot) so the boot-time settings take effect."
+# Before the first reboot some checks can't pass yet (clocks, the camera driver); say so plainly.
+((hc_rc == 0)) || echo "NOTE: the health check reported FAIL lines above. Reboot, then run scripts/jetson/health-check.sh again."

@@ -63,26 +63,46 @@ status() {
 # (ro-root on does it for you).
 commit_settings() {
   findmnt -n "$SET" >/dev/null || { echo "$SET isn't mounted: nothing to commit" >&2; exit 1; }
-  local db=$SET/photonvision_config/photon.sqlite
-  sudo mkdir -p "$LAST_GOOD"
-  # A consistent copy of the live database (PhotonVision may be writing it), then the rest.
+  # With the read-only system on, the copy would land in the RAM layer and vanish at the next boot.
+  if [[ $(findmnt -n -o FSTYPE /) == overlay ]]; then
+    echo "STOP: the system partition is read-only (ro-root on), so a commit wouldn't be kept." >&2
+    echo "      ro-root.sh off (reboots), then ro-root.sh on: it commits on the way." >&2
+    exit 1
+  fi
+  local db=$SET/photonvision_config/photon.sqlite new=$LAST_GOOD.new old=$LAST_GOOD.old
+  sudo rm -rf "$new" "$old"
+  sudo mkdir -p "$new/photonvision_config"
+  # Built beside the old copy and swapped in with renames, so a power cut mid-commit leaves the old
+  # copy or the new one, never half of each. The database is copied with SQLite's backup (a
+  # consistent copy while PhotonVision may be writing it), the rest with rsync.
+  sudo rsync -a --exclude photonvision_config/logs --exclude 'photon.sqlite*' "$SET/" "$new/"
   if sudo test -f "$db"; then   # sudo: /data is root-only, so a plain -f test never sees it
     sudo python3 -c 'import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close()' \
-      "$db" "$LAST_GOOD/photon.sqlite.new"
+      "$db" "$new/photonvision_config/photon.sqlite"
   fi
-  sudo rsync -a --delete --exclude photonvision_config/logs --exclude 'photon.sqlite*' "$SET/" "$LAST_GOOD/"
-  sudo mkdir -p "$LAST_GOOD/photonvision_config"
-  sudo test -f "$LAST_GOOD/photon.sqlite.new" || { echo "STOP: couldn't copy $db" >&2; exit 1; }
-  sudo mv "$LAST_GOOD/photon.sqlite.new" "$LAST_GOOD/photonvision_config/photon.sqlite"
-  date '+%Y-%m-%d %H:%M' | sudo tee "$LAST_GOOD/.committed" >/dev/null
+  sudo test -f "$new/photonvision_config/photon.sqlite" || { echo "STOP: couldn't copy $db" >&2; sudo rm -rf "$new"; exit 1; }
+  date '+%Y-%m-%d %H:%M' | sudo tee "$new/.committed" >/dev/null
   sync
+  [[ -d $LAST_GOOD ]] && sudo mv "$LAST_GOOD" "$old"
+  sudo mv "$new" "$LAST_GOOD"
+  sync
+  sudo rm -rf "$old"
   echo "Committed the current settings as the fallback ($(sudo du -sh "$LAST_GOOD" | cut -f1))."
 }
 [[ ${1:-} == --commit-settings ]] && { commit_settings; exit 0; }
 
 # By GPT partition name (PARTLABEL, up to 36 characters), not the ext4 label: ext4 labels stop at
 # 16 characters, and SPECTRUM_SETTINGS (17) was silently cut short, so a LABEL= mount never matched.
-part_of() { sudo blkid -t PARTLABEL="$1" -o device 2>/dev/null | head -1 || true; }   # sudo: as a user, blkid only sees its cache
+# Only on $DISK, so a second disk with the same names (a cloned SSD in a USB enclosure) is never
+# picked; two matches on $DISK stop the script. The partition may have no filesystem yet.
+part_of() {
+  local found; found=$(lsblk -nrpo PATH,PARTLABEL "$DISK" 2>/dev/null | awk -v l="$1" '$2 == l {print $1}')
+  if [[ $(wc -l <<<"$found") -gt 1 ]]; then
+    echo "STOP: more than one partition named $1 on $DISK: $(tr '\n' ' ' <<<"$found")" >&2; exit 1
+  fi
+  echo "$found"
+}
+has_fs() { [[ -n $(sudo blkid -p -s TYPE -o value "$1" 2>/dev/null) ]]; }   # -p: read the disk, not blkid's cache
 
 reformat() {  # $1 label, $2 mount point
   local dev; dev=$(part_of "$1")
@@ -117,10 +137,12 @@ if [[ -z $(part_of $SET_LABEL) || -z $(part_of $SCR_LABEL) ]]; then
   fi
   sudo partprobe "$DISK"; sudo udevadm settle
   for label in $SET_LABEL $SCR_LABEL; do
-    [[ -n $(part_of $label) ]] && continue
-    dev=/dev/disk/by-partlabel/$label
-    for _ in $(seq 20); do [[ -e $dev ]] && break; sleep 0.5; done
-    sudo mkfs.ext4 -q -L "${label:0:16}" "$(readlink -f "$dev")"
+    dev=""
+    for _ in $(seq 20); do dev=$(part_of $label); [[ -n $dev ]] && break; sleep 0.5; done
+    [[ -n $dev ]] || { echo "STOP: the new $label partition didn't appear on $DISK" >&2; exit 1; }
+    # Only a partition with no filesystem: one that has one (an earlier run) is never reformatted.
+    has_fs "$dev" && continue
+    sudo mkfs.ext4 -q -L "${label:0:16}" "$dev"
   done
   sudo udevadm settle
 fi
@@ -183,11 +205,16 @@ echo "==> 4. Fallback for a damaged partition (runs at every boot, before Photon
 sudo install -m 755 "$(dirname "$0")/spectrum-data-fallback.sh" /usr/local/bin/spectrum-data-fallback
 # Quiet mode's helper (photonvision-56): PhotonVision runs it to stop and start writing to scratch.
 sudo install -m 755 "$(dirname "$0")/spectrum-quiet.sh" /usr/local/bin/spectrum-quiet
-sudo tee /etc/systemd/system/spectrum-data-fallback.service >/dev/null <<'UNIT'
+# It must wait for the data mounts to finish, whether they work or fail: "nofail" mounts aren't
+# ordered before local-fs.target, so without these lines it could run while fsck is still repairing
+# a partition after a power cut, and put its stand-ins over a partition about to mount. After= is
+# ordering only: a mount that fails (or whose device never appears, 10 s) doesn't stop it.
+MOUNT_UNITS=$(for m in "$SET" "$SCR" "${BINDS[@]##*|}" "$PV/$STATE_FILE"; do systemd-escape -p --suffix=mount "$m"; done | tr '\n' ' ')
+sudo tee /etc/systemd/system/spectrum-data-fallback.service >/dev/null <<UNIT
 [Unit]
 Description=SpectrumJetson: stand-ins for a data partition that didn't mount (10-data-partition.sh)
 DefaultDependencies=no
-After=local-fs.target
+After=local-fs.target $MOUNT_UNITS
 Before=photonvision.service systemd-journal-flush.service
 
 [Service]

@@ -7,13 +7,18 @@
 #   - PhotonVision came back healthy,
 #   - how much of the recording survived: seconds lost vs the last status the laptop saw, and every
 #     saved frame is a complete JPEG.
+#   - the data partitions mounted (no fallback stand-ins), and the fallback ran after their mounts.
+# Exits 1 if any check FAILs: added SSD media errors, ext4 errors, a partition not mounted, a
+# fallback in use, or PhotonVision not healthy.
 # Usage: tests/power-cut/run.sh [seconds_before_cut]   (default 20)
 set -uo pipefail
 JETSON=${JETSON:-192.168.55.1}
 KEY=${KEY:-$HOME/.ssh/jetson_ed25519}
 WAIT=${1:-20}
 HERE=$(cd "$(dirname "$0")" && pwd)
-SSH=(ssh -i "$KEY" -o ConnectTimeout=3 -o BatchMode=yes "spectrum3847@$JETSON")
+# Every command after the cut has a deadline too (timeout): a hung SSH must not hang the test.
+SSH=(timeout 90 ssh -i "$KEY" -o ConnectTimeout=3 -o BatchMode=yes "${JETSON_USER:-spectrum3847}@$JETSON")
+fails=0
 API=http://$JETSON:5800/api/rewind
 
 api() { # GET (no body) or POST a JSON body; prints the reply, or nothing on failure
@@ -76,29 +81,44 @@ media_after=$(smart "Media and Data Integrity Errors") unsafe_after=$(smart "Uns
 echo "  media errors ${media_before:-?} -> ${media_after:-?}, unsafe shutdowns ${unsafe_before:-?} -> ${unsafe_after:-?}"
 if [[ -n $media_after && -n $media_before && $media_after -gt $media_before ]]; then
   echo "  FAIL: the cut added $((media_after - media_before)) media errors: this SSD is losing data on power cuts"
+  fails=$((fails + 1))
 fi
 echo "== Filesystems (system, settings, scratch)"
-"${SSH[@]}" 'bash -s' <<'REMOTE'
+fs=$("${SSH[@]}" 'bash -s' <<'REMOTE'
 for m in / /data/settings /data/scratch; do
-  findmnt -n "$m" >/dev/null || { echo "  $m: NOT MOUNTED"; continue; }
+  findmnt -n "$m" >/dev/null || { echo "  FAIL: $m NOT MOUNTED"; continue; }
   dev=$(basename "$(findmnt -no SOURCE "$m")")
-  echo "  $m ($dev): ext4 errors recorded: $(cat /sys/fs/ext4/$dev/errors_count 2>/dev/null)"
+  n=$(cat /sys/fs/ext4/$dev/errors_count 2>/dev/null || echo 0)
+  if [[ $n -gt 0 ]]; then echo "  FAIL: $m ($dev): ext4 recorded $n errors"; else echo "  $m ($dev): no ext4 errors"; fi
   journalctl -k -b 0 --no-pager -o cat | grep -F "EXT4-fs ($dev)" | sed 's/^/    kernel: /'
 done
-echo "  fallback: $(cat /run/spectrum-data-status 2>/dev/null)"
+st=$(cat /run/spectrum-data-status 2>/dev/null)
+if [[ $st == "settings=ok scratch=ok" ]]; then echo "  fallback: $st"; else echo "  FAIL: fallback in use: ${st:-no status}"; fi
+# The fallback must have run after the data mounts finished (10-data-partition.sh orders it).
+fb=$(systemctl show -p ExecMainStartTimestampMonotonic --value spectrum-data-fallback 2>/dev/null)
+for u in data-settings.mount data-scratch.mount; do
+  t=$(systemctl show -p ActiveEnterTimestampMonotonic --value "$u" 2>/dev/null)
+  [[ -n $fb && -n $t && $t -gt 0 && $t -gt $fb ]] && echo "  FAIL: $u finished mounting after the fallback ran"
+done
+true
 REMOTE
+)
+echo "$fs"
+fails=$((fails + $(grep -c "FAIL" <<<"$fs")))
 echo "== Log from before the cut (the last lines the old boot saved)"
 # By boot id: -b -1 is unreliable here, since the clock restarts at 1970 after a cut (no RTC battery).
 "${SSH[@]}" "journalctl _BOOT_ID=${boot_before//-/} --no-pager -o short-iso -n 3 2>&1 | sed 's/^/  /'"
 echo "== PhotonVision"
-"${SSH[@]}" '~/SpectrumJetson/scripts/jetson/health-check.sh' | sed -n '/== PhotonVision/,/== Cameras/p' | grep -v '== Cameras'
+pv=$("${SSH[@]}" '~/SpectrumJetson/scripts/jetson/health-check.sh' | sed -n '/== PhotonVision/,/== Cameras/p' | grep -v '== Cameras')
+echo "$pv"
+fails=$((fails + $(grep -c "  FAIL" <<<"$pv")))
 echo "== The recording"
 "${SSH[@]}" "cat /opt/photonvision/rewind/sessions/$session/session.json" | python3 -c '
 import json, sys
 m = json.load(sys.stdin)
 print("  session.json:", "ended cleanly (" + m["endReason"] + ")" if m.get("endReason") else "no end recorded (expected: power was cut)")'
 dest=$(mktemp -d)
-rsync -a -e "ssh -i $KEY" "spectrum3847@$JETSON:/opt/photonvision/rewind/sessions/$session" "$dest/"
+rsync -a -e "ssh -i $KEY" "${JETSON_USER:-spectrum3847}@$JETSON:/opt/photonvision/rewind/sessions/$session" "$dest/"
 python3 "$HERE/../../scripts/host/rewind-export.py" "$dest/$session" --out "$dest/export" | sed 's/^/  /'
 python3 - "$dest/$session" "$last_secs" <<'PY'
 import csv, glob, os, sys
@@ -120,3 +140,5 @@ for cam in sorted(glob.glob(sess + "/*/")):
 PY
 echo
 echo "Copied to $dest (delete it when done). The recording stays on the Jetson; delete it in the UI."
+if ((fails > 0)); then echo "FAIL: $fails check(s) failed (above)"; exit 1; fi
+echo "PASS"
