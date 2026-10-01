@@ -9,6 +9,7 @@
 #                    detector needs at runtime; the full build is 17 minutes)
 #   build/bos-detector/  lib971apriltag.so libspectrumnvjpg.so libspectrumtrt.so
 #   build/fieldcal-detect/fieldcal_detect
+#   build/bos-detector/far_search_test   (the synthetic-tag generator fake-cameras.sh uses)
 #   photonvision-spectrum-<tag>-linuxarm64.jar   (default: the jar PhotonVision is running)
 #   MANIFEST  repo commit, L4T and CUDA versions, the patch list, and every file's SHA-256
 #   NOTICES.md and the license texts (release/): where each file comes from, and its license
@@ -43,6 +44,7 @@ files=(
   "$HOME/build/bos-detector/libspectrumnvjpg.so:build/bos-detector/libspectrumnvjpg.so"
   "$HOME/build/bos-detector/libspectrumtrt.so:build/bos-detector/libspectrumtrt.so"
   "$HOME/build/fieldcal-detect/fieldcal_detect:build/fieldcal-detect/fieldcal_detect"
+  "$HOME/build/bos-detector/far_search_test:build/bos-detector/far_search_test"
   "$JAR:photonvision-spectrum-$tag-linuxarm64.jar"
 )
 for f in "${files[@]}"; do

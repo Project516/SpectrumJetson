@@ -95,10 +95,12 @@ prebuilt_install() {
   sed -n '1,7p' "$t/MANIFEST"
   # The runtime packages the builds would have installed.
   # build-essential: the camera driver is still compiled here, for the exact kernel.
-  sudo apt-get install -y openjdk-17-jdk libprotobuf23 libjpeg-turbo8 unzip build-essential >/dev/null || return 1
+  sudo apt-get install -y openjdk-17-jdk libprotobuf23 libjpeg-turbo8 libtbb12 unzip build-essential >/dev/null || return 1
   sudo install -m 755 "$t"/usr/local/lib/*.so /usr/local/lib/ && sudo ldconfig
   mkdir -p "$HOME/build/bos-detector" "$HOME/build/fieldcal-detect"
   install -m 755 "$t"/build/bos-detector/*.so "$HOME/build/bos-detector/"
+  # The synthetic-tag generator for fake-cameras.sh (in bundles from 2026-10-01 on).
+  [[ -f $t/build/bos-detector/far_search_test ]] && install -m 755 "$t/build/bos-detector/far_search_test" "$HOME/build/bos-detector/"
   install -m 755 "$t/build/fieldcal-detect/fieldcal_detect" "$HOME/build/fieldcal-detect/"
   install -m 644 "$t"/photonvision-spectrum-*-linuxarm64.jar "$PREBUILT_JAR"
   # The field-calibration tool's install (13-build-fieldcal-detect.sh --install, minus the build).
@@ -127,7 +129,7 @@ STEPS=(
   "yolo-model|1800|[[ -z '$MODEL' ]] && echo 'no --model: skipped' || $HERE/12-install-yolo-model.sh '$MODEL' Fuel Fuel"
   "fieldcal-tool|1800|$HERE/13-build-fieldcal-detect.sh --install"
   "usb-watchdog|300|$HERE/14-usb-watchdog.sh --install"
-  "fake-cameras|900|sudo apt-get install -y v4l2loopback-dkms v4l2loopback-utils && if [[ -f $HOME/build/bos-detector/CMakeCache.txt ]]; then cmake --build $HOME/build/bos-detector --target far_search_test --parallel 3; else echo 'prebuilt install: no synthetic-tag generator; fake-cameras.sh plays real Rewind recordings'; fi"
+  "fake-cameras|900|sudo apt-get install -y v4l2loopback-dkms v4l2loopback-utils && if [[ -f $HOME/build/bos-detector/CMakeCache.txt ]]; then cmake --build $HOME/build/bos-detector --target far_search_test --parallel 3; elif [[ -x $HOME/build/bos-detector/far_search_test ]]; then echo 'synthetic-tag generator from the prebuilt bundle'; else echo 'no synthetic-tag generator (an older bundle): fake-cameras.sh plays real Rewind recordings'; fi"
   "robot-tuning|900|FAN=${FAN:-quiet} $HERE/09-robot-tuning.sh"
   "restore-settings|300|restore_settings"
 )
