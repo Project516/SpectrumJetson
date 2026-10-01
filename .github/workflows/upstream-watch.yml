@@ -1,0 +1,26 @@
+# Has anything we build on changed? Weekly (and from the Actions tab), checks PhotonVision, the 4143
+# CUDA fork, frc971/bos, aos, allwpilib and NVIDIA's L4T against what this repo pins, tries our
+# patches on the newest code, and keeps one issue per upstream (label upstream-watch). See
+# scripts/ci/upstream_watch.py. A few minutes a run; free on a public repo.
+name: Upstream watch
+
+on:
+  schedule:
+    - cron: "17 13 * * 1"   # Mondays 13:17 UTC (8:17 Central)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check upstreams
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/ci/upstream_watch.py
