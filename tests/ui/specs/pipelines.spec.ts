@@ -107,8 +107,17 @@ test("Create on every camera from another camera's pipeline, then Switch all", a
         } else {
           expect(c.currentPipelineIndex, `${c.nickname} stays on its pipeline`).toBe(running.get(c.nickname));
           expect(copy.decisionMargin, `${c.nickname} got the copied settings`).toBe(23);
-          // Orientation belongs to the camera: the others keep theirs, not the source's 90° CW.
-          expect(copy.inputImageRotationMode, `${c.nickname} keeps its own orientation`).not.toEqual(
+          // Orientation belongs to the camera: the others keep theirs, not the source's 90° CW,
+          // and not the new pipeline's default either (photonvision-63: it used to come out at the
+          // default, which this missed while every camera ran the default orientation).
+          // From the same pipeline list as `copy` (the running pipeline's own entry): uiState gives
+          // currentPipelineSettings' orientation as a number, the list's as the enum name.
+          const b = before.find((x) => x.nickname === c.nickname)!;
+          const own = settingsOf(b, b.pipelineNicknames[b.currentPipelineIndex]);
+          expect(copy.inputImageRotationMode, `${c.nickname} keeps its own orientation`).toEqual(
+            own.inputImageRotationMode
+          );
+          expect(copy.inputImageRotationMode, `${c.nickname} doesn't take the source's`).not.toEqual(
             source.inputImageRotationMode
           );
         }
