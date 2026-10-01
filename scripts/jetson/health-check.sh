@@ -267,6 +267,15 @@ if grep -q "NT connected to" <<<"$last_nt"; then
 else
   warn "not connected to the robot (${team:-no team set}); expected off the robot"
 fi
+# Bench tests stand in for the robot by taking over its address (10.85.15.2): tests/fake-robot puts
+# it on the loopback, and tests/systemcore-rehearsal redirects it to a laptop. If either is left
+# behind, PhotonVision can't reach the real robot.
+if ip -4 addr show dev lo 2>/dev/null | grep -q " 10\.85\.15\.2/"; then
+  fail "the robot's address 10.85.15.2 is on the loopback (left by tests/fake-robot): sudo ip addr del 10.85.15.2/32 dev lo"
+fi
+if sudo -n iptables -t nat -S 2>/dev/null | grep -q SPECTRUM_REHEARSAL; then
+  fail "the robot's address is redirected to a laptop (left by tests/systemcore-rehearsal): run.sh --cleanup on the laptop, or restart the Jetson"
+fi
 # Camera-clock timestamps (uvcvideo hwtimestamps=1): 0.01 ms jitter instead of 0.95 ms.
 if [[ $(cat /sys/module/uvcvideo/parameters/hwtimestamps 2>/dev/null) == 1 ]]; then
   pass "frames timestamped by the camera clock (uvcvideo hwtimestamps)"
@@ -359,7 +368,13 @@ if [[ -f /run/spectrum-thermal-limit ]]; then
   fail "thermal limit: cameras capped ($(cat /run/spectrum-thermal-limit)); it lifts below 88 C"
 fi
 # Quiet mode (photonvision-56): the SSD isn't being written after a match.
-if [[ -f /run/spectrum-quiet ]]; then
+pvquiet=$(timeout 5 python3 -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("http://localhost:5800/api/robotState", timeout=3)).get("quietNow"))' 2>/dev/null || true)
+scratch_ro=$(findmnt -n -o OPTIONS /data/scratch 2>/dev/null | tr ',' '\n' | grep -qx ro && echo yes)
+if [[ ($scratch_ro == yes || -f /run/spectrum-quiet) && $pvquiet == False ]]; then
+  # Quiet mode, then a PhotonVision restart: before photonvision-64 the new process didn't know,
+  # so no enable made the partition writable again and Rewind couldn't record.
+  fail "scratch partition read-only, but PhotonVision isn't in quiet mode (left from before a restart): Rewind can't record. sudo spectrum-quiet off"
+elif [[ -f /run/spectrum-quiet ]]; then
   pass "quiet mode: scratch partition read-only ($(cat /run/spectrum-quiet)); any enable ends it"
 elif grep -q x-spectrum-data /etc/fstab 2>/dev/null && [[ ! -x /usr/local/bin/spectrum-quiet ]]; then
   warn "quiet mode's helper isn't installed (re-run 10-data-partition.sh)"

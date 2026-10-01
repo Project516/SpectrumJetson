@@ -1,0 +1,51 @@
+diff --git a/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java b/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java
+--- a/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java
++++ b/photon-core/src/main/java/org/photonvision/vision/processes/QuietMode.java
+@@ -50,6 +50,9 @@
+ public final class QuietMode {
+     private static final Logger logger = new Logger(QuietMode.class, LogGroup.General);
+     private static final Path HELPER = Path.of("/usr/local/bin/spectrum-quiet");
++    // The helper's own record of quiet mode (it survives a PhotonVision restart), and the partition.
++    private static final Path STATE = Path.of("/run/spectrum-quiet");
++    private static final Path SCRATCH = Path.of("/data/scratch");
+ 
+     private static volatile boolean quiet = false;
+     private static volatile String reason = "";
+@@ -91,8 +94,20 @@
+         robotSays = t.getBooleanTopic("quiet").subscribe(false);
+         quietPub = t.getBooleanTopic("quietNow").publish();
+         reasonPub = t.getStringTopic("quietReason").publish();
+-        quietPub.set(false);
+-        reasonPub.set("");
++        // photonvision-64: an earlier PhotonVision process may have left the scratch partition
++        // read-only (quiet mode, then a restart: a crash, a settings import, Restart in the UI).
++        // Starting as "not quiet" left it that way: no enable remounted it, and Rewind couldn't
++        // record any later match until a reboot. So take over the real state; the loop then leaves
++        // quiet mode at once unless it's wanted now (any enable, a recording asked for, or the
++        // robot disabled for less than quietAfterDisabledSeconds).
++        if (Files.exists(STATE) || scratchReadOnly()) {
++            quiet = true;
++            reason = "left on before PhotonVision restarted";
++            Logger.pauseFileLogging();
++            logger.warn("Quiet mode: the scratch partition was left read-only before this restart; taking it over");
++        }
++        quietPub.set(quiet);
++        reasonPub.set(reason);
+         ds.addTransitionListener(
+                 (old, now) -> {
+                     if (now.m_enabled()) {
+@@ -227,6 +242,14 @@
+         logger.info("Quiet mode off in " + lastLeaveMs + " ms: the scratch partition is writable");
+     }
+ 
++    private static boolean scratchReadOnly() {
++        try {
++            return Files.isDirectory(SCRATCH) && Files.getFileStore(SCRATCH).isReadOnly();
++        } catch (IOException e) {
++            return false;
++        }
++    }
++
+     /** Runs the helper; null when it worked, else what went wrong. */
+     private static String run(String arg) {
+         try {

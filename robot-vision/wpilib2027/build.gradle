@@ -36,6 +36,8 @@ sourceSets {
     test { java { srcDirs = [gen.map { it.dir('test/java') }] } }
     examples { java { srcDirs = [gen.map { it.dir('examples/java') }] } }
     simTest { java { srcDirs = [gen.map { it.dir('simTest/java') }] } }
+    // 2027-only (not ported): tests/systemcore-rehearsal/run.sh runs it against a real Jetson.
+    rehearsal { java { srcDirs = ['src/rehearsal/java'] } }
 }
 
 configurations { simNatives }
@@ -57,7 +59,8 @@ dependencies {
         "org.ejml:ejml-simple:0.44.0", "us.hebi.quickbuf:quickbuf-runtime:1.4",
         "io.avaje:avaje-jsonb:3.11", "io.avaje:avaje-json-core:3.11",
     ]
-    wpi.each { compileOnly it; testImplementation it; examplesImplementation it; simTestImplementation it }
+    wpi.each { compileOnly it; testImplementation it; examplesImplementation it; simTestImplementation it; rehearsalImplementation it }
+    rehearsalImplementation sourceSets.main.output
     simTestImplementation sourceSets.main.output
     simTestImplementation platform('org.junit:junit-bom:5.10.1')
     simTestImplementation 'org.junit.jupiter:junit-jupiter'
@@ -112,4 +115,21 @@ tasks.register('simTest', Test) {
     systemProperty 'java.library.path', natives.get().asFile.path
     environment 'LD_LIBRARY_PATH', natives.get().asFile.path
     testLogging { showStandardStreams = true }
+}
+
+// The SystemCore rehearsal: a WPILib 2027 robot program here, a real Jetson connected to it.
+// Run through tests/systemcore-rehearsal/run.sh, which points the Jetson at this machine.
+tasks.register('rehearsal', JavaExec) {
+    description = 'SystemCore rehearsal against a real Jetson (tests/systemcore-rehearsal/run.sh)'
+    classpath = sourceSets.rehearsal.runtimeClasspath
+    mainClass = 'org.spectrum3847.vision.rehearsal.Rehearsal'
+    dependsOn patchNatives
+    workingDir = layout.buildDirectory.dir('rehearsal').get().asFile
+    doFirst { workingDir.mkdirs() }
+    systemProperty 'java.library.path', natives.get().asFile.path
+    environment 'LD_LIBRARY_PATH', natives.get().asFile.path
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    ['rehearsal.jetson', 'rehearsal.link', 'rehearsal.phases'].each { k ->
+        if (project.hasProperty(k)) systemProperty k, project.property(k)
+    }
 }
