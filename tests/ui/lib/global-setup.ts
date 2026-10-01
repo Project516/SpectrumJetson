@@ -22,6 +22,18 @@ export default async function globalSetup() {
   mkdirSync(".state", { recursive: true });
   writeFileSync(".state/start-pipelines.json", JSON.stringify(start, null, 2));
   const rewind = await (await fetch(`${base}/api/rewind`)).json();
+  // Every camera PhotonVision knows must be streaming. Tests like "Create on every camera" also
+  // change the saved setup of an unplugged camera, and nothing can clean that up until it's back:
+  // a run on 2026-10-01 with no cameras plugged in left test pipelines in three cameras' settings.
+  const fps = new Map<string, number>((rewind.cameras ?? []).map((c: { camera: string; fps: number }) => [c.camera, c.fps]));
+  const idle = cameras.map((c) => c.nickname).filter((n) => !((fps.get(n) ?? 0) > 0));
+  if (idle.length && process.env.PV_UI_TEST_WITHOUT_ALL_CAMERAS !== "1") {
+    throw new Error(
+      `No frames from ${idle.join(", ")}. Plug every camera in first: the tests change every ` +
+        "camera's pipelines, and can't put an unplugged camera's back. " +
+        "(PV_UI_TEST_WITHOUT_ALL_CAMERAS=1 to run anyway.)"
+    );
+  }
   if (rewind.robotConnected && process.env.PV_UI_TEST_ON_ROBOT !== "1") {
     throw new Error(
       "The Jetson is connected to a robot. These tests switch pipelines and move camera settings; " +
