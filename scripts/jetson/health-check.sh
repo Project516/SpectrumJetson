@@ -317,6 +317,12 @@ else
     warn "no last-good settings committed (10-data-partition.sh --commit-settings after tuning)"
   fi
 fi
+# Read-only system partition (ro-root.sh).
+if [[ $(findmnt -n -o FSTYPE /) == overlay ]]; then
+  pass "system partition read-only (ro-root on; $(( $(df --output=used -k / | tail -1) / 1024 )) MB in its RAM layer)"
+else
+  warn "system partition writable (ro-root.sh on before competition)"
+fi
 # The SSD's own error count: it should never grow. 285 of these killed the first SSD.
 if command -v smartctl >/dev/null; then
   me=$(smartctl -A /dev/nvme0 2>/dev/null | awk -F: '/Media and Data Integrity Errors/ {gsub(/[ ,]/,"",$2); print $2}')

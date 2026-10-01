@@ -37,6 +37,7 @@ For a new Jetson, or a spare SSD. You need an Orin Nano (Super) devkit, an NVMe 
 3. **Flash** (about 7 minutes): put the Jetson in Force Recovery Mode (jumper FC REC to GND on the button header, pins 9-10, then power on; or `sudo reboot forced-recovery` on a running Jetson), then `scripts/host/02-flash-nvme.sh`.
 4. **Set up** (about an hour, unattended): `scripts/host/setup-jetson.sh`, optionally with `--settings photon.sqlite` to restore a saved setup and `--model model.onnx` for game pieces. It waits for the Jetson to boot, copies everything over and runs `scripts/jetson/install.sh` there. If a step fails, fix it and run the same command again: it carries on from that step.
 5. **Check:** open PhotonVision at `http://192.168.55.1:5800` and its **Match Ready** page, or run `scripts/jetson/health-check.sh` on the Jetson.
+6. **Before competition, once it's tuned:** `scripts/jetson/ro-root.sh on` makes the system partition read-only (and saves the current settings as the fallback copy). To update anything later: `ro-root.sh off`, update, `ro-root.sh on`.
 
 The rest of this README explains what each step does and why.
 
@@ -141,11 +142,11 @@ So the SSD is now split three ways (`02-flash-nvme.sh` and `scripts/jetson/10-da
 
 | Area | Holds | Written | If a cut damages it |
 | --- | --- | --- | --- |
-| System, 64 GB | Ubuntu, CUDA, PhotonVision's program | only by updates | it isn't being written, so a cut can't damage it |
+| System, 64 GB | Ubuntu, CUDA, PhotonVision's program | only by updates. With `ro-root.sh on` it's mounted read-only under a RAM layer (NVIDIA's own overlay, `nv_overlayfs_config`): anything written to it is gone at the next boot | it isn't being written, so a cut can't damage it |
 | Settings, 2 GB | pipelines, calibrations, field calibration, snapshots, robot-state switches | only when someone changes a setting, and straight to the SSD (`sync`, `data=journal`) | the Jetson runs the match on the last-good copy kept on the system partition (`10-data-partition.sh --commit-settings`); Match Ready says so |
 | Scratch, the rest | Rewind recordings, PhotonVision's logs, the system log | all the time | the Jetson still boots and runs; recording pauses and logs go to RAM. Nothing is deleted: copy off what you need, then `10-data-partition.sh --reformat-scratch` |
 
-**Tested** (`tests/storage-fallback/run.sh scratch|settings`, 2026-10-01): with either partition's superblock destroyed, the Jetson boots and PhotonVision serves. With scratch gone, its logs, the system log and Rewind go to RAM, and nothing lands on the system partition. With settings gone, it runs on the committed copy, with identical database contents. `e2fsck -b 32768` then repairs the partition with its files intact. Still to test: real power cuts on this layout, on a healthy SSD.
+**Tested** (`tests/storage-fallback/run.sh scratch|settings`, 2026-10-01): with either partition's superblock destroyed, the Jetson boots and PhotonVision serves. With scratch gone, its logs, the system log and Rewind go to RAM, and nothing lands on the system partition. With settings gone, it runs on the committed copy, with identical database contents. `e2fsck -b 32768` then repairs the partition with its files intact. `tests/ro-root/run.sh`: with the read-only system on, PhotonVision and both partitions work, a file written to the system partition is gone after a reboot, and `off` makes it writable again (about 40 MB lands in the RAM layer per boot). Still to test: real power cuts on this layout, on a healthy SSD.
 
 **Choosing an SSD:** use a known brand with a DRAM cache, or better an industrial drive with power-loss protection. Avoid DRAM-less budget drives. `health-check.sh` reports the drive's media errors and unsafe shutdowns; any media error means replace it. The installer saves the drive's health report at install time (`~/install-logs/ssd-smart-at-install.txt`).
 
