@@ -57,6 +57,7 @@ MAP = {
     "edu.wpi.first.networktables.StringSubscriber": "org.wpilib.networktables.StringSubscriber",
     "edu.wpi.first.networktables.StructArrayPublisher": "org.wpilib.networktables.StructArrayPublisher",
     "edu.wpi.first.networktables.StructPublisher": "org.wpilib.networktables.StructPublisher",
+    "edu.wpi.first.wpilibj.RobotBase": "org.wpilib.framework.RobotBase",
     "edu.wpi.first.wpilibj.RobotState": "org.wpilib.driverstation.RobotState",
     "edu.wpi.first.wpilibj.Timer": "org.wpilib.system.Timer",
 }
@@ -108,6 +109,20 @@ def main():
         count += 1
         if not check:
             dst = Path(args[0]) / "test" / "java" / "org" / "spectrum3847" / "vision" / "examples" / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if not dst.exists() or dst.read_text() != ported:
+                dst.write_text(ported)
+    # The other examples compile in the 2027 build too (wpilib2027's "examples" source set).
+    # An example with a hand-written 2027 version (examples/wpilib2027/, for a vendor API that
+    # changed, not just WPILib's package names) is taken as it is instead of ported.
+    for f in sorted((HERE / "examples").glob("*.java")):
+        if f.name in EXAMPLE_TESTS:
+            continue
+        own = HERE / "examples" / "wpilib2027" / f.name
+        ported = own.read_text() if own.exists() else port(f.read_text(), str(f.relative_to(HERE)))
+        count += 1
+        if not check:
+            dst = Path(args[0]) / "examples" / "java" / f.name
             dst.parent.mkdir(parents=True, exist_ok=True)
             if not dst.exists() or dst.read_text() != ported:
                 dst.write_text(ported)

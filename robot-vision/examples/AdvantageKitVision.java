@@ -1,4 +1,5 @@
-// EXAMPLE (not compiled with the library): SpectrumVision with AdvantageKit, so a match log replays
+// EXAMPLE (compiled in both builds against AdvantageKit 26.0.2 and 27.0.0-alpha-4): SpectrumVision
+// with AdvantageKit, so a match log replays
 // through the same solvers, gates and trust (change a gate, replay the match, compare).
 //
 // The camera inputs are logged as one double[] per camera (ObservationCodec): the compact record,

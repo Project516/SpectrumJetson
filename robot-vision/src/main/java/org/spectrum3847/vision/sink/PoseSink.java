@@ -15,8 +15,12 @@ import java.util.function.DoubleUnaryOperator;
  *
  * <ul>
  *   <li>WPILib ({@code SwerveDrivePoseEstimator} and the others): {@link #wpilib(PoseEstimator)}.
- *   <li>CTRE swerve (Phoenix 6): its timestamps are in Phoenix's timebase, so convert:
- *       <pre>{@code PoseSink.convertingTime(drivetrain::addVisionMeasurement, Utils::fpgaToCurrentTime)}</pre>
+ *   <li>CTRE swerve (Phoenix 6): its timestamps are in Phoenix's timebase, so convert with a
+ *       {@link ClockBridge} (works with Phoenix 2026 and 2027):
+ *       <pre>{@code
+ * var phoenix = new ClockBridge(Utils::getCurrentTimeSeconds);
+ * PoseSink.convertingTime(drivetrain::addVisionMeasurement, phoenix::toOther)
+ * }</pre>
  *   <li>Several at once (WPILib's estimator and an EKF side by side, to compare): {@link #all}.
  * </ul>
  */

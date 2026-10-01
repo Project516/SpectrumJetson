@@ -3,18 +3,19 @@
 // library's builds against Phoenix 6 26.3.0 (2026) and 26.50.0-alpha-1 (2027), so it's known to
 // build; adapt the camera names and mounts.
 //
-// WPILib 2026 (roboRIO, Phoenix 26.x): this file. WPILib 2027 (SystemCore, Phoenix 26.50 alpha):
-// examples/wpilib2027/CtreSwerveVision.java (org.wpilib imports, and the state's Velocity field).
+// This is the WPILib 2027 (SystemCore, Phoenix 26.50.0-alpha-1) version; the 2026 one is
+// examples/CtreSwerveVision.java. The differences: org.wpilib imports, and Phoenix 2027's swerve
+// state has Velocity (ChassisVelocities: vx, vy, omega) instead of Speeds (ChassisSpeeds).
 package frc.robot.vision;
 
 import com.ctre.phoenix6.Utils;
 import com.ctre.phoenix6.swerve.SwerveDrivetrain;
-import edu.wpi.first.apriltag.AprilTagFieldLayout;
-import edu.wpi.first.apriltag.AprilTagFields;
-import edu.wpi.first.math.geometry.Rotation3d;
-import edu.wpi.first.math.geometry.Transform3d;
-import edu.wpi.first.math.util.Units;
-import edu.wpi.first.wpilibj.RobotBase;
+import org.wpilib.vision.apriltag.AprilTagFieldLayout;
+import org.wpilib.vision.apriltag.AprilTagFields;
+import org.wpilib.math.geometry.Rotation3d;
+import org.wpilib.math.geometry.Transform3d;
+import org.wpilib.math.util.Units;
+import org.wpilib.framework.RobotBase;
 import org.spectrum3847.vision.VisionSystem;
 import org.spectrum3847.vision.VisionUpdate;
 import org.spectrum3847.vision.sink.ClockBridge;
@@ -54,8 +55,8 @@ public class CtreSwerveVision {
         drivetrain.registerTelemetry(state -> vision.addMotion(
                 phoenix.fromOther(state.Timestamp),
                 state.Pose.getRotation(),
-                state.Speeds.omegaRadiansPerSecond,
-                Math.hypot(state.Speeds.vxMetersPerSecond, state.Speeds.vyMetersPerSecond)));
+                state.Velocity.omega,
+                Math.hypot(state.Velocity.vx, state.Velocity.vy)));
         if (RobotBase.isSimulation()) sim = VisionSim.attach(vision, VisionSim.thriftiestCam());
     }
 

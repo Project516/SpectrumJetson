@@ -10,6 +10,15 @@ java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
 repositories {
     maven { url = uri("${System.getProperty('user.home')}/wpilib/2027/maven") }
     maven { url = 'https://maven.photonvision.org/releases' }
+    maven { url = 'https://maven.ctr-electronics.com/release/' }                      // examples only
+    // AdvantageKit (examples only), from its GitHub release's offline Maven repo, which build.sh
+    // downloads: frcmaven.wpi.edu, where it's normally hosted, isn't reachable from every network.
+    exclusiveContent {
+        forRepository {
+            maven { url = uri("${System.getProperty('user.home')}/.cache/spectrum-vision-deps/akit-v27.0.0-alpha-4/maven_offline") }
+        }
+        filter { includeGroup 'org.littletonrobotics.akit' }
+    }
     mavenCentral()
 }
 
@@ -17,7 +26,7 @@ def port = tasks.register('port2027', Exec) {
     inputs.dir('../src/main/java')
     inputs.dir('../src/test/java')
     inputs.file('../tools/port2027.py')
-    inputs.file('../examples/VisionTuningTest.java')
+    inputs.dir('../examples')
     outputs.dir(gen)
     commandLine 'python3', "${rootDir}/tools/port2027.py", gen.get().asFile.path
 }
@@ -25,9 +34,12 @@ def port = tasks.register('port2027', Exec) {
 sourceSets {
     main { java { srcDirs = [gen.map { it.dir('main/java') }, '../src/compat2027/java'] } }
     test { java { srcDirs = [gen.map { it.dir('test/java') }] } }
+    examples { java { srcDirs = [gen.map { it.dir('examples/java') }] } }
 }
 tasks.named('compileJava') { dependsOn port }
 tasks.named('compileTestJava') { dependsOn port }
+tasks.named('compileExamplesJava') { dependsOn port }
+tasks.named('test') { dependsOn 'compileExamplesJava' }
 
 dependencies {
     def wpi = [
@@ -41,7 +53,11 @@ dependencies {
         "org.ejml:ejml-simple:0.44.0", "us.hebi.quickbuf:quickbuf-runtime:1.4",
         "io.avaje:avaje-jsonb:3.11", "io.avaje:avaje-json-core:3.11",
     ]
-    wpi.each { compileOnly it; testImplementation it }
+    wpi.each { compileOnly it; testImplementation it; examplesImplementation it }
+    examplesImplementation sourceSets.main.output
+    // The versions 2026-FM-SystemCore uses with WPILib 2027 alpha-6:
+    examplesImplementation 'com.ctre.phoenix6:wpiapi-java:26.50.0-alpha-1'
+    examplesImplementation 'org.littletonrobotics.akit:akit-java:27.0.0-alpha-4'
     testImplementation platform('org.junit:junit-bom:5.10.1')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

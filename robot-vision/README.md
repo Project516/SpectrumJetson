@@ -71,21 +71,25 @@ vision.periodic();
 
 ### CTRE Phoenix 6 swerve (TunerX `CommandSwerveDrivetrain`)
 
-See [examples/CtreSwerveVision.java](examples/CtreSwerveVision.java). Phoenix keeps its own clock, so convert timestamps both ways:
+See [examples/CtreSwerveVision.java](examples/CtreSwerveVision.java) (2026) or [examples/wpilib2027/CtreSwerveVision.java](examples/wpilib2027/CtreSwerveVision.java) (2027). Both compile against the real Phoenix 6 (26.3.0, and 26.50.0-alpha-1) in this library's build.
+
+Phoenix keeps its own clock, so timestamps are converted both ways with a `ClockBridge`. Phoenix 2026 has `Utils.fpgaToCurrentTime`, but Phoenix 2027 dropped it, and the bridge works on both:
 
 ```java
+var phoenix = new ClockBridge(Utils::getCurrentTimeSeconds);
 vision = VisionSystem.builder(field)
     .camera("TopLeft", ROBOT_TO_TOP_LEFT)
-    .sink(PoseSink.convertingTime(drivetrain::addVisionMeasurement, Utils::fpgaToCurrentTime))
+    .sink(PoseSink.convertingTime(drivetrain::addVisionMeasurement, phoenix::toOther))
     .currentEstimate(() -> drivetrain.getState().Pose)
     .build();
 // The gyro history at Phoenix's odometry rate, on its thread (the history is thread-safe):
 drivetrain.registerTelemetry(state -> vision.addMotion(
-    Utils.currentTimeToFPGATime(state.Timestamp), state.Pose.getRotation(),
+    phoenix.fromOther(state.Timestamp), state.Pose.getRotation(),
     state.Speeds.omegaRadiansPerSecond, Math.hypot(state.Speeds.vxMetersPerSecond, state.Speeds.vyMetersPerSecond)));
 ```
 
-`registerTelemetry` has one slot. If you already use it, call `vision.addMotion` from your existing callback.
+- **Phoenix 2027:** the swerve state has `Velocity` (`vx`, `vy`, `omega`) instead of `Speeds`.
+- **`registerTelemetry` has one slot:** if you already use it, call `vision.addMotion` from your existing callback.
 
 ### Two estimators side by side
 
@@ -262,13 +266,24 @@ visionSim.update(truePose);
 
 This is PhotonLib's own simulation (`VisionSystemSim`), so it needs WPILib's desktop simulation, which includes OpenCV. The same `VisionSystem` code runs in simulation as on the robot.
 
+**Tested:** `SimulationTest` (`./gradlew :wpilib2026:simTest`, run by `build.sh`) runs exactly this: PhotonLib's simulated camera, a real `PhotonCamera`, `PhotonCameraIO`, `VisionSystem`, and a `SwerveDrivePoseEstimator`.
+- **Placed wrong, disabled:** an estimate that started 1.12 m wrong ends within 1 mm.
+- **Driving while enabled:** with odometry wrong by 10%, the estimate stays within 8 cm of the truth.
+- **Tag quality:** computed on the robot from the simulated calibration.
+
+**Ubuntu 22.04:** PhotonLib 2026.3.4's desktop native library needs a newer C++ runtime (`GLIBCXX_3.4.32`) than Ubuntu 22.04 has. A robot project's simulation then fails at the first `PhotonCamera` with "photontargetingJNI could not be loaded". Windows, macOS and Ubuntu 24.04 are fine. On 22.04, `build.sh` gives its own test a newer libstdc++ from the Ubuntu Toolchain PPA, in the test's folder only. For a robot project, put the same file next to the extracted JNI libraries (`build/jni/release`), or simulate on another OS. WPILib 2027's desktop libraries need 24.04 too.
+
 ## Building this library
 
 ```bash
 robot-vision/build.sh
 ```
 
-This tests both builds and makes the drop-in zips. It needs JDK 17 and JDK 25, which the WPILib installers put in `~/wpilib/2026/jdk` and `~/wpilib/2027/jdk` (or set `JAVA17_HOME` / `JAVA25_HOME`). The 2027 build uses the local WPILib 2027 install's Maven repo (`~/wpilib/2027/maven`).
+This tests both builds, compiles the examples, runs the simulation test (2026), and makes the drop-in zips. It needs JDK 17 and JDK 25, which the WPILib installers put in `~/wpilib/2026/jdk` and `~/wpilib/2027/jdk` (or set `JAVA17_HOME` / `JAVA25_HOME`). The 2027 build uses the local WPILib 2027 install's Maven repo (`~/wpilib/2027/maven`).
+
+**Where dependencies come from:**
+- **CTRE Phoenix 6:** from CTRE's Maven repository.
+- **AdvantageKit:** from its GitHub releases' offline Maven repo, which `build.sh` downloads. Some school web filters block frcmaven.wpi.edu, where it's normally hosted (ours does).
 
 **How one source serves two WPILibs:**
 - **The source:** `src/main` is written against WPILib 2026.
@@ -279,7 +294,7 @@ This tests both builds and makes the drop-in zips. It needs JDK 17 and JDK 25, w
   - `PhotonCamera.setEnabled`, which PhotonLib 2026 lacks.
 - **Rules for contributors:** write WPILib names only in import lines, never inline. Put anything version-specific in a compat class.
 
-**Tests:** 26, run on both builds, Java 17 and 25. They cover:
+**Tests:** 27, run on both builds (Java 17 and 25), plus the 2026 simulation test. All the examples compile in both builds against the real CTRE and AdvantageKit libraries. The tests cover:
 - solvers: exact on synthetic frames; ambiguity resolved by the gyro; the trig solve ignoring a flipped tag;
 - every gate, plus the innovation reset;
 - the trust model's shape;
@@ -288,6 +303,7 @@ This tests both builds and makes the drop-in zips. It needs JDK 17 and JDK 25, w
 - measurement ordering across cameras;
 - camera trust, disable and mount changes;
 - the example tuning test on the real 2026 field;
-- `periodic()`'s cost.
+- `periodic()`'s cost;
+- `ClockBridge`.
 
 **Against real PhotonVision:** `tests/robot-vision-live` runs the library's input path on the Jetson against real PhotonVision output (fake cameras, fake robot): every frame with tags got the Jetson's per-tag quality matched (419 of 419 on 2026-10-01).

@@ -1,4 +1,4 @@
-// EXAMPLE (not compiled with the library): SpectrumVision with WPILib's SwerveDrivePoseEstimator,
+// EXAMPLE (compiled in both builds): SpectrumVision with WPILib's SwerveDrivePoseEstimator,
 // plus a second estimator (an EKF, say) fed the same measurements to compare side by side.
 package frc.robot.vision;
 

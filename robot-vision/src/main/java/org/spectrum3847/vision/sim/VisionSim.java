@@ -47,6 +47,10 @@ public class VisionSim {
             if (cam.io() instanceof PhotonCameraIO io) {
                 var cs = new PhotonCameraSim(io.camera(), props);
                 cs.enableDrawWireframe(false);
+                // No video streams: they cost CPU and nothing here reads them. (Turn them on
+                // yourself through visionSystemSim() to watch the simulated cameras.)
+                cs.enableRawStream(false);
+                cs.enableProcessedStream(false);
                 sim.addCamera(cs, cam.robotToCamera());
             }
         }
