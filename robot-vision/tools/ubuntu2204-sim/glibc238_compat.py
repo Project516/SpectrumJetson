@@ -9,7 +9,9 @@ references bind to the older names:
 
   - each __isoc23_NAME symbol is renamed NAME (its string ends in NAME: only the offset changes),
   - their symbol versions become "any" (the default version libc provides),
-  - the GLIBC_2.38 requirement is marked weak, so the loader doesn't insist on it.
+  - the GLIBC_2.38 requirement, now unused, is taken out of the library's list of required
+    versions. Where it's the only entry for that library, it's marked weak instead: the loader
+    then doesn't insist on it, but programs print a "weak version ... not found" line at start.
 
 Nothing else in the file changes (same size, same layout). Each function is first looked up in
 this system's own libc or libm: a library that needs a 2.38 function this system doesn't have
@@ -133,12 +135,56 @@ def patch(path, check=False):
         for so, st_name, vo in edits:
             struct.pack_into("<I", data, so, st_name)
             struct.pack_into("<H", data, vo, 1)  # VER_NDX_GLOBAL: the library's default version
-        for a in aux_offsets:
-            flags, = struct.unpack_from("<H", data, a + 4)
-            struct.pack_into("<H", data, a + 4, flags | VER_FLG_WEAK)
+        while unlink_one(data, verneed["off"], dynstr):
+            pass
+        for a in aux_offsets:  # the ones still listed
+            if cstr(data, dynstr + struct.unpack_from("<I", data, a + 8)[0]) == b"GLIBC_2.38" and listed(data, verneed["off"], a):
+                flags, = struct.unpack_from("<H", data, a + 4)
+                struct.pack_into("<H", data, a + 4, flags | VER_FLG_WEAK)
         if data != original:
             open(path, "wb").write(data)
     return changes
+
+
+def auxes(data, verneed_off):
+    """(verneed entry offset, previous aux offset or None, aux offset) for every required version."""
+    off = verneed_off
+    while True:
+        _, vn_cnt, _, vn_aux, vn_next = struct.unpack_from("<HHIII", data, off)
+        a, prev = off + vn_aux, None
+        for _ in range(vn_cnt):
+            yield off, prev, a
+            vna_next, = struct.unpack_from("<I", data, a + 12)
+            if not vna_next:
+                break
+            prev, a = a, a + vna_next
+        if not vn_next:
+            return
+        off += vn_next
+
+
+def listed(data, verneed_off, aux):
+    return any(a == aux for _, _, a in auxes(data, verneed_off))
+
+
+def unlink_one(data, verneed_off, dynstr):
+    """Takes one GLIBC_2.38 entry out of its library's list (if it isn't the only one). True if it did."""
+    for off, prev, a in auxes(data, verneed_off):
+        if cstr(data, dynstr + struct.unpack_from("<I", data, a + 8)[0]) != b"GLIBC_2.38":
+            continue
+        vn_cnt, = struct.unpack_from("<H", data, off + 2)
+        if vn_cnt < 2:
+            continue
+        vna_next, = struct.unpack_from("<I", data, a + 12)
+        if prev is None:  # the first: the list starts at the next one
+            vn_aux, = struct.unpack_from("<I", data, off + 8)
+            struct.pack_into("<I", data, off + 8, vn_aux + vna_next)
+        else:  # skip over it (0 if it was the last)
+            prev_next, = struct.unpack_from("<I", data, prev + 12)
+            struct.pack_into("<I", data, prev + 12, prev_next + vna_next if vna_next else 0)
+        struct.pack_into("<H", data, off + 2, vn_cnt - 1)
+        return True
+    return False
 
 
 def main():

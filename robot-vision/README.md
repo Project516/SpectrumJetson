@@ -288,9 +288,21 @@ After this, `./gradlew simulateJava`, VS Code's **WPILib: Simulate Robot Code**,
 - **Turning it off:** `setup.sh --remove` takes it out, and `-PnoUbuntu2204Sim` turns it off for one build. On a system with glibc 2.38 (Ubuntu 24.04 or newer) it does nothing.
 - **What doesn't change:** robot (SystemCore and roboRIO) libraries are never touched.
 - **When a library can't be fixed:** if a library needs a glibc 2.38 function that 22.04 doesn't have, the patcher leaves it alone and says so.
+- **What the patch changes:** each library still has the same size and layout. Only the names and versions of those five function references change, and the now-unused GLIBC_2.38 requirement is removed.
 - **Tested on this laptop with 2026-FM-SystemCore (WPILib 2027 alpha-6):** the full robot program, including Phoenix 6 sim, PhotonLib, AdvantageKit and the sim GUI.
 
-Upgrading to Ubuntu 24.04 is still the long-term fix. Glass, SysId and the other WPILib 2027 desktop tools need 24.04 too.
+**WPILib 2027's desktop tools** (Glass, SysId, OutlineViewer, DataLogTool, wpical) have the same problem, and the same fix:
+
+```bash
+robot-vision/tools/ubuntu2204-sim/wpilib-tools.sh
+```
+
+- **What it does:** patches copies of the tools in `~/wpilib/2027/tools/ubuntu2204/`, keeps the originals untouched in `ubuntu2204/original/`, and replaces `tools/glass` and the others with short scripts that run the patched copies.
+- **VS Code:** it also adds the names VS Code's **Start Tool** looks for (`Glass`, `SysId`, ...). The 2027 programs ship lowercase, so VS Code on Linux didn't list them before.
+- **After a WPILib tools update:** run it again.
+- **Undoing it:** `--restore` puts the originals back.
+
+A laptop that also flashes the Jetson should stay on 22.04: NVIDIA's flashing and SSD backup tools for JetPack 6 support only Ubuntu 20.04 and 22.04 as the host.
 
 ## Building this library
 

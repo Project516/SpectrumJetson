@@ -52,7 +52,7 @@ if (needed) {
                             lines.findAll { it.contains('NOT CHANGED') || !it.contains(': changed ') }.each { logger.warn(it) }
                             def changed = lines.count { it.contains(': changed ') }
                             logger.lifecycle("Ubuntu 22.04 simulation fix: newer libstdc++ in ${dir.name}" +
-                                    (changed ? ", ${changed} libraries patched for glibc 2.35" : '') +
+                                    (changed ? ", ${changed} libraries patched for glibc 2.35" : ', libraries already compatible') +
                                     (code ? ' (some could not be fixed, see above)' : ''))
                         }
                     }
