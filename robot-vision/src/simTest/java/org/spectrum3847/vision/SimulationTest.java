@@ -18,6 +18,7 @@ import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.simulation.DriverStationSim;
 import edu.wpi.first.wpilibj.simulation.SimHooks;
+import java.util.TreeMap;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -68,7 +69,7 @@ class SimulationTest {
         var estimator = new SwerveDrivePoseEstimator(
                 kinematics, truth.getRotation(), modules, wrong, VecBuilder.fill(0.05, 0.05, 0.01), VecBuilder.fill(0.5, 0.5, 1.0));
 
-        var types = new java.util.TreeMap<PoseObservation.Type, Integer>();
+        var types = new TreeMap<PoseObservation.Type, Integer>();
         var vision = VisionSystem.builder(FIELD)
                 .camera("SimCam", ROBOT_TO_CAMERA)
                 .sink(PoseSink.wpilib(estimator))
@@ -117,7 +118,7 @@ class SimulationTest {
         // Odometry that drifts: the estimator is told the robot moves 10% less than it does.
         var estimator = new SwerveDrivePoseEstimator(
                 kinematics, start.getRotation(), modules, start, VecBuilder.fill(0.05, 0.05, 0.01), VecBuilder.fill(0.5, 0.5, 1.0));
-        var types = new java.util.TreeMap<PoseObservation.Type, Integer>();
+        var types = new TreeMap<PoseObservation.Type, Integer>();
         var vision = VisionSystem.builder(FIELD)
                 .camera("SimCam2", ROBOT_TO_CAMERA)
                 .sink(PoseSink.wpilib(estimator))
@@ -133,8 +134,8 @@ class SimulationTest {
             double t = (i + 1) * 0.02;
             Pose2d truth = facingTag(tag, 1.6, -1.2 + speed * t);
             moved += 0.9 * speed * 0.02; // what odometry reports
-            for (var m : modules) m.distanceMeters = moved;
-            for (var m : modules) m.angle = Rotation2d.fromDegrees(90).minus(truth.getRotation());
+            // New positions, not field writes: the field is distanceMeters in 2026, distance in 2027.
+            for (int k = 0; k < 4; k++) modules[k] = new SwerveModulePosition(moved, Rotation2d.fromDegrees(90).minus(truth.getRotation()));
             sim.update(truth);
             double now = Timer.getTimestamp();
             estimator.updateWithTime(now, truth.getRotation(), modules);

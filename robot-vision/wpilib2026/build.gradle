@@ -70,7 +70,8 @@ tasks.named('test') { dependsOn 'compileExamplesJava' }
 def natives = layout.buildDirectory.dir('sim-natives')
 def extractNatives = tasks.register('extractSimNatives', Sync) {
     from(configurations.simNatives.collect { zipTree(it) }) { include '**/shared/*.so*'; eachFile { path = name } }
-    // build.sh puts Ubuntu 24.04's libstdc++ here when this system's is too old for PhotonLib's native.
+    // tools/ubuntu2204-sim/get-libstdcxx.sh (run by build.sh) puts a newer libstdc++ here when this
+    // system's is too old for PhotonLib's native library (Ubuntu 22.04).
     from("${System.getProperty('user.home')}/.cache/spectrum-vision-deps/libstdcxx/x/usr/lib/x86_64-linux-gnu") {
         include 'libstdc++.so.6*'
     }

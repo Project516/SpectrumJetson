@@ -57,6 +57,11 @@ MAP = {
     "edu.wpi.first.networktables.StringSubscriber": "org.wpilib.networktables.StringSubscriber",
     "edu.wpi.first.networktables.StructArrayPublisher": "org.wpilib.networktables.StructArrayPublisher",
     "edu.wpi.first.networktables.StructPublisher": "org.wpilib.networktables.StructPublisher",
+    "edu.wpi.first.hal.HAL": "org.wpilib.hardware.hal.HAL",
+    "edu.wpi.first.math.kinematics.SwerveDriveKinematics": "org.wpilib.math.kinematics.SwerveDriveKinematics",
+    "edu.wpi.first.math.kinematics.SwerveModulePosition": "org.wpilib.math.kinematics.SwerveModulePosition",
+    "edu.wpi.first.wpilibj.simulation.DriverStationSim": "org.wpilib.simulation.DriverStationSim",
+    "edu.wpi.first.wpilibj.simulation.SimHooks": "org.wpilib.simulation.SimHooks",
     "edu.wpi.first.wpilibj.RobotBase": "org.wpilib.framework.RobotBase",
     "edu.wpi.first.wpilibj.RobotState": "org.wpilib.driverstation.RobotState",
     "edu.wpi.first.wpilibj.Timer": "org.wpilib.system.Timer",
@@ -90,7 +95,7 @@ def main():
     if not check and len(args) != 1:
         sys.exit(__doc__)
     count = 0
-    for kind in ("main", "test"):
+    for kind in ("main", "test", "simTest"):
         src = HERE / "src" / kind / "java"
         if not src.is_dir():
             continue

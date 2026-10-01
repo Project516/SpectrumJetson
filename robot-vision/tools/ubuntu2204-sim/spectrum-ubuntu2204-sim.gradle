@@ -1,0 +1,66 @@
+// Gradle init script: lets WPILib robot projects simulate on Ubuntu 22.04.
+//
+// Ubuntu 22.04 has older glibc (2.35) and libstdc++ than the desktop libraries were built for.
+//   - PhotonLib's libraries need a newer libstdc++.
+//   - WPILib 2027's libraries, and vendors' such as CTRE's, need a newer libstdc++ and glibc 2.38.
+// Without this, simulateJava, VS Code's "Simulate Robot Code", and tests that load the HAL fail.
+// The usual error is "photontargetingJNI could not be loaded", or a GLIBC_2.38 /
+// GLIBCXX_3.4.3x "not found" message.
+//
+// setup.sh installs this into ~/.gradle/init.d, so it applies to every GradleRIO project on this
+// machine, and setup.sh --remove takes it out. It changes nothing in the robot project, and it
+// does nothing on a system that has glibc 2.38 (Ubuntu 24.04 and newer). For one build, -PnoUbuntu2204Sim
+// turns it off.
+//
+// GradleRIO unpacks the desktop libraries into build/jni/release (or debug) before every
+// simulation or test run. Right after that, and before they load, this:
+//   - copies in the newer libstdc++ that get-libstdcxx.sh downloaded. GradleRIO and VS Code put
+//     that folder on LD_LIBRARY_PATH, so the libraries load it instead of the system's.
+//   - runs glibc238_compat.py on the libraries. It changes the few glibc 2.38 functions they use
+//     (fmod, and C23's strtol and sscanf) to the 2.35 equivalents.
+// Never for a robot: the SystemCore and roboRIO libraries are separate and aren't touched.
+
+def deps = new File(System.getProperty('user.home'), '.cache/spectrum-vision-deps')
+def libc = new File('/lib/x86_64-linux-gnu/libc.so.6')
+def needed = System.getProperty('os.name') == 'Linux' && libc.isFile() &&
+        !new String(libc.bytes, 'ISO-8859-1').contains('GLIBC_2.38')
+
+if (needed) {
+    def patcher = new File(deps, 'ubuntu2204-sim/glibc238_compat.py')
+    def cxx = new File(deps, 'libstdcxx/x/usr/lib/x86_64-linux-gnu/libstdc++.so.6')
+    allprojects {
+        ['org.wpilib.GradleRIO', 'edu.wpi.first.GradleRIO'].each { id ->
+            pluginManager.withPlugin(id) {
+                if (project.hasProperty('noUbuntu2204Sim')) return
+                def jni = layout.buildDirectory.dir('jni')
+                def fix = tasks.register('ubuntu2204SimNatives') {
+                    description = 'Makes the unpacked desktop libraries load on Ubuntu 22.04 (~/.gradle/init.d/spectrum-ubuntu2204-sim.gradle)'
+                    mustRunAfter tasks.matching { it.name in ['extractReleaseNative', 'extractDebugNative'] }
+                    doLast {
+                        if (!cxx.isFile() || !patcher.isFile()) {
+                            logger.warn("Ubuntu 22.04 simulation fix isn't set up (${cxx.isFile() ? patcher : cxx} is missing):" +
+                                    ' run SpectrumJetson/robot-vision/tools/ubuntu2204-sim/setup.sh')
+                            return
+                        }
+                        ['release', 'debug'].collect { new File(jni.get().asFile, it) }.findAll { it.isDirectory() }.each { dir ->
+                            java.nio.file.Files.copy(cxx.toPath(), new File(dir, 'libstdc++.so.6').toPath(),
+                                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                            def libs = dir.listFiles().findAll { it.name.contains('.so') && !it.name.startsWith('libstdc++') }
+                            def p = new ProcessBuilder(['python3', patcher.path] + libs*.path.sort()).redirectErrorStream(true).start()
+                            def lines = p.inputStream.text.readLines()
+                            def code = p.waitFor()
+                            lines.findAll { it.contains('NOT CHANGED') || !it.contains(': changed ') }.each { logger.warn(it) }
+                            def changed = lines.count { it.contains(': changed ') }
+                            logger.lifecycle("Ubuntu 22.04 simulation fix: newer libstdc++ in ${dir.name}" +
+                                    (changed ? ", ${changed} libraries patched for glibc 2.35" : '') +
+                                    (code ? ' (some could not be fixed, see above)' : ''))
+                        }
+                    }
+                }
+                tasks.configureEach { t ->
+                    if (t instanceof Test || t.class.name.contains('SimulationTask')) t.dependsOn fix
+                }
+            }
+        }
+    }
+}

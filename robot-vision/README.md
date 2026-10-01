@@ -266,12 +266,31 @@ visionSim.update(truePose);
 
 This is PhotonLib's own simulation (`VisionSystemSim`), so it needs WPILib's desktop simulation, which includes OpenCV. The same `VisionSystem` code runs in simulation as on the robot.
 
-**Tested:** `SimulationTest` (`./gradlew :wpilib2026:simTest`, run by `build.sh`) runs exactly this: PhotonLib's simulated camera, a real `PhotonCamera`, `PhotonCameraIO`, `VisionSystem`, and a `SwerveDrivePoseEstimator`.
+**Tested:** `SimulationTest` runs exactly this, on both versions (`./gradlew :wpilib2026:simTest :wpilib2027:simTest`, run by `build.sh`). The chain is PhotonLib's simulated camera, a real `PhotonCamera`, `PhotonCameraIO`, `VisionSystem`, and a `SwerveDrivePoseEstimator`.
 - **Placed wrong, disabled:** an estimate that started 1.12 m wrong ends within 1 mm.
 - **Driving while enabled:** with odometry wrong by 10%, the estimate stays within 8 cm of the truth.
 - **Tag quality:** computed on the robot from the simulated calibration.
 
-**Ubuntu 22.04:** PhotonLib 2026.3.4's desktop native library needs a newer C++ runtime (`GLIBCXX_3.4.32`) than Ubuntu 22.04 has. A robot project's simulation then fails at the first `PhotonCamera` with "photontargetingJNI could not be loaded". Windows, macOS and Ubuntu 24.04 are fine. On 22.04, `build.sh` gives its own test a newer libstdc++ from the Ubuntu Toolchain PPA, in the test's folder only. For a robot project, put the same file next to the extracted JNI libraries (`build/jni/release`), or simulate on another OS. WPILib 2027's desktop libraries need 24.04 too.
+### Simulating on Ubuntu 22.04
+
+Windows, macOS and Ubuntu 24.04 need nothing here. On Ubuntu 22.04 the desktop libraries won't load out of the box, because 22.04's glibc (2.35) and C++ runtime are older than the ones they were built for:
+- **PhotonLib (2026 and 2027)** needs a newer C++ runtime (`GLIBCXX_3.4.32`). Simulation fails at the first `PhotonCamera` with "photontargetingJNI could not be loaded".
+- **WPILib 2027, CTRE Phoenix 6 2027 and the sim GUI** need the same, plus glibc 2.38. They use only five functions that are new in 2.38: `fmod`, `fmodf`, and the C23 versions of `strtol`, `sscanf` and `fscanf`. glibc 2.35 has all five under their older names.
+
+One-time fix, no sudo, nothing system-wide:
+
+```bash
+robot-vision/tools/ubuntu2204-sim/setup.sh
+```
+
+After this, `./gradlew simulateJava`, VS Code's **WPILib: Simulate Robot Code**, and robot tests that load the HAL all work in every robot project on the machine. The robot project doesn't change.
+- **How:** the setup installs a Gradle init script into `~/.gradle/init.d`. Each time GradleRIO unpacks the desktop libraries into `build/jni/release`, the script copies in a newer libstdc++ built for 22.04 (from the Ubuntu Toolchain PPA, SHA256-checked). It also runs `glibc238_compat.py` on the libraries, which points those five functions at glibc 2.35's equivalents.
+- **Turning it off:** `setup.sh --remove` takes it out, and `-PnoUbuntu2204Sim` turns it off for one build. On a system with glibc 2.38 (Ubuntu 24.04 or newer) it does nothing.
+- **What doesn't change:** robot (SystemCore and roboRIO) libraries are never touched.
+- **When a library can't be fixed:** if a library needs a glibc 2.38 function that 22.04 doesn't have, the patcher leaves it alone and says so.
+- **Tested on this laptop with 2026-FM-SystemCore (WPILib 2027 alpha-6):** the full robot program, including Phoenix 6 sim, PhotonLib, AdvantageKit and the sim GUI.
+
+Upgrading to Ubuntu 24.04 is still the long-term fix. Glass, SysId and the other WPILib 2027 desktop tools need 24.04 too.
 
 ## Building this library
 
@@ -279,7 +298,7 @@ This is PhotonLib's own simulation (`VisionSystemSim`), so it needs WPILib's des
 robot-vision/build.sh
 ```
 
-This tests both builds, compiles the examples, runs the simulation test (2026), and makes the drop-in zips. It needs JDK 17 and JDK 25, which the WPILib installers put in `~/wpilib/2026/jdk` and `~/wpilib/2027/jdk` (or set `JAVA17_HOME` / `JAVA25_HOME`). The 2027 build uses the local WPILib 2027 install's Maven repo (`~/wpilib/2027/maven`).
+This tests both builds, compiles the examples, runs both simulation tests, and makes the drop-in zips. It needs JDK 17 and JDK 25, which the WPILib installers put in `~/wpilib/2026/jdk` and `~/wpilib/2027/jdk` (or set `JAVA17_HOME` / `JAVA25_HOME`). The 2027 build uses the local WPILib 2027 install's Maven repo (`~/wpilib/2027/maven`).
 
 **Where dependencies come from:**
 - **CTRE Phoenix 6:** from CTRE's Maven repository.
