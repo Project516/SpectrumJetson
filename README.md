@@ -559,6 +559,22 @@ PhotonVision's Object Detection pipeline runs YOLO models on the Jetson's GPU th
 - `tests/jetson-telemetry/run.sh` prints them on the bench.
 - The Settings page's Device Metrics also has a **GPU Usage** chart (`photonvision-19`).
 
+**How much to trust each tag** (`photonvision-61`): every frame with tags also goes out on `/photonvision/<camera>/tagQuality`, a double array, just before the result it belongs to. PhotonLib's own message can't carry these: the robot checks its format.
+- **Layout:** `[sequenceID, tagCount, then per tag: fiducialId, decisionMargin, edgePx, undistortPx, reprojBestPx, reprojAltPx]`, in the result's target order. Match it to a PhotonLib result by `result.metadata.sequenceID`.
+- **edgePx:** how close the tag's nearest corner is to the image edge. Distortion is strongest and the calibration weakest there, and the tag may be cut off. Trust falls off as this shrinks (Northstar and AOS use 25–50 px).
+- **undistortPx:** how far the lens model moved the corner that moved most. Large means the pose relies heavily on the calibration being right out there.
+- **reprojBestPx, reprojAltPx:** RMS pixel error of the tag's corners under its best and alternate single-tag poses. Single-tag ambiguity: keep a tag when best is clearly smaller than alt (AOS: under 0.4×), then pick the candidate closest to the gyro. `NaN` alt means there's no second candidate. For a tag used in multi-tag, both are under the multi-tag pose instead: a tag that disagrees with the others by several pixels is a bad tag or a bad layout.
+- **NaN** whenever it can't be known: no lens calibration, or 3D off.
+- **Cost:** 48 bytes a tag plus 16 a frame on the network (measured: 111 bytes against a 616-byte result, 18% more), and 3.9 µs a tag of Jetson CPU (`tests/tag-quality` Bench).
+- **Checked by:** `TagQualityTest` in the fork. On PhotonVision's real test image the best error is 0.54 px. On two rendered tags through multi-tag it's 0.24 and 0.13 px, and moving one tag 5 cm in the field layout raises it to 4.8 px. `tests/tag-quality/run.sh` checks the live topic on the Jetson.
+
+**NetworkTables bandwidth.** Results go to the robot over its wired Ethernet, which has plenty of room: about 0.5 KB a frame with one tag, 1.5 KB with four, so 2.5–7.4 Mbit/s at 5 cameras × 120 fps (measured overhead 107 bytes a frame with no tags; each tag ~294 bytes). What has to stay small is what crosses the **radio** to the driver station:
+- **Elastic** is safe as it is: it only subscribes to topics with a widget, at its update period, never every value.
+- **AdvantageScope**, on the field: set Live Mode to **Low Bandwidth** (only what's on screen). "Logging" pulls every value of everything, which is fine on the pit tether.
+- **AdvantageKit** sends whatever robot code logs to every dashboard. Log the decoded poses and the numbers you use, **not raw PhotonLib results**.
+- **Don't turn on "Publish protobuf"** in the networking settings: it sends every result a second time.
+- **Robot loop time:** NetworkTables' sending and receiving run on its own C++ thread, not in the robot loop. What does run in the loop is PhotonLib decoding results and `addVisionMeasurement`; if that shows up in loop time, read the cameras on a separate thread and hand the loop finished measurements.
+
 **Camera settings go in the robot log too** (`photonvision-24`), so you can tell what a camera was set to in any match.
 - **Per camera:** `/photonvision/<camera>/settingsJson` holds the full current pipeline settings, the video mode, which lens calibration is in use, and the camera's controls as actually set, including ones the UI doesn't show.
 - **Jetson-wide:** `/photonvision/jetson/settingsJson` holds the PhotonVision build, the detector and decoder settings, the tags left out of multi-tag, and a fingerprint of the field layout.

@@ -420,7 +420,9 @@ What an ideal system has that ours doesn't yet, roughly in order of value for ef
 3. **Cameras that heal themselves.** Detect a stuck or corrupt camera and reset its USB port
    automatically, instead of warning. **Done** (`photonvision-29`).
 4. **Quality metadata on every tag,** so the robot can weigh each one: distance from the image
-   edge, how far undistortion moved the corners, reprojection error, decision margin.
+   edge, how far undistortion moved the corners, reprojection error, decision margin. **Done**
+   (`photonvision-61`): `/photonvision/<camera>/tagQuality`, matched to results by sequence ID
+   (README, "How much to trust each tag").
    - Tags near the edge are trusted less, on a tunable curve (robot side).
    - The robot chooses which tags to trust.
 5. **Health in the robot log:** temperatures, fps, failed decodes, USB resets and free disk, as
