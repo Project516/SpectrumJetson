@@ -11,6 +11,7 @@
 #   build/fieldcal-detect/fieldcal_detect
 #   photonvision-spectrum-<tag>-linuxarm64.jar   (default: the jar PhotonVision is running)
 #   MANIFEST  repo commit, L4T and CUDA versions, the patch list, and every file's SHA-256
+#   NOTICES.md and the license texts (release/): where each file comes from, and its license
 #
 # It refuses if this repo copy has uncommitted changes: a bundle must match a commit.
 # The camera driver isn't in it: it's built for the exact kernel, in 41 s, by install.sh.
@@ -49,6 +50,8 @@ for f in "${files[@]}"; do
   [[ -f $src ]] || { echo "Missing $src: run install.sh from source first" >&2; exit 1; }
   install -D -m "$([[ -x $src ]] && echo 755 || echo 644)" "$src" "$STAGE/$dst"
 done
+# Licenses and attribution for everything in the bundle (release/NOTICES.md).
+install -m 644 "$REPO"/release/NOTICES.md "$REPO"/release/LICENSE-*.* "$STAGE/"
 unzip -tq "$STAGE/photonvision-spectrum-$tag-linuxarm64.jar" >/dev/null || { echo "STOP: $JAR isn't a valid jar" >&2; exit 1; }
 
 {
