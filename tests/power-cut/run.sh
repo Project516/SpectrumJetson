@@ -28,6 +28,11 @@ PY
 field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null; }
 
 boot_before=$("${SSH[@]}" 'cat /proc/sys/kernel/random/boot_id') || { echo "Jetson not reachable at $JETSON"; exit 1; }
+# The SSD's own counters, before and after: a cut must never add media errors (the first SSD died
+# of 285 of them after 21 cuts, while this test kept passing on the filesystem alone).
+smart() { "${SSH[@]}" "sudo -n smartctl -A /dev/nvme0 2>/dev/null | awk -F: '/$1/ {gsub(/[ ,]/,\"\",\$2); print \$2}'"; }
+media_before=$(smart "Media and Data Integrity Errors") unsafe_before=$(smart "Unsafe Shutdowns")
+echo "SSD before: ${media_before:-?} media errors, ${unsafe_before:-?} unsafe shutdowns" 
 api '{"manual": true}' >/dev/null || { echo "Rewind API not reachable"; exit 1; }
 sleep 1
 session=$(api | field session)
@@ -37,6 +42,10 @@ echo "Recording $session. Pull the Jetson's power plug after the countdown."
 last_secs=0 dark_since=0 t_start=$(date +%s)
 while :; do
   now=$(date +%s)
+  if ((now - t_start > WAIT + 120)); then
+    echo; echo "TIMEOUT: the Jetson didn't go dark within 2 min of the countdown; stopping the recording"
+    api '{"manual": false}' >/dev/null; exit 1
+  fi
   s=$(api)
   if [[ -n $s ]]; then
     last_secs=$(field seconds <<<"$s")
@@ -52,19 +61,31 @@ while :; do
 done
 printf "\n  Jetson went dark; last status said %.1f s recorded.\n" "$last_secs"
 echo "Plug the power back in. Waiting for the Jetson to boot..."
-until "${SSH[@]}" true 2>/dev/null; do sleep 2; done
+end=$((SECONDS + 600))   # power back in and boot: 10 min at most
+until "${SSH[@]}" true 2>/dev/null; do ((SECONDS < end)) || { echo "TIMEOUT: no Jetson 10 min after the cut"; exit 1; }; sleep 2; done
 boot_after=$("${SSH[@]}" 'cat /proc/sys/kernel/random/boot_id')
 [[ $boot_after != "$boot_before" ]] || { echo "The Jetson did not reboot (same boot id); was the power pulled?"; exit 1; }
 echo "Booted. Waiting for PhotonVision..."
-until [[ -n $(api) ]]; do sleep 2; done
+end=$((SECONDS + 180))
+until [[ -n $(api) ]]; do ((SECONDS < end)) || { echo "TIMEOUT: PhotonVision not answering 3 min after boot"; exit 1; }; sleep 2; done
 sleep 10 # let the detectors start
 
 echo
-echo "== Filesystem"
+echo "== SSD"
+media_after=$(smart "Media and Data Integrity Errors") unsafe_after=$(smart "Unsafe Shutdowns")
+echo "  media errors ${media_before:-?} -> ${media_after:-?}, unsafe shutdowns ${unsafe_before:-?} -> ${unsafe_after:-?}"
+if [[ -n $media_after && -n $media_before && $media_after -gt $media_before ]]; then
+  echo "  FAIL: the cut added $((media_after - media_before)) media errors: this SSD is losing data on power cuts"
+fi
+echo "== Filesystems (system, settings, scratch)"
 "${SSH[@]}" 'bash -s' <<'REMOTE'
-dev=$(basename "$(findmnt -no SOURCE /)")
-echo "  ext4 errors recorded: $(cat /sys/fs/ext4/$dev/errors_count)"
-journalctl -k -b 0 --no-pager -o cat | grep -F "EXT4-fs ($dev)" | sed 's/^/  kernel: /'
+for m in / /data/settings /data/scratch; do
+  findmnt -n "$m" >/dev/null || { echo "  $m: NOT MOUNTED"; continue; }
+  dev=$(basename "$(findmnt -no SOURCE "$m")")
+  echo "  $m ($dev): ext4 errors recorded: $(cat /sys/fs/ext4/$dev/errors_count 2>/dev/null)"
+  journalctl -k -b 0 --no-pager -o cat | grep -F "EXT4-fs ($dev)" | sed 's/^/    kernel: /'
+done
+echo "  fallback: $(cat /run/spectrum-data-status 2>/dev/null)"
 REMOTE
 echo "== Log from before the cut (the last lines the old boot saved)"
 # By boot id: -b -1 is unreliable here, since the clock restarts at 1970 after a cut (no RTC battery).

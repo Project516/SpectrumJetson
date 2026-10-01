@@ -293,6 +293,40 @@ if nmcli -t -f DEVICE,TYPE,STATE dev 2>/dev/null | grep -q ":wifi:connected"; th
   warn "Wi-Fi is connected: turn it off before competition (robot coprocessors may not use radios)"
 fi
 
+echo "== Storage"
+# 10-data-partition.sh: settings and scratch partitions, and spectrum-data-fallback's verdict.
+if ! grep -q x-spectrum-data /etc/fstab 2>/dev/null; then
+  warn "no data partitions: everything is written to the system partition (run 10-data-partition.sh)"
+else
+  ds=$(cat /run/spectrum-data-status 2>/dev/null)
+  case $ds in
+    *settings=ok*) findmnt -n /opt/photonvision/photonvision_config >/dev/null \
+                     && pass "settings partition mounted (sync, data=journal)" \
+                     || fail "settings partition mounted but PhotonVision's folder isn't bound to it" ;;
+    *settings=last-good*) fail "settings partition didn't mount: running on the last-good settings from $(cat /opt/photonvision/.last-good-settings/.committed 2>/dev/null), changes aren't kept" ;;
+    *settings=defaults*) fail "settings partition didn't mount and no last-good copy: PhotonVision is on DEFAULT settings" ;;
+    *) warn "data fallback didn't run this boot (spectrum-data-fallback.service)" ;;
+  esac
+  case $ds in
+    *scratch=ok*) pass "scratch partition mounted ($(df -h --output=avail /data/scratch 2>/dev/null | tail -1 | xargs) free)" ;;
+    *scratch=missing*) fail "scratch partition didn't mount: not recording, logs in RAM (copy off what you need, then 10-data-partition.sh --reformat-scratch)" ;;
+  esac
+  if [[ -d /opt/photonvision/.last-good-settings ]]; then
+    pass "last-good settings committed $(cat /opt/photonvision/.last-good-settings/.committed 2>/dev/null)"
+  else
+    warn "no last-good settings committed (10-data-partition.sh --commit-settings after tuning)"
+  fi
+fi
+# The SSD's own error count: it should never grow. 285 of these killed the first SSD.
+if command -v smartctl >/dev/null; then
+  me=$(smartctl -A /dev/nvme0 2>/dev/null | awk -F: '/Media and Data Integrity Errors/ {gsub(/[ ,]/,"",$2); print $2}')
+  us=$(smartctl -A /dev/nvme0 2>/dev/null | awk -F: '/Unsafe Shutdowns/ {gsub(/[ ,]/,"",$2); print $2}')
+  if [[ -n $me && $me -gt 0 ]]; then fail "SSD reports $me media errors (unreadable data): replace it"
+  elif [[ -n $me ]]; then pass "SSD: no media errors ($us unsafe shutdowns)"; fi
+else
+  warn "smartctl not installed: SSD health unknown (sudo apt install smartmontools)"
+fi
+
 echo "== System"
 mode=$(cut -d: -f2 /var/lib/nvpmodel/status 2>/dev/null)
 [[ $mode == 0002 ]] && pass "power mode MAXN SUPER" || fail "power mode is ${mode:-unknown}, expected MAXN SUPER (0002)"
@@ -307,8 +341,10 @@ for z in /sys/class/thermal/thermal_zone*; do
   [[ $t -gt $hot ]] && hot=$t hotname=$(cat "$z/type")
 done
 tc=$((hot / 1000))
+# Fanless (09-robot-tuning.sh FAN=off): ~73 C is normal with 5 cameras on the plate, so warn at 80.
+warn_c=70; systemctl is-active --quiet spectrum-fan-guard && warn_c=80
 if [[ $tc -ge 85 ]]; then fail "hottest sensor ${hotname} ${tc} C (throttling territory)"
-elif [[ $tc -ge 70 ]]; then warn "hottest sensor ${hotname} ${tc} C (check the fan and airflow)"
+elif [[ $tc -ge $warn_c ]]; then warn "hottest sensor ${hotname} ${tc} C (check the fan and airflow)"
 else pass "hottest sensor ${hotname} ${tc} C"; fi
 avail=$(awk '/MemAvailable/ {print int($2 / 1024)}' /proc/meminfo)
 [[ $avail -ge 1500 ]] && pass "memory available ${avail} MB" || warn "memory available only ${avail} MB"
@@ -328,7 +364,8 @@ if [[ -n $tach ]]; then
   done
 fi
 profile=$(sed -n 's/^[[:space:]]*FAN_DEFAULT_PROFILE[[:space:]]*//p' /etc/nvfancontrol.conf 2>/dev/null | head -1)
-if systemctl is-active --quiet nvfancontrol; then fanmode="NVIDIA fan control, ${profile:-?} profile"
+if systemctl is-active --quiet spectrum-fan-guard; then fanmode="off (fanless), full speed at 90 C"
+elif systemctl is-active --quiet nvfancontrol; then fanmode="NVIDIA fan control, ${profile:-?} profile"
 elif [[ ${fan:-0} -ge 250 ]]; then fanmode="full speed (jetson_clocks)"
 else fanmode="fixed at pwm ${fan:-?}/255"; fi
 if [[ -z $rpm ]]; then
@@ -337,6 +374,10 @@ elif [[ ${fan:-0} -ge 100 && $rpm -lt 1000 ]]; then
   fail "fan not spinning: $rpm rpm at pwm ${fan}/255 (unplugged, jammed or dead: check its cable)"
 elif [[ $fanmode == "full speed (jetson_clocks)" && $rpm -lt 4500 ]]; then
   warn "fan slow: $rpm rpm at full speed, normally ~5,600-6,200 (dust or a worn bearing?)"
+elif [[ $fanmode == off* && ${fan:-0} -eq 0 ]]; then
+  pass "fan: $fanmode, pwm 0/255, $rpm rpm"
+elif [[ $fanmode == off* ]]; then
+  warn "fan: $fanmode, on now (pwm ${fan}/255, $rpm rpm): the chip reached 90 C"
 elif [[ $fanmode == NVIDIA* || $fanmode == full* ]]; then
   # The quiet profile (09-robot-tuning.sh's default) speeds up as the chip warms; FAN=full is full speed.
   pass "fan: $fanmode, pwm ${fan:-?}/255, $rpm rpm"

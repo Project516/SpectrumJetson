@@ -16,7 +16,9 @@
 #   7. Fan: quiet by default  - NVIDIA's fan control (nvfancontrol) on its "quiet" profile, which
 #                               speeds the fan up as the chip warms (~2000 rpm at 56 C).
 #                               FAN=full 09-robot-tuning.sh runs it at full speed instead
-#                               (jetson_clocks --fan, ~5,800 rpm).
+#                               (jetson_clocks --fan, ~5,800 rpm). FAN=off is fanless (heatsink
+#                               plate): the fan stays stopped, and spectrum-fan-guard.sh runs it at
+#                               full speed only if the chip reaches 90 C, until it's under 80 C.
 #   8. Recover from hangs     - hardware watchdog 30 s (NVIDIA's default 2 min), also while
 #                               rebooting (default 10 min), kernel panic -> reboot in 3 s (default:
 #                               hang forever), PhotonVision restarted on any exit (default: only on
@@ -36,7 +38,7 @@
 #                               (reconnects by itself) and SSH (a >13 s outage with data waiting
 #                               drops the session).
 #
-# Usage: [FAN=quiet|full] 09-robot-tuning.sh [--undo]   (FAN defaults to quiet)
+# Usage: [FAN=quiet|full|off] 09-robot-tuning.sh [--undo]   (FAN defaults to quiet)
 set -euo pipefail
 
 APT_CONF=/etc/apt/apt.conf.d/99spectrum-no-auto-updates
@@ -53,8 +55,10 @@ PV_RESTART_CONF=/etc/systemd/system/photonvision.service.d/90-spectrum-restart.c
 PV_OPENCV_CONF=/etc/systemd/system/photonvision.service.d/90-spectrum-opencv.conf
 USB_TMPFILES=/etc/tmpfiles.d/90-spectrum-usb.conf
 TCP_CONF=/etc/sysctl.d/90-spectrum-tcp.conf
+FAN_GUARD=/usr/local/bin/spectrum-fan-guard
+FAN_GUARD_UNIT=/etc/systemd/system/spectrum-fan-guard.service
 FAN=${FAN:-quiet}
-[[ $FAN == quiet || $FAN == full ]] || { echo "FAN must be quiet or full, not $FAN" >&2; exit 2; }
+[[ $FAN == quiet || $FAN == full || $FAN == off ]] || { echo "FAN must be quiet, full or off, not $FAN" >&2; exit 2; }
 if [[ $FAN == full ]]; then CLOCKS_ARGS="--fan"; else CLOCKS_ARGS=""; fi
 
 sudo -n true 2>/dev/null || sudo -v   # ask for the password only if sudo needs one
@@ -67,6 +71,9 @@ if [[ ${1:-} == --undo ]]; then
   echo 5000 | sudo tee /sys/module/usbcore/parameters/initial_descriptor_timeout >/dev/null
   sudo sysctl -q kernel.panic=0
   sudo systemctl daemon-reexec
+  sudo systemctl disable --now spectrum-fan-guard.service 2>/dev/null || true
+  sudo rm -f "$FAN_GUARD" "$FAN_GUARD_UNIT"
+  sudo systemctl enable nvfancontrol 2>/dev/null || true
   sudo systemctl start nvfancontrol || true   # back to NVIDIA's fan control
   sudo sysctl -q vm.dirty_expire_centisecs=3000 vm.dirty_writeback_centisecs=500
   sudo systemctl restart systemd-journald   # logs already on the SSD stay in /var/log/journal
@@ -162,10 +169,34 @@ sudo systemd-tmpfiles --create --prefix /var/log/journal
 sudo systemctl restart systemd-journald
 sudo journalctl --flush
 
-if [[ $FAN == full ]]; then
+if [[ $FAN == off ]]; then
+  echo "==> 7. Fan off (fanless), full speed only if the chip reaches 90 C"
+  sudo systemctl disable --now nvfancontrol
+  sudo systemctl restart jetson-clocks.service   # clocks only
+  sudo install -m 755 "$(dirname "$0")/spectrum-fan-guard.sh" "$FAN_GUARD"
+  sudo tee "$FAN_GUARD_UNIT" >/dev/null <<UNIT
+[Unit]
+Description=Fan off for the fanless heatsink, full speed at 90 C (SpectrumJetson FAN=off)
+After=nvfancontrol.service jetson-clocks.service
+Conflicts=nvfancontrol.service
+
+[Service]
+ExecStart=$FAN_GUARD
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  sudo systemctl daemon-reload
+  sudo systemctl enable spectrum-fan-guard.service
+  sudo systemctl restart spectrum-fan-guard.service
+elif [[ $FAN == full ]]; then
+  sudo systemctl disable --now spectrum-fan-guard.service 2>/dev/null || true
   echo "==> 7. Fan at full speed (jetson_clocks --fan, in step 4's service)"
   sudo systemctl restart jetson-clocks.service
 else
+  sudo systemctl disable --now spectrum-fan-guard.service 2>/dev/null || true
   echo "==> 7. Fan on NVIDIA's quiet profile (nvfancontrol)"
   sudo systemctl restart jetson-clocks.service   # clocks only now
   sudo systemctl enable nvfancontrol

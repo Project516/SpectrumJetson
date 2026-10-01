@@ -27,7 +27,7 @@ for f in "$L4T_BSP_TARBALL" "$L4T_ROOTFS_TARBALL"; do
   fi
 done
 
-sudo -v
+sudo -n true 2>/dev/null || sudo -v   # ask for the password only if sudo needs one
 
 if [[ -d $L4T_DIR && $FORCE -eq 1 ]]; then
   echo "==> Removing old $L4T_DIR"

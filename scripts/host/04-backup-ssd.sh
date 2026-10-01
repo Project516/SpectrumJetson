@@ -83,7 +83,7 @@ until lsusb -d "$RCM_USB_ID" >/dev/null; do sleep 2; done
 echo "    found."
 
 # 2. The backup.
-sudo -v
+sudo -n true 2>/dev/null || sudo -v   # ask for the password only if sudo needs one
 NM_CONF=/etc/NetworkManager/conf.d/99-jetson-flash-unmanaged.conf
 UFW_RULE=(from fc00:1:1::/48)
 UFW_ADDED=0

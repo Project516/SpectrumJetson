@@ -24,9 +24,21 @@ Measured on the bench:
 - **Match-ready:**
   - detecting tags about 20 s after power-on
   - an unplugged camera is back in about 1 s
-  - survives power cuts
+  - built for power cuts: the system partition is only written by updates, settings and recordings live on their own partitions, and a damaged one never stops a match (see [Storage](#storage-and-power-cuts); the power-cut test on this layout is still to be repeated)
   - restarts itself after errors
 - **Works with stock PhotonLib** on a SystemCore (2027 alpha-2).
+
+## Quick Start
+
+For a new Jetson, or a spare SSD. You need an Orin Nano (Super) devkit, an NVMe SSD of 66 GB or more (**not** a DRAM-less budget drive: see [Storage](#storage-and-power-cuts)), a USB-C cable, Wi-Fi for the Jetson, and an **Ubuntu 22.04** laptop.
+
+1. **Once per laptop:** `scripts/host/01-prepare-bsp.sh` downloads and unpacks NVIDIA's flashing tools and creates the Jetson's account (about 15 minutes). Edit `config.env` for your team: team number, Wi-Fi connection name, fan mode.
+2. **Prepare the image:** `scripts/host/prestage-rootfs.sh` puts passwordless sudo, the laptop's saved Wi-Fi connection and its SSH key into the image, so nobody has to touch the Jetson after the flash.
+3. **Flash** (about 7 minutes): put the Jetson in Force Recovery Mode (jumper FC REC to GND on the button header, pins 9-10, then power on; or `sudo reboot forced-recovery` on a running Jetson), then `scripts/host/02-flash-nvme.sh`.
+4. **Set up** (about an hour, unattended): `scripts/host/setup-jetson.sh`, optionally with `--settings photon.sqlite` to restore a saved setup and `--model model.onnx` for game pieces. It waits for the Jetson to boot, copies everything over and runs `scripts/jetson/install.sh` there. If a step fails, fix it and run the same command again: it carries on from that step.
+5. **Check:** open PhotonVision at `http://192.168.55.1:5800` and its **Match Ready** page, or run `scripts/jetson/health-check.sh` on the Jetson.
+
+The rest of this README explains what each step does and why.
 
 ## Overview
 
@@ -118,6 +130,22 @@ The vision stack has four parts. Two are built on the Jetson, one on the laptop,
 **Safe deploys.** `06-install-fork-jar.sh` refuses to install a jar that isn't a valid zip, and it keeps the previous working jar as `photonvision.jar.prev`. We added that after a truncated jar took PhotonVision down (see the bugs section).
 
 **Robot readiness.** `jetson/09-robot-tuning.sh` prepares the Jetson for the robot: no automatic updates, headless boot, snapd off (it was adding 45 s to every boot), clocks locked at max on boot, USB autosuspend off for cameras, power-cut safety (data on the SSD within 3 s, the system log kept across power cuts), the fan on NVIDIA's quiet profile (`FAN=full` for full speed), a 30 s hardware watchdog (also while rebooting, where it was 10 minutes), reboot on kernel panic, PhotonVision restarted on any exit, OpenCV's worker threads sleeping instead of spinning, 1 s USB retries (a stuck camera held up the others on its hub for ~65 s each), and dropping a network connection whose other end has vanished after ~13 s instead of ~15 minutes (a dashboard laptop that left without closing kept its camera streams encoding for nobody). The system log keeps up to 2 GB. After it, the Jetson boots in 16.5 s instead of 57 s, and both cameras are detecting about 20 s after power-on. `jetson/health-check.sh` prints a PASS / WARN / FAIL readiness report you can run over SSH before a match.
+
+## Storage and power cuts
+
+**The first SSD died from power cuts** (2026-09-30). The Jetson stopped booting: the kernel couldn't read the root filesystem's journal ("critical medium error", "JBD2: recovery failed"). The drive's own health report told the story: an **Inland TN320** (a budget drive with no DRAM cache and no power-loss protection), **15 hours** of use, 22 power cycles, **21 of them unsafe** (power cut, no shutdown), and **285 media errors**: areas of flash it could no longer read. Its wear was 0%.
+
+We had tested power cuts and called them safe: ext4's journal keeps a filesystem consistent through a cut. But that only holds if the drive keeps what it already stored, and this one didn't. **No filesystem can protect against a drive that corrupts its own flash**, and robots lose power without warning all the time. Our test checked that the Jetson booted again, not the drive's error count, so it missed the damage building up. **Lesson: when a test says "it survived", check what the hardware itself reports too.**
+
+So the SSD is now split three ways (`02-flash-nvme.sh` and `scripts/jetson/10-data-partition.sh`):
+
+| Area | Holds | Written | If a cut damages it |
+| --- | --- | --- | --- |
+| System, 64 GB | Ubuntu, CUDA, PhotonVision's program | only by updates | it isn't being written, so a cut can't damage it |
+| Settings, 2 GB | pipelines, calibrations, field calibration, snapshots, robot-state switches | only when someone changes a setting, and straight to the SSD (`sync`, `data=journal`) | the Jetson runs the match on the last-good copy kept on the system partition (`10-data-partition.sh --commit-settings`); Match Ready says so |
+| Scratch, the rest | Rewind recordings, PhotonVision's logs, the system log | all the time | the Jetson still boots and runs; recording pauses and logs go to RAM. Nothing is deleted: copy off what you need, then `10-data-partition.sh --reformat-scratch` |
+
+**Choosing an SSD:** use a known brand with a DRAM cache, or better an industrial drive with power-loss protection. Avoid DRAM-less budget drives. `health-check.sh` reports the drive's media errors and unsafe shutdowns; any media error means replace it. The installer saves the drive's health report at install time (`~/install-logs/ssd-smart-at-install.txt`).
 
 ## Bugs we found and fixed
 
@@ -539,7 +567,8 @@ The detailed technical reference, with exact versions, commits and measurements,
 - [x] Fan on NVIDIA's quiet profile by default (775 rpm at 43 °C on the bench; `FAN=full 09-robot-tuning.sh` for full speed), 30 s hardware watchdog, reboot on kernel panic, PhotonVision always restarted
 - [x] Camera unplug test: the camera detects again ~1 s after it's plugged back in; the other camera is unaffected (`tests/camera-replug/run.sh`)
 - [x] With 4 cameras (2026-09-29): a camera pulled for 10 s detects again 1.3 s after it's back in, and one yanked and pushed back (out 1 s) loses ~1.5–2 s in all. The other 3 never dropped below 119.7 fps. Two cold power cycles: all 4 detecting 21–22 s after power-on, clean both times
-- [x] Power-cut test: pulled the plug mid-recording. No filesystem errors, the log survived, PhotonVision came back healthy, 1.4 s of video lost (`tests/power-cut/run.sh`)
+- [x] Power-cut test: pulled the plug mid-recording. No filesystem errors, the log survived, PhotonVision came back healthy, 1.4 s of video lost (`tests/power-cut/run.sh`). **But** after 21 cuts the SSD itself failed (see [Storage](#storage-and-power-cuts)); the test must also check the drive's media-error count
+- [ ] Power-cut test on the split storage, checking the SSD's media errors after every cut
 - [x] Reboot test: tuning survives a reboot; boot 57 s → 16.5 s, first detection ~20 s after power-on
 - [x] Name the cameras after their ports (TopLeft, TopRight; BottomLeft/BottomRight when added)
 - [ ] Rename the Global Shutter cameras BottomLeft (port 2.2) and BottomRight (port 2.4), if they stay

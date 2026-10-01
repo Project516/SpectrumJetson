@@ -20,7 +20,7 @@ JOBS=4
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
 export PATH=$PATH:/usr/local/cuda/bin
 
-sudo -v
+sudo -n true 2>/dev/null || sudo -v   # ask for the password only if sudo needs one
 # Keep sudo fresh so the final install doesn't block on a password hours from now.
 ( while true; do sudo -n true; sleep 60; done ) 2>/dev/null &
 KEEPALIVE=$!
