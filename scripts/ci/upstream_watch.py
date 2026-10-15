@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -176,15 +177,23 @@ def report_allwpilib():
 
 def report_l4t():
     pinned = pin("config.env", r"^L4T_VERSION=([\d.]+)")
-    major_minor = ".".join(pinned.split(".")[:2])  # 36.5
+    ver = lambda v: [int(x) for x in v.split(".")]
     try:
-        html = urllib.request.urlopen("https://repo.download.nvidia.com/jetson/common/dists/", timeout=30).read().decode()
-    except Exception as e:
+        html = urllib.request.urlopen("https://repo.download.nvidia.com/jetson/", timeout=60).read().decode()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise RuntimeError("NVIDIA's apt index is gone (404): the L4T check needs a new URL")
         print(f"  couldn't reach NVIDIA's apt repo ({e}): L4T not checked this run")
         return "unchecked"
-    found = sorted({m for m in re.findall(r"r(\d+\.\d+)/", html) if m.split(".")[0] == pinned.split(".")[0]},
-                   key=lambda v: [int(x) for x in v.split(".")])
-    newer = [v for v in found if [int(x) for x in v.split(".")] > [int(x) for x in major_minor.split(".")]]
+    except OSError as e:
+        print(f"  couldn't reach NVIDIA's apt repo ({e}): L4T not checked this run")
+        return "unchecked"
+    # The index lists every package file; nvidia-l4t-core's version is the L4T release. t234 is Orin.
+    found = sorted({m for m in re.findall(r"t234/pool/main/n/nvidia-l4t-core/nvidia-l4t-core_(\d+\.\d+\.\d+)-", html)
+                    if m.split(".")[0] == pinned.split(".")[0]}, key=ver)
+    if not found:
+        raise RuntimeError("no t234 nvidia-l4t-core packages in NVIDIA's index: its format changed")
+    newer = [v for v in found if ver(v) > ver(pinned)]
     if not newer:
         return None
     return {
